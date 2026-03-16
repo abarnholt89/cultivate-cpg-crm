@@ -1,0 +1,917 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
+
+type Role = "admin" | "rep" | "client" | null;
+
+type RepTaskRow = {
+  task_id: string;
+  brand_retailer_timing_id: string;
+  retailer_id: string;
+  retailer_name: string;
+  brand_id: string;
+  title: string;
+  details: string | null;
+  task_type: string;
+  priority: "low" | "medium" | "high";
+  status: string;
+  due_at: string | null;
+  created_at: string;
+  created_by_name: string | null;
+};
+
+type AttentionRow = {
+  brand_retailer_timing_id: string;
+  brand_id: string;
+  retailer_id: string;
+  retailer_name: string;
+  next_follow_up_at: string | null;
+  last_activity_at: string | null;
+  last_status_change_at: string | null;
+  attention_reasons: string[] | null;
+};
+
+type AgingRow = {
+  brand_retailer_timing_id: string;
+  brand_id: string;
+  retailer_id: string;
+  retailer_name: string;
+  account_status: string;
+  last_activity_at: string | null;
+  last_status_change_at: string | null;
+  aging_bucket: "30+ days" | "60+ days";
+};
+
+type Brand = {
+  id: string;
+  name: string;
+};
+
+type TimingRow = {
+  id: string;
+  brand_id: string;
+  retailer_id: string;
+  account_status:
+    | "active_account"
+    | "cultivate_does_not_rep"
+    | "not_a_target_account"
+    | "retailer_declined"
+    | "waiting_for_retailer_to_publish_review"
+    | "under_review"
+    | "open_review"
+    | "working_to_secure_anchor_account"
+    | "upcoming_review";
+  category_review_date: string | null;
+  reset_date: string | null;
+  next_follow_up_at: string | null;
+};
+
+type Retailer = {
+  id: string;
+  name: string;
+  banner: string | null;
+};
+
+type UpcomingItem = {
+  id: string;
+  brand_id: string;
+  brand_name: string;
+  retailer_id: string;
+  retailer_name: string;
+  retailer_headline: string;
+  milestone_type: "Category Review" | "Reset Date" | "Follow Up";
+  milestone_date: string;
+  account_status: TimingRow["account_status"];
+};
+
+type ClientMessageInboxRow = {
+  id: string;
+  brand_id: string;
+  retailer_id: string;
+  sender_id: string | null;
+  sender_name: string | null;
+  body: string;
+  created_at: string;
+};
+
+type ActivityRow = {
+  user_id: string;
+  brand_id: string | null;
+  retailer_id: string | null;
+  created_at: string;
+};
+
+type LeaderboardRow = {
+  user_id: string;
+  full_name: string;
+  accountsTouched: number;
+  activityCount: number;
+};
+
+function todayISO() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function addDaysISO(iso: string, days: number) {
+  const d = new Date(iso + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function isBetweenInclusive(dateISO: string, startISO: string, endISO: string) {
+  return dateISO >= startISO && dateISO <= endISO;
+}
+
+function statusLabel(status: TimingRow["account_status"] | string) {
+  switch (status) {
+    case "active_account":
+      return "Active Account";
+    case "open_review":
+      return "In Progress";
+    case "under_review":
+      return "Under Review";
+    case "working_to_secure_anchor_account":
+      return "Distributor Required";
+    case "waiting_for_retailer_to_publish_review":
+      return "Awaiting Retailer Decision";
+    case "upcoming_review":
+      return "Upcoming Review";
+    case "not_a_target_account":
+      return "Not a Target";
+    case "cultivate_does_not_rep":
+      return "Not Managed by Cultivate";
+    case "retailer_declined":
+      return "Retailer Declined";
+    default:
+      return status;
+  }
+}
+
+function attentionReasonLabel(reason: string) {
+  switch (reason) {
+    case "follow_up_overdue":
+      return "Follow-up overdue";
+    case "no_activity_logged":
+      return "No activity logged";
+    case "inactive_1_month":
+      return "Inactive 1 month";
+    case "stage_stalled":
+      return "Stage stalled";
+    default:
+      return reason;
+  }
+}
+
+function prettyDate(value: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString();
+}
+
+function prettyDateTime(value: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleString();
+}
+
+export default function RepInboxPage() {
+  const router = useRouter();
+
+  const [role, setRole] = useState<Role>(null);
+  const [authorized, setAuthorized] = useState(false);
+  const [tasks, setTasks] = useState<RepTaskRow[]>([]);
+  const [attention, setAttention] = useState<AttentionRow[]>([]);
+  const [agingAccounts, setAgingAccounts] = useState<AgingRow[]>([]);
+  const [upcoming, setUpcoming] = useState<UpcomingItem[]>([]);
+  const [clientMessages, setClientMessages] = useState<ClientMessageInboxRow[]>([]);
+  const [brandsById, setBrandsById] = useState<Record<string, Brand>>({});
+  const [retailersById, setRetailersById] = useState<Record<string, Retailer>>({});
+  const [status, setStatus] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardRow[]>([]);
+  const [pulse, setPulse] = useState({
+    followUps: 0,
+    stalled: 0,
+    upcoming: 0,
+    reminders: 0,
+  });
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      setStatus("");
+
+      const { data: authData } = await supabase.auth.getUser();
+      const userId = authData?.user?.id;
+
+      if (!userId) {
+        router.replace("/login");
+        return;
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", userId)
+        .single();
+
+      if (profileError) {
+        setStatus(profileError.message);
+        setLoading(false);
+        return;
+      }
+
+      const nextRole = (profile?.role as Role) ?? null;
+      setRole(nextRole);
+
+      if (nextRole === "client") {
+        router.replace("/brands");
+        return;
+      }
+
+      setAuthorized(true);
+
+      const today = todayISO();
+      const next30 = addDaysISO(today, 30);
+      const monthStart = new Date();
+      monthStart.setDate(1);
+      monthStart.setHours(0, 0, 0, 0);
+
+      let ownedRetailerIds: string[] = [];
+
+if (nextRole === "rep") {
+  const { data: ownedRetailers, error: ownedRetailersError } = await supabase
+    .from("retailers")
+    .select("id")
+    .eq("rep_owner_user_id", userId);
+
+  if (ownedRetailersError) {
+    setStatus(ownedRetailersError.message);
+    setLoading(false);
+    return;
+  }
+
+  ownedRetailerIds = (ownedRetailers ?? []).map((r) => r.id);
+}
+
+const followUpCountPromise =
+  nextRole === "rep"
+    ? ownedRetailerIds.length === 0
+      ? Promise.resolve({ count: 0, error: null })
+      : supabase
+          .from("brand_retailer_timing")
+          .select("*", { count: "exact", head: true })
+          .in("retailer_id", ownedRetailerIds)
+          .lt("next_follow_up_at", new Date().toISOString())
+    : supabase
+        .from("brand_retailer_timing")
+        .select("*", { count: "exact", head: true })
+        .lt("next_follow_up_at", new Date().toISOString());
+
+const timingPromise =
+  nextRole === "rep"
+    ? ownedRetailerIds.length === 0
+      ? Promise.resolve({ data: [], error: null })
+      : supabase
+          .from("brand_retailer_timing")
+          .select(
+            "id,brand_id,retailer_id,account_status,category_review_date,reset_date,next_follow_up_at"
+          )
+          .in("retailer_id", ownedRetailerIds)
+    : supabase
+        .from("brand_retailer_timing")
+        .select(
+          "id,brand_id,retailer_id,account_status,category_review_date,reset_date,next_follow_up_at"
+        );
+
+const clientMessagesPromise =
+  nextRole === "rep"
+    ? ownedRetailerIds.length === 0
+      ? Promise.resolve({ data: [], error: null })
+      : supabase
+          .from("brand_retailer_messages")
+          .select("id,brand_id,retailer_id,sender_id,sender_name,body,created_at")
+          .eq("visibility", "client")
+          .in("retailer_id", ownedRetailerIds)
+          .neq("sender_id", userId)
+          .order("created_at", { ascending: false })
+          .limit(50)
+    : supabase
+        .from("brand_retailer_messages")
+        .select("id,brand_id,retailer_id,sender_id,sender_name,body,created_at")
+        .eq("visibility", "client")
+        .neq("sender_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+      const [
+        followUpCountResult,
+        tasksResult,
+        attentionResult,
+        timingResult,
+        clientMessagesResult,
+        agingResult,
+        activitiesResult,
+      ] = await Promise.all([
+        followUpCountPromise,
+        supabase.rpc("get_my_rep_tasks", {
+          p_status: "open",
+          p_limit: 50,
+          p_offset: 0,
+        }),
+        supabase.rpc("get_rep_attention_queue", {
+          p_brand_id: null,
+          p_limit: 50,
+          p_offset: 0,
+        }),
+        timingPromise,
+        clientMessagesPromise,
+        supabase.rpc("get_rep_aging_accounts", {
+          p_limit: 50,
+          p_offset: 0,
+        }),
+        supabase
+          .from("activities")
+          .select("user_id,brand_id,retailer_id,created_at")
+          .gte("created_at", monthStart.toISOString()),
+      ]);
+
+      const taskRows = (tasksResult.data as RepTaskRow[]) ?? [];
+      const attentionRows = (attentionResult.data as AttentionRow[]) ?? [];
+      const clientMessageRows =
+        (clientMessagesResult.data as ClientMessageInboxRow[]) ?? [];
+      const agingRows = (agingResult.data as AgingRow[]) ?? [];
+      const followUps = followUpCountResult.count ?? 0;
+      const activityRows = (activitiesResult.data as ActivityRow[]) ?? [];
+
+      if (tasksResult.error) {
+        setStatus(tasksResult.error.message);
+      } else {
+        setTasks(taskRows);
+      }
+
+      if (attentionResult.error) {
+        setStatus((prev) => prev || attentionResult.error.message);
+      } else {
+        setAttention(attentionRows);
+      }
+
+if (clientMessagesResult.error) {
+  setStatus((prev) => prev || clientMessagesResult.error.message);
+} else {
+  let unreadClientMessages = clientMessageRows;
+
+  if (clientMessageRows.length > 0) {
+    const messageIds = clientMessageRows.map((m) => m.id);
+
+    const { data: readRows, error: readError } = await supabase
+      .from("message_reads")
+      .select("message_id")
+      .eq("user_id", userId)
+      .in("message_id", messageIds);
+
+    if (readError) {
+      setStatus((prev) => prev || readError.message);
+    } else {
+      const readIds = new Set((readRows ?? []).map((r) => r.message_id));
+      unreadClientMessages = clientMessageRows.filter((m) => !readIds.has(m.id));
+    }
+  }
+
+  setClientMessages(unreadClientMessages);
+}
+
+      if (agingResult.error) {
+        setStatus((prev) => prev || agingResult.error.message);
+      } else {
+        setAgingAccounts(agingRows);
+      }
+
+      if (timingResult.error) {
+        setStatus((prev) => prev || timingResult.error.message);
+        setUpcoming([]);
+        setLoading(false);
+        return;
+      }
+
+      const timingRows = ((timingResult.data as TimingRow[]) ?? []).filter((row) => {
+        return (
+          (row.category_review_date &&
+            isBetweenInclusive(row.category_review_date, today, next30)) ||
+          (row.reset_date &&
+            isBetweenInclusive(row.reset_date, today, next30)) ||
+          (row.next_follow_up_at &&
+            isBetweenInclusive(row.next_follow_up_at.slice(0, 10), today, next30))
+        );
+      });
+
+      const brandIds = [
+        ...new Set([
+          ...timingRows.map((r) => r.brand_id),
+          ...clientMessageRows.map((m) => m.brand_id),
+          ...taskRows.map((t) => t.brand_id),
+          ...attentionRows.map((a) => a.brand_id),
+          ...agingRows.map((a) => a.brand_id),
+        ]),
+      ];
+
+      const retailerIds = [
+        ...new Set([
+          ...timingRows.map((r) => r.retailer_id),
+          ...clientMessageRows.map((m) => m.retailer_id),
+          ...taskRows.map((t) => t.retailer_id),
+          ...attentionRows.map((a) => a.retailer_id),
+          ...agingRows.map((a) => a.retailer_id),
+        ]),
+      ];
+
+      const [brandsResult, retailersResult] = await Promise.all([
+        brandIds.length
+          ? supabase.from("brands").select("id,name").in("id", brandIds)
+          : Promise.resolve({ data: [], error: null }),
+        retailerIds.length
+          ? supabase.from("retailers").select("id,name,banner").in("id", retailerIds)
+          : Promise.resolve({ data: [], error: null }),
+      ]);
+
+      if (brandsResult.error) {
+        setStatus((prev) => prev || brandsResult.error.message);
+      }
+
+      if (retailersResult.error) {
+        setStatus((prev) => prev || retailersResult.error.message);
+      }
+
+      const nextBrandsById: Record<string, Brand> = {};
+      ((brandsResult.data as Brand[]) ?? []).forEach((b) => {
+        nextBrandsById[b.id] = b;
+      });
+      setBrandsById(nextBrandsById);
+
+      const nextRetailersById: Record<string, Retailer> = {};
+      ((retailersResult.data as Retailer[]) ?? []).forEach((r) => {
+        nextRetailersById[r.id] = r;
+      });
+      setRetailersById(nextRetailersById);
+
+      const activityUserIds = [
+        ...new Set(activityRows.map((row) => row.user_id).filter(Boolean)),
+      ];
+
+      let nextLeaderboard: LeaderboardRow[] = [];
+
+      if (activityUserIds.length > 0) {
+        const { data: activityProfiles, error: activityProfilesError } = await supabase
+          .from("profiles")
+          .select("id,full_name,role")
+          .in("id", activityUserIds);
+
+        if (activityProfilesError) {
+          setStatus((prev) => prev || activityProfilesError.message);
+        } else {
+          const profilesById: Record<string, { full_name: string; role: string }> = {};
+
+          ((activityProfiles as { id: string; full_name: string; role: string }[]) ?? []).forEach(
+            (profile) => {
+              profilesById[profile.id] = {
+                full_name: profile.full_name,
+                role: profile.role,
+              };
+            }
+          );
+
+          const grouped: Record<
+            string,
+            { full_name: string; activityCount: number; touched: Set<string> }
+          > = {};
+
+          activityRows.forEach((row) => {
+            const profile = profilesById[row.user_id];
+            if (!profile) return;
+            if (profile.role !== "rep" && profile.role !== "admin") return;
+
+            if (!grouped[row.user_id]) {
+              grouped[row.user_id] = {
+                full_name: profile.full_name || "Unknown",
+                activityCount: 0,
+                touched: new Set<string>(),
+              };
+            }
+
+            grouped[row.user_id].activityCount += 1;
+
+            if (row.brand_id && row.retailer_id) {
+              grouped[row.user_id].touched.add(`${row.brand_id}:${row.retailer_id}`);
+            }
+          });
+
+          nextLeaderboard = Object.entries(grouped)
+            .map(([user_id, value]) => ({
+              user_id,
+              full_name: value.full_name,
+              accountsTouched: value.touched.size,
+              activityCount: value.activityCount,
+            }))
+            .sort((a, b) => {
+              if (b.accountsTouched !== a.accountsTouched) {
+                return b.accountsTouched - a.accountsTouched;
+              }
+              return b.activityCount - a.activityCount;
+            });
+        }
+      }
+
+      setLeaderboard(nextLeaderboard);
+
+      const upcomingItems: UpcomingItem[] = [];
+
+      timingRows.forEach((row) => {
+        const brand = nextBrandsById[row.brand_id];
+        const retailer = nextRetailersById[row.retailer_id];
+        const retailerHeadline =
+          retailer?.banner?.trim() ? retailer.banner : retailer?.name ?? "Retailer";
+
+        if (
+          row.category_review_date &&
+          isBetweenInclusive(row.category_review_date, today, next30)
+        ) {
+          upcomingItems.push({
+            id: `${row.id}-category_review_date`,
+            brand_id: row.brand_id,
+            brand_name: brand?.name ?? "Brand",
+            retailer_id: row.retailer_id,
+            retailer_name: retailer?.name ?? "Retailer",
+            retailer_headline: retailerHeadline,
+            milestone_type: "Category Review",
+            milestone_date: row.category_review_date,
+            account_status: row.account_status,
+          });
+        }
+
+        if (row.reset_date && isBetweenInclusive(row.reset_date, today, next30)) {
+          upcomingItems.push({
+            id: `${row.id}-reset_date`,
+            brand_id: row.brand_id,
+            brand_name: brand?.name ?? "Brand",
+            retailer_id: row.retailer_id,
+            retailer_name: retailer?.name ?? "Retailer",
+            retailer_headline: retailerHeadline,
+            milestone_type: "Reset Date",
+            milestone_date: row.reset_date,
+            account_status: row.account_status,
+          });
+        }
+
+        if (
+          row.next_follow_up_at &&
+          isBetweenInclusive(row.next_follow_up_at.slice(0, 10), today, next30)
+        ) {
+          upcomingItems.push({
+            id: `${row.id}-next_follow_up_at`,
+            brand_id: row.brand_id,
+            brand_name: brand?.name ?? "Brand",
+            retailer_id: row.retailer_id,
+            retailer_name: retailer?.name ?? "Retailer",
+            retailer_headline: retailerHeadline,
+            milestone_type: "Follow Up",
+            milestone_date: row.next_follow_up_at.slice(0, 10),
+            account_status: row.account_status,
+          });
+        }
+      });
+
+      upcomingItems.sort((a, b) => a.milestone_date.localeCompare(b.milestone_date));
+      setUpcoming(upcomingItems);
+
+      setPulse({
+        followUps,
+        stalled: agingRows.length,
+        upcoming: upcomingItems.length,
+        reminders: taskRows.length,
+      });
+
+      setLoading(false);
+    }
+
+    load();
+  }, [router]);
+
+  const counts = useMemo(
+    () => ({
+      messages: clientMessages.length,
+      nudges: tasks.length,
+      upcoming: upcoming.length,
+      aging: agingAccounts.length,
+      attention: attention.length,
+    }),
+    [clientMessages, tasks, upcoming, agingAccounts, attention]
+  );
+
+  if (loading) {
+    return (
+      <div className="p-6 text-sm text-muted-foreground">
+        Loading inbox…
+      </div>
+    );
+  }
+
+  if (!authorized || role === "client") {
+    return null;
+  }
+
+  return (
+    <div className="space-y-6 p-6">
+      <div>
+        <h1 className="text-3xl font-bold text-foreground">Rep Inbox</h1>
+        <p className="mt-1 text-muted-foreground">
+          Client messages, MacGruber reminders, upcoming milestones, aging
+          accounts, and accounts that need attention.
+        </p>
+        {status ? <p className="mt-2 text-sm text-red-600">{status}</p> : null}
+      </div>
+
+      <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+        <div className="mb-3 text-sm font-semibold text-foreground">
+          Rep Performance Pulse
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          <PulseMetric label="Needs Follow Up" value={pulse.followUps} />
+          <PulseMetric label="Stalled Accounts" value={pulse.stalled} />
+          <PulseMetric label="Upcoming Reviews" value={pulse.upcoming} />
+          <PulseMetric label="Open Reminders" value={pulse.reminders} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <SummaryCard label="Client Messages" value={counts.messages} highlight />
+        <SummaryCard label="MacGruber Reminders" value={counts.nudges} />
+        <SummaryCard label="Upcoming 30 Days" value={counts.upcoming} />
+        <SummaryCard label="Aging Accounts" value={counts.aging} />
+        <SummaryCard label="Needs Attention" value={counts.attention} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
+        <section className="space-y-4 rounded-xl border border-border bg-card p-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-foreground">Client Messages</h2>
+          </div>
+
+          {clientMessages.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No recent client messages.</p>
+          ) : (
+            <div className="space-y-3">
+              {clientMessages.map((message) => {
+                const brandName = brandsById[message.brand_id]?.name ?? "Brand";
+                const retailer = retailersById[message.retailer_id];
+                const retailerHeadline =
+                  retailer?.banner?.trim()
+                    ? retailer.banner
+                    : retailer?.name ?? "Retailer";
+
+                return (
+                  <Link
+                    key={message.id}
+                    href={`/brands/${message.brand_id}/retailers/${message.retailer_id}`}
+                    className="block rounded-lg border border-border bg-card p-3 transition-colors hover:bg-accent"
+                  >
+                    <div className="font-medium text-foreground">{retailerHeadline}</div>
+                    <div className="mt-1 text-sm text-muted-foreground">{brandName}</div>
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      {message.sender_name ?? "Unknown"} • {prettyDateTime(message.created_at)}
+                    </div>
+                    <div className="mt-2 line-clamp-3 text-sm text-foreground/85">
+                      {message.body}
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        <section className="space-y-4 rounded-xl border border-border bg-card p-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-foreground">MacGruber Reminders</h2>
+          </div>
+
+          {tasks.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No open reminders.</p>
+          ) : (
+            <div className="space-y-3">
+              {tasks.map((task) => (
+                <Link
+                  key={task.task_id}
+                  href={`/brands/${task.brand_id}/retailers`}
+                  className="block rounded-lg border border-border bg-card p-3 transition-colors hover:bg-accent"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="font-medium text-foreground">{task.title}</div>
+                    <PriorityBadge priority={task.priority} />
+                  </div>
+                  <div className="mt-1 text-sm text-muted-foreground">{task.retailer_name}</div>
+                  {task.details ? (
+                    <div className="mt-2 line-clamp-3 text-sm text-foreground/85">
+                      {task.details}
+                    </div>
+                  ) : null}
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    From {task.created_by_name ?? "Manager"}
+                    {task.due_at ? ` • Due ${prettyDate(task.due_at)}` : ""}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="space-y-4 rounded-xl border border-border bg-card p-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-foreground">Upcoming 30 Days</h2>
+          </div>
+
+          {upcoming.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No upcoming milestones in the next 30 days.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {upcoming.map((item) => (
+                <Link
+                  key={item.id}
+                  href={`/brands/${item.brand_id}/retailers/${item.retailer_id}`}
+                  className="block rounded-lg border border-border bg-card p-3 transition-colors hover:bg-accent"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="font-medium text-foreground">{item.retailer_headline}</div>
+                    <div className="text-sm font-medium text-foreground">
+                      {prettyDate(item.milestone_date)}
+                    </div>
+                  </div>
+                  <div className="mt-1 text-sm text-muted-foreground">{item.brand_name}</div>
+                  <div className="mt-2 text-sm text-foreground/85">
+                    {item.milestone_type} • {statusLabel(item.account_status)}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="space-y-4 rounded-xl border border-border bg-card p-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-foreground">Aging Accounts</h2>
+          </div>
+
+          {agingAccounts.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No aging accounts right now.</p>
+          ) : (
+            <div className="space-y-3">
+              {agingAccounts.map((item) => {
+                const brandName = brandsById[item.brand_id]?.name ?? "Brand";
+                const retailer = retailersById[item.retailer_id];
+                const retailerHeadline =
+                  retailer?.banner?.trim()
+                    ? retailer.banner
+                    : retailer?.name ?? item.retailer_name ?? "Retailer";
+
+                return (
+                  <Link
+                    key={item.brand_retailer_timing_id}
+                    href={`/brands/${item.brand_id}/retailers/${item.retailer_id}`}
+                    className="block rounded-lg border border-border bg-card p-3 transition-colors hover:bg-accent"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="font-medium text-foreground">{retailerHeadline}</div>
+                      <AgingBadge aging={item.aging_bucket} />
+                    </div>
+                    <div className="mt-1 text-sm text-muted-foreground">{brandName}</div>
+                    <div className="mt-2 text-sm text-foreground/85">
+                      {statusLabel(item.account_status)}
+                    </div>
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      Last activity: {prettyDate(item.last_activity_at)}
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        {role === "admin" ? (
+          <section className="space-y-4 rounded-xl border border-border bg-card p-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-foreground">
+                Team Activity This Month
+              </h2>
+            </div>
+
+            {leaderboard.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No team activity recorded yet this month.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {leaderboard.map((row, index) => (
+                  <div
+                    key={row.user_id}
+                    className="flex items-center justify-between gap-4 rounded-lg border border-border bg-card p-3"
+                  >
+                    <div>
+                      <div className="font-medium text-foreground">
+                        {index + 1}. {row.full_name}
+                      </div>
+                      <div className="mt-1 text-sm text-muted-foreground">
+                        {row.accountsTouched} accounts touched
+                      </div>
+                    </div>
+
+                    <div className="text-sm text-foreground/85">
+                      {row.activityCount} activities
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function SummaryCard({
+  label,
+  value,
+  highlight = false,
+}: {
+  label: string;
+  value: number;
+  highlight?: boolean;
+}) {
+  return (
+    <div
+      className={
+        highlight
+          ? "rounded-lg border border-primary/30 bg-primary/10 p-4"
+          : "rounded-lg border border-border bg-card p-4"
+      }
+    >
+      <div className="text-2xl font-bold text-foreground">{value}</div>
+      <div className="mt-1 text-sm text-muted-foreground">{label}</div>
+    </div>
+  );
+}
+
+function PriorityBadge({
+  priority,
+}: {
+  priority: "low" | "medium" | "high";
+}) {
+  const label =
+    priority === "high" ? "High" : priority === "medium" ? "Medium" : "Low";
+
+  return (
+    <span className="rounded-full border border-border bg-secondary px-2 py-1 text-xs text-foreground">
+      {label}
+    </span>
+  );
+}
+
+function AgingBadge({ aging }: { aging: "30+ days" | "60+ days" | string }) {
+  const isSixty = aging === "60+ days";
+
+  return (
+    <span
+      className={
+        isSixty
+          ? "rounded-full border border-orange-200 bg-orange-100 px-2 py-1 text-xs text-orange-800"
+          : "rounded-full border border-yellow-200 bg-yellow-100 px-2 py-1 text-xs text-yellow-800"
+      }
+    >
+      {aging}
+    </span>
+  );
+}
+
+function PulseMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-3">
+      <div className="text-xl font-bold text-foreground">{value}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
+    </div>
+  );
+}
