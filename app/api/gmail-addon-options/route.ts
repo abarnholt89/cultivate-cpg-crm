@@ -9,8 +9,8 @@ const supabase = createClient(
 export async function GET() {
   const { data: retailers, error: retailersError } = await supabase
     .from("retailers")
-    .select("id, name")
-    .order("name", { ascending: true });
+    .select("id, banner")
+    .order("banner", { ascending: true });
 
   const { data: brands, error: brandsError } = await supabase
     .from("brands")
@@ -37,7 +37,10 @@ export async function GET() {
   }
 
   return NextResponse.json({
-    retailers,
+    retailers: (retailers || []).map((r) => ({
+      id: r.id,
+      name: r.banner,
+    })),
     brands,
     activityTypes,
   });
