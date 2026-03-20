@@ -58,35 +58,6 @@ function extractPlainTextFromPayload(payload: any): string {
   return "";
 }
 
-function extractHtmlFromPayload(payload: any): string {
-  if (!payload) return "";
-
-  if (payload.mimeType === "text/html" && payload.body?.data) {
-    return decodeBase64Url(payload.body.data);
-  }
-
-  if (payload.parts?.length) {
-    for (const part of payload.parts) {
-      if (part.mimeType === "text/html" && part.body?.data) {
-        return decodeBase64Url(part.body.data);
-      }
-    }
-
-    for (const part of payload.parts) {
-      const nested = extractHtmlFromPayload(part);
-      if (nested) return nested;
-    }
-  }
-
-  return "";
-}
-
-function extractToken(text: string) {
-  if (!text) return null;
-  const match = text.match(/CRM_TOKEN:([A-Za-z0-9]+)/);
-  return match ? match[1] : null;
-}
-
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -146,9 +117,7 @@ export async function POST(req: Request) {
     for (const item of historyItems) {
       const candidateMessages = [
         ...(item.messages || []),
-        ...((item.messagesAdded || [])
-          .map((x: any) => x.message)
-          .filter(Boolean)),
+        ...((item.messagesAdded || []).map((x: any) => x.message).filter(Boolean)),
       ];
 
       for (const msg of candidateMessages) {
@@ -156,24 +125,28 @@ export async function POST(req: Request) {
         if (processedMessageIds.has(msg.id)) continue;
         processedMessageIds.add(msg.id);
 
-        console.log("📨 Considering message:", {
-          id: msg.id,
-          threadId: msg.threadId,
-          labelIds: msg.labelIds,
-        });
-
-        const fullMessage = await gmail.users.messages.get({
-          userId: "me",
-          id: msg.id,
-          format: "full",
-        });
+        let fullMessage;
+        try {
+          fullMessage = await gmail.users.messages.get({
+            userId: "me",
+            id: msg.id,
+            format: "full",
+          });
+        } catch (err: any) {
+          const status = err?.status || err?.code || err?.response?.status;
+          if (status === 404) {
+            console.log("⏭️ Gmail message no longer exists, skipping:", msg.id);
+            continue;
+          }
+          throw err;
+        }
 
         const payload = fullMessage.data.payload;
         const headers = payload?.headers || [];
-        const fullLabelIds = fullMessage.data.labelIds || [];
+        const labelIds = fullMessage.data.labelIds || [];
 
-        if (!fullLabelIds.includes("SENT")) {
-          console.log("⏭️ Skipping non-SENT message:", msg.id, fullLabelIds);
+        if (!labelIds.includes("SENT")) {
+          console.log("⏭️ Skipping non-SENT message:", msg.id, labelIds);
           continue;
         }
 
@@ -181,40 +154,30 @@ export async function POST(req: Request) {
         const from = extractHeader(headers, "From");
         const to = extractEmailAddresses(headers, "To");
         const threadId = fullMessage.data.threadId || null;
-
         const bodyText = extractPlainTextFromPayload(payload);
-        const bodyHtml = extractHtmlFromPayload(payload);
-        const token = extractToken(bodyText) || extractToken(bodyHtml);
 
-        console.log("✉️ Message parsed:", {
+        console.log("✉️ Processing sent email:", {
           messageId: msg.id,
-          threadId,
           subject,
-          token,
-          hasPlainText: !!bodyText,
-          hasHtml: !!bodyHtml,
+          threadId,
         });
 
-        if (!token) {
-          console.log("⚠️ No token found for message:", msg.id);
-          console.log("BODY TEXT:", bodyText);
-          console.log("BODY HTML:", bodyHtml);
-          continue;
-        }
-
-        const { data: tokenRow, error: tokenLookupError } = await supabase
-          .from("email_log_tokens")
+        const { data: pendingContext, error: pendingError } = await supabase
+          .from("gmail_pending_context")
           .select("*")
-          .eq("token", token)
+          .eq("gmail_email", emailAddress)
+          .is("used_at", null)
+          .order("created_at", { ascending: false })
+          .limit(1)
           .maybeSingle();
 
-        if (tokenLookupError) {
-          console.error("token lookup error", tokenLookupError);
+        if (pendingError) {
+          console.error("pending context lookup error", pendingError);
           continue;
         }
 
-        if (!tokenRow) {
-          console.log("No token row found for token:", token);
+        if (!pendingContext) {
+          console.log("No unused pending context found for:", emailAddress);
           continue;
         }
 
@@ -224,14 +187,14 @@ export async function POST(req: Request) {
         const { error: activityInsertError } = await supabase
           .from("crm_activities")
           .insert({
-            rep_id: tokenRow.rep_id,
-            retailer_id: tokenRow.retailer_id,
-            brand_id: tokenRow.brand_id,
-            activity_type_key: tokenRow.activity_type_key,
+            rep_id: pendingContext.rep_id,
+            retailer_id: pendingContext.retailer_id,
+            brand_id: pendingContext.brand_id,
+            activity_type_key: pendingContext.activity_type_key,
             source: "email",
             direction: "outbound",
             email_subject: subject,
-            email_body_raw: bodyText || bodyHtml,
+            email_body_raw: bodyText,
             summary: subject,
             client_visible_message: clientVisibleMessage,
             sent_at: new Date().toISOString(),
@@ -239,7 +202,6 @@ export async function POST(req: Request) {
             gmail_thread_id: threadId,
             sender_email: from,
             recipient_emails: to,
-            token,
           });
 
         if (activityInsertError) {
@@ -247,7 +209,21 @@ export async function POST(req: Request) {
           continue;
         }
 
-        console.log("✅ CRM activity inserted for token:", token);
+        const { error: pendingUpdateError } = await supabase
+          .from("gmail_pending_context")
+          .update({
+            used_at: new Date().toISOString(),
+          })
+          .eq("id", pendingContext.id);
+
+        if (pendingUpdateError) {
+          console.error("pending context update error", pendingUpdateError);
+        }
+
+        console.log(
+          "✅ CRM activity inserted using pending context:",
+          pendingContext.id
+        );
       }
     }
 

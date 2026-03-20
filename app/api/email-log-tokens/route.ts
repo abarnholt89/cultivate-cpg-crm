@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
@@ -18,31 +17,27 @@ function generateToken(length = 12) {
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const { repEmail, retailerId, brandId, activityTypeKey } = body;
+    const { repEmail, retailerId, brandId, activityTypeKey } = await req.json();
 
     if (!repEmail || !retailerId || !brandId || !activityTypeKey) {
-      return NextResponse.json(
+      return Response.json(
         { error: "Missing required fields" },
         { status: 400 }
       );
     }
 
-    const { data: repProfile, error: repLookupError } = await supabase
+    const { data: repProfile, error: repError } = await supabase
       .from("profiles")
       .select("id, email")
       .eq("email", repEmail)
       .maybeSingle();
 
-    if (repLookupError) {
-      return NextResponse.json(
-        { error: repLookupError.message },
-        { status: 500 }
-      );
+    if (repError) {
+      return Response.json({ error: repError.message }, { status: 500 });
     }
 
     if (!repProfile) {
-      return NextResponse.json(
+      return Response.json(
         { error: `No profile found for ${repEmail}` },
         { status: 404 }
       );
@@ -50,7 +45,7 @@ export async function POST(req: Request) {
 
     const token = generateToken();
 
-    const { error: insertError } = await supabase.from("email_log_tokens").insert({
+    const { error: tokenError } = await supabase.from("email_log_tokens").insert({
       token,
       rep_id: repProfile.id,
       retailer_id: retailerId,
@@ -58,18 +53,29 @@ export async function POST(req: Request) {
       activity_type_key: activityTypeKey,
     });
 
-    if (insertError) {
-      return NextResponse.json(
-        { error: insertError.message },
-        { status: 500 }
-      );
+    if (tokenError) {
+      return Response.json({ error: tokenError.message }, { status: 500 });
     }
 
-    return NextResponse.json({ token });
-  } catch (err) {
-    return NextResponse.json(
-      { error: "Invalid request body" },
-      { status: 400 }
+    const { error: pendingError } = await supabase
+      .from("gmail_pending_context")
+      .insert({
+        rep_id: repProfile.id,
+        gmail_email: repEmail,
+        retailer_id: retailerId,
+        brand_id: brandId,
+        activity_type_key: activityTypeKey,
+      });
+
+    if (pendingError) {
+      return Response.json({ error: pendingError.message }, { status: 500 });
+    }
+
+    return Response.json({ ok: true, token });
+  } catch (err: any) {
+    return Response.json(
+      { error: err.message || "Unknown error" },
+      { status: 500 }
     );
   }
 }
