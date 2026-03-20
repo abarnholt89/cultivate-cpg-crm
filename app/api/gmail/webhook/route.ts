@@ -173,14 +173,17 @@ if (!isSentLabel && !isFromMailbox) {
           threadId,
         });
 
-        const { data: pendingContext, error: pendingError } = await supabase
-          .from("gmail_pending_context")
-          .select("*")
-          .eq("gmail_email", emailAddress)
-          .is("used_at", null)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+
+const { data: pendingContext, error: pendingError } = await supabase
+  .from("gmail_pending_context")
+  .select("*")
+  .eq("gmail_email", emailAddress)
+  .is("used_at", null)
+  .gte("created_at", fiveMinutesAgo)
+  .order("created_at", { ascending: false })
+  .limit(1)
+  .maybeSingle();
 
         if (pendingError) {
           console.error("pending context lookup error", pendingError);
@@ -191,6 +194,7 @@ if (!isSentLabel && !isFromMailbox) {
           console.log("No unused pending context found for:", emailAddress);
           continue;
         }
+        console.log("🧩 Matched pending context:", pendingContext);
 
         const clientVisibleMessage =
           "Email activity logged for selected retailer and brand.";
