@@ -20,7 +20,8 @@ function extractEmailAddresses(headers: any[] = [], name: string) {
 
 function extractHeader(headers: any[] = [], name: string) {
   return (
-    headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value || ""
+    headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ||
+    ""
   );
 }
 
@@ -32,6 +33,10 @@ function decodeBase64Url(input?: string) {
 
 function extractPlainTextFromPayload(payload: any): string {
   if (!payload) return "";
+
+  if (payload.mimeType === "text/plain" && payload.body?.data) {
+    return decodeBase64Url(payload.body.data);
+  }
 
   if (payload.body?.data) {
     return decodeBase64Url(payload.body.data);
@@ -53,10 +58,33 @@ function extractPlainTextFromPayload(payload: any): string {
   return "";
 }
 
+function extractHtmlFromPayload(payload: any): string {
+  if (!payload) return "";
+
+  if (payload.mimeType === "text/html" && payload.body?.data) {
+    return decodeBase64Url(payload.body.data);
+  }
+
+  if (payload.parts?.length) {
+    for (const part of payload.parts) {
+      if (part.mimeType === "text/html" && part.body?.data) {
+        return decodeBase64Url(part.body.data);
+      }
+    }
+
+    for (const part of payload.parts) {
+      const nested = extractHtmlFromPayload(part);
+      if (nested) return nested;
+    }
+  }
+
+  return "";
+}
+
 function extractToken(text: string) {
-  const htmlCommentMatch = text.match(/CRM_TOKEN:([A-Za-z0-9]+)/);
-  if (htmlCommentMatch) return htmlCommentMatch[1];
-  return null;
+  if (!text) return null;
+  const match = text.match(/CRM_TOKEN:([A-Za-z0-9]+)/);
+  return match ? match[1] : null;
 }
 
 export async function POST(req: Request) {
@@ -95,6 +123,7 @@ export async function POST(req: Request) {
 
     const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL!;
     const privateKey = process.env.GOOGLE_PRIVATE_KEY!;
+
     const auth = new google.auth.JWT({
       email: clientEmail,
       key: privateKey,
@@ -104,10 +133,10 @@ export async function POST(req: Request) {
 
     const gmail = google.gmail({ version: "v1", auth });
 
-const history = await gmail.users.history.list({
-  userId: "me",
-  startHistoryId: watchRow.gmail_history_id,
-});
+    const history = await gmail.users.history.list({
+      userId: "me",
+      startHistoryId: watchRow.gmail_history_id,
+    });
 
     console.log("📚 Gmail history full:", JSON.stringify(history.data, null, 2));
 
@@ -117,12 +146,16 @@ const history = await gmail.users.history.list({
       const messages = item.messagesAdded || [];
 
       for (const added of messages) {
-        const messageId = added.message?.id;
-        if (!messageId) continue;
+        const msg = added.message;
+        if (!msg?.id) continue;
+
+        if (!msg.labelIds?.includes("SENT")) continue;
+
+        console.log("📨 Processing SENT message:", msg.id);
 
         const fullMessage = await gmail.users.messages.get({
           userId: "me",
-          id: messageId,
+          id: msg.id,
           format: "full",
         });
 
@@ -135,16 +168,24 @@ const history = await gmail.users.history.list({
         const threadId = fullMessage.data.threadId || null;
 
         const bodyText = extractPlainTextFromPayload(payload);
-        const token = extractToken(bodyText);
+        const bodyHtml = extractHtmlFromPayload(payload);
+        const token = extractToken(bodyText) || extractToken(bodyHtml);
 
         console.log("✉️ Message parsed:", {
-          messageId,
+          messageId: msg.id,
           threadId,
           subject,
           token,
+          hasPlainText: !!bodyText,
+          hasHtml: !!bodyHtml,
         });
 
-        if (!token) continue;
+        if (!token) {
+          console.log("⚠️ No token found for message:", msg.id);
+          console.log("BODY TEXT:", bodyText);
+          console.log("BODY HTML:", bodyHtml);
+          continue;
+        }
 
         const { data: tokenRow, error: tokenLookupError } = await supabase
           .from("email_log_tokens")
@@ -162,7 +203,8 @@ const history = await gmail.users.history.list({
           continue;
         }
 
-        const clientVisibleMessage = `Email activity logged for selected retailer and brand.`;
+        const clientVisibleMessage =
+          "Email activity logged for selected retailer and brand.";
 
         const { error: activityInsertError } = await supabase
           .from("crm_activities")
@@ -174,11 +216,11 @@ const history = await gmail.users.history.list({
             source: "email",
             direction: "outbound",
             email_subject: subject,
-            email_body_raw: bodyText,
+            email_body_raw: bodyText || bodyHtml,
             summary: subject,
             client_visible_message: clientVisibleMessage,
             sent_at: new Date().toISOString(),
-            gmail_message_id: messageId,
+            gmail_message_id: msg.id,
             gmail_thread_id: threadId,
             sender_email: from,
             recipient_emails: to,
