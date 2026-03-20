@@ -141,17 +141,26 @@ export async function POST(req: Request) {
     console.log("📚 Gmail history full:", JSON.stringify(history.data, null, 2));
 
     const historyItems = history.data.history || [];
+    const processedMessageIds = new Set<string>();
 
     for (const item of historyItems) {
-      const messages = item.messagesAdded || [];
+      const candidateMessages = [
+        ...(item.messages || []),
+        ...((item.messagesAdded || [])
+          .map((x: any) => x.message)
+          .filter(Boolean)),
+      ];
 
-      for (const added of messages) {
-        const msg = added.message;
+      for (const msg of candidateMessages) {
         if (!msg?.id) continue;
+        if (processedMessageIds.has(msg.id)) continue;
+        processedMessageIds.add(msg.id);
 
-        if (!msg.labelIds?.includes("SENT")) continue;
-
-        console.log("📨 Processing SENT message:", msg.id);
+        console.log("📨 Considering message:", {
+          id: msg.id,
+          threadId: msg.threadId,
+          labelIds: msg.labelIds,
+        });
 
         const fullMessage = await gmail.users.messages.get({
           userId: "me",
@@ -161,6 +170,12 @@ export async function POST(req: Request) {
 
         const payload = fullMessage.data.payload;
         const headers = payload?.headers || [];
+        const fullLabelIds = fullMessage.data.labelIds || [];
+
+        if (!fullLabelIds.includes("SENT")) {
+          console.log("⏭️ Skipping non-SENT message:", msg.id, fullLabelIds);
+          continue;
+        }
 
         const subject = extractHeader(headers, "Subject");
         const from = extractHeader(headers, "From");
