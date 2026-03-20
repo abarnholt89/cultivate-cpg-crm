@@ -141,18 +141,29 @@ export async function POST(req: Request) {
           throw err;
         }
 
-        const payload = fullMessage.data.payload;
-        const headers = payload?.headers || [];
-        const labelIds = fullMessage.data.labelIds || [];
+ const payload = fullMessage.data.payload;
+const headers = payload?.headers || [];
+const labelIds = fullMessage.data.labelIds || [];
 
-        if (!labelIds.includes("SENT")) {
-          console.log("⏭️ Skipping non-SENT message:", msg.id, labelIds);
-          continue;
-        }
+const subject = extractHeader(headers, "Subject");
+const from = extractHeader(headers, "From");
+const to = extractEmailAddresses(headers, "To");
 
-        const subject = extractHeader(headers, "Subject");
-        const from = extractHeader(headers, "From");
-        const to = extractEmailAddresses(headers, "To");
+const fromLower = from.toLowerCase();
+const mailboxLower = String(emailAddress).toLowerCase();
+
+const isSentLabel = labelIds.includes("SENT");
+const isFromMailbox = fromLower.includes(mailboxLower);
+
+if (!isSentLabel && !isFromMailbox) {
+  console.log("⏭️ Skipping non-outbound message:", {
+    messageId: msg.id,
+    labelIds,
+    from,
+    subject,
+  });
+  continue;
+}
         const threadId = fullMessage.data.threadId || null;
         const bodyText = extractPlainTextFromPayload(payload);
 
