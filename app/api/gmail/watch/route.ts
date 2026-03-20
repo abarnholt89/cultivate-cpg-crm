@@ -8,9 +8,33 @@ export async function POST(req: Request) {
       return Response.json({ error: "Missing gmailEmail" }, { status: 400 });
     }
 
-    const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL!;
-    const privateKey = process.env.GOOGLE_PRIVATE_KEY!.replace(/\\n/g, "\n");
-    const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID!;
+    const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    const privateKeyRaw = process.env.GOOGLE_PRIVATE_KEY;
+    const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
+    const topic = process.env.GMAIL_PUBSUB_TOPIC || "gmail-updates";
+
+    if (!clientEmail) {
+      return Response.json(
+        { ok: false, error: "Missing GOOGLE_SERVICE_ACCOUNT_EMAIL" },
+        { status: 500 }
+      );
+    }
+
+    if (!privateKeyRaw) {
+      return Response.json(
+        { ok: false, error: "Missing GOOGLE_PRIVATE_KEY" },
+        { status: 500 }
+      );
+    }
+
+    if (!projectId) {
+      return Response.json(
+        { ok: false, error: "Missing GOOGLE_CLOUD_PROJECT_ID" },
+        { status: 500 }
+      );
+    }
+
+    const privateKey = privateKeyRaw;
 
     const auth = new google.auth.JWT({
       email: clientEmail,
@@ -21,7 +45,7 @@ export async function POST(req: Request) {
 
     const gmail = google.gmail({ version: "v1", auth });
 
-    const topicName = `projects/${projectId}/topics/gmail-updates`;
+    const topicName = `projects/${projectId}/topics/${topic}`;
 
     const res = await gmail.users.watch({
       userId: "me",
@@ -43,7 +67,7 @@ export async function POST(req: Request) {
     return Response.json(
       {
         ok: false,
-        error: err.message,
+        error: err.message || "Unknown error",
       },
       { status: 500 }
     );
