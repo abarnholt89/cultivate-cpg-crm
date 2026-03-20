@@ -104,14 +104,12 @@ export async function POST(req: Request) {
 
     const gmail = google.gmail({ version: "v1", auth });
 
-    const history = await gmail.users.history.list({
-      userId: "me",
-      startHistoryId: watchRow.gmail_history_id,
-      historyTypes: ["messageAdded"],
-      labelId: "SENT",
-    });
+const history = await gmail.users.history.list({
+  userId: "me",
+  startHistoryId: watchRow.gmail_history_id,
+});
 
-    console.log("📚 Gmail history:", history.data);
+    console.log("📚 Gmail history full:", JSON.stringify(history.data, null, 2));
 
     const historyItems = history.data.history || [];
 
