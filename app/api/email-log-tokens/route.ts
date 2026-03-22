@@ -45,16 +45,31 @@ export async function POST(req: Request) {
 
     const token = generateToken();
 
-    const { error: tokenError } = await supabase.from("email_log_tokens").insert({
-      token,
-      rep_id: repProfile.id,
-      retailer_id: retailerId,
-      brand_id: brandId,
-      activity_type_key: activityTypeKey,
-    });
+    const { error: tokenError } = await supabase
+      .from("email_log_tokens")
+      .insert({
+        token,
+        rep_id: repProfile.id,
+        retailer_id: retailerId,
+        brand_id: brandId,
+        activity_type_key: activityTypeKey,
+      });
 
     if (tokenError) {
       return Response.json({ error: tokenError.message }, { status: 500 });
+    }
+
+    // Close out any older unused pending contexts for this rep/email
+    const { error: cleanupError } = await supabase
+      .from("gmail_pending_context")
+      .update({
+        used_at: new Date().toISOString(),
+      })
+      .eq("gmail_email", repEmail)
+      .is("used_at", null);
+
+    if (cleanupError) {
+      return Response.json({ error: cleanupError.message }, { status: 500 });
     }
 
     const { error: pendingError } = await supabase

@@ -58,6 +58,82 @@ function extractPlainTextFromPayload(payload: any): string {
   return "";
 }
 
+function buildClientMessage(activityKind: string, activityTypeKey: string, subject: string) {
+  if (activityKind === "outbound_initial") {
+    if (activityTypeKey === "submission") {
+      return "Rep submitted products to the retailer.";
+    }
+    if (activityTypeKey === "follow_up") {
+      return "Rep initiated outreach and follow-up with the retailer.";
+    }
+    return "Rep sent an outreach email to the retailer.";
+  }
+
+  if (activityKind === "outbound_follow_up") {
+    return "Rep followed up with the retailer.";
+  }
+
+  if (activityKind === "retailer_reply") {
+    return "Retailer replied. Summary draft ready for review.";
+  }
+
+  return subject || "Email activity logged.";
+}
+
+function simpleAiDraftSummary(bodyText: string, subject: string) {
+  const text = (bodyText || "").trim();
+
+  if (!text) {
+    return {
+      aiSummary: "Retailer replied by email.",
+      clientDraftSummary: "Retailer responded by email.",
+      approvalStatus: "pending_review",
+    };
+  }
+
+  const lower = text.toLowerCase();
+
+  if (lower.includes("sample")) {
+    return {
+      aiSummary: "Retailer replied and requested samples.",
+      clientDraftSummary: "Retailer responded positively and requested samples for evaluation.",
+      approvalStatus: "pending_review",
+    };
+  }
+
+  if (lower.includes("meeting") || lower.includes("call")) {
+    return {
+      aiSummary: "Retailer replied and requested a meeting or call.",
+      clientDraftSummary: "Retailer responded and is open to a meeting or call.",
+      approvalStatus: "pending_review",
+    };
+  }
+
+  if (lower.includes("not interested")) {
+    return {
+      aiSummary: "Retailer replied and indicated they are not interested at this time.",
+      clientDraftSummary: "Retailer responded and is not moving forward at this time.",
+      approvalStatus: "pending_review",
+    };
+  }
+
+  if (lower.includes("circle back") || lower.includes("follow up later") || lower.includes("reach back out")) {
+    return {
+      aiSummary: "Retailer replied and asked to reconnect later.",
+      clientDraftSummary: "Retailer responded and requested a later follow-up.",
+      approvalStatus: "pending_review",
+    };
+  }
+
+  return {
+    aiSummary: subject
+      ? `Retailer replied regarding "${subject}".`
+      : "Retailer replied by email.",
+    clientDraftSummary: "Retailer responded by email. Draft summary is ready for review.",
+    approvalStatus: "pending_review",
+  };
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -141,104 +217,255 @@ export async function POST(req: Request) {
           throw err;
         }
 
- const payload = fullMessage.data.payload;
-const headers = payload?.headers || [];
-const labelIds = fullMessage.data.labelIds || [];
+        const payload = fullMessage.data.payload;
+        const headers = payload?.headers || [];
+        const labelIds = fullMessage.data.labelIds || [];
 
-const subject = extractHeader(headers, "Subject");
-const from = extractHeader(headers, "From");
-const to = extractEmailAddresses(headers, "To");
-
-const fromLower = from.toLowerCase();
-const mailboxLower = String(emailAddress).toLowerCase();
-
-const isSentLabel = labelIds.includes("SENT");
-const isFromMailbox = fromLower.includes(mailboxLower);
-
-if (!isSentLabel && !isFromMailbox) {
-  console.log("⏭️ Skipping non-outbound message:", {
-    messageId: msg.id,
-    labelIds,
-    from,
-    subject,
-  });
-  continue;
-}
+        const subject = extractHeader(headers, "Subject");
+        const from = extractHeader(headers, "From");
+        const to = extractEmailAddresses(headers, "To");
         const threadId = fullMessage.data.threadId || null;
         const bodyText = extractPlainTextFromPayload(payload);
 
-        console.log("✉️ Processing sent email:", {
-          messageId: msg.id,
-          subject,
-          threadId,
-        });
+        const fromLower = from.toLowerCase();
+        const mailboxLower = String(emailAddress).toLowerCase();
 
-const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+        const isSentLabel = labelIds.includes("SENT");
+        const isFromMailbox = fromLower.includes(mailboxLower);
+        const isOutbound = isSentLabel || isFromMailbox;
+        const isInbound = !isOutbound;
 
-const { data: pendingContext, error: pendingError } = await supabase
-  .from("gmail_pending_context")
-  .select("*")
-  .eq("gmail_email", emailAddress)
-  .is("used_at", null)
-  .gte("created_at", fiveMinutesAgo)
-  .order("created_at", { ascending: false })
-  .limit(1)
-  .maybeSingle();
+        const { data: existingThreadContext, error: threadLookupError } = await supabase
+          .from("gmail_thread_context")
+          .select("*")
+          .eq("thread_id", threadId)
+          .maybeSingle();
 
-        if (pendingError) {
-          console.error("pending context lookup error", pendingError);
+        if (threadLookupError) {
+          console.error("thread context lookup error", threadLookupError);
           continue;
         }
 
-        if (!pendingContext) {
-          console.log("No unused pending context found for:", emailAddress);
-          continue;
-        }
-        console.log("🧩 Matched pending context:", pendingContext);
-
-        const clientVisibleMessage =
-          "Email activity logged for selected retailer and brand.";
-
-        const { error: activityInsertError } = await supabase
-          .from("crm_activities")
-          .insert({
-            rep_id: pendingContext.rep_id,
-            retailer_id: pendingContext.retailer_id,
-            brand_id: pendingContext.brand_id,
-            activity_type_key: pendingContext.activity_type_key,
-            source: "email",
-            direction: "outbound",
-            email_subject: subject,
-            email_body_raw: bodyText,
-            summary: subject,
-            client_visible_message: clientVisibleMessage,
-            sent_at: new Date().toISOString(),
-            gmail_message_id: msg.id,
-            gmail_thread_id: threadId,
-            sender_email: from,
-            recipient_emails: to,
+        // OUTBOUND EMAILS
+        if (isOutbound) {
+          console.log("✉️ Processing outbound email:", {
+            messageId: msg.id,
+            subject,
+            threadId,
+            labelIds,
           });
 
-        if (activityInsertError) {
-          console.error("activity insert error", activityInsertError);
+          // Existing thread => follow-up
+          if (existingThreadContext) {
+            const clientVisibleMessage = buildClientMessage(
+              "outbound_follow_up",
+              existingThreadContext.activity_type_key,
+              subject
+            );
+
+            const { error: followUpInsertError } = await supabase
+              .from("crm_activities")
+              .insert({
+                rep_id: existingThreadContext.rep_id,
+                retailer_id: existingThreadContext.retailer_id,
+                brand_id: existingThreadContext.brand_id,
+                activity_type_key: existingThreadContext.activity_type_key,
+                source: "email",
+                direction: "outbound",
+                activity_kind: "outbound_follow_up",
+                visibility: "client_visible",
+                approval_status: "not_needed",
+                thread_id: threadId,
+                email_subject: subject,
+                email_body_raw: bodyText,
+                summary: "Rep followed up by email.",
+                client_visible_message: clientVisibleMessage,
+                sent_at: new Date().toISOString(),
+                gmail_message_id: msg.id,
+                gmail_thread_id: threadId,
+                sender_email: from,
+                recipient_emails: to,
+                raw_payload: fullMessage.data,
+              });
+
+            if (followUpInsertError) {
+              console.error("follow-up insert error", followUpInsertError);
+              continue;
+            }
+
+            console.log("✅ Logged outbound follow-up for thread:", threadId);
+            continue;
+          }
+
+          // No thread context yet => find pending context and make this the initial send
+          const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+
+          const { data: pendingContext, error: pendingError } = await supabase
+            .from("gmail_pending_context")
+            .select("*")
+            .eq("gmail_email", emailAddress)
+            .is("used_at", null)
+            .gte("created_at", fiveMinutesAgo)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (pendingError) {
+            console.error("pending context lookup error", pendingError);
+            continue;
+          }
+
+          if (!pendingContext) {
+            console.log("No unused pending context found for:", emailAddress);
+            continue;
+          }
+
+          console.log("🧩 Matched pending context:", pendingContext);
+
+          const { error: threadInsertError } = await supabase
+            .from("gmail_thread_context")
+            .insert({
+              thread_id: threadId,
+              initial_message_id: msg.id,
+              rep_id: pendingContext.rep_id,
+              gmail_email: emailAddress,
+              retailer_id: pendingContext.retailer_id,
+              brand_id: pendingContext.brand_id,
+              activity_type_key: pendingContext.activity_type_key,
+              status: "active",
+              updated_at: new Date().toISOString(),
+            });
+
+          if (threadInsertError) {
+            console.error("thread context insert error", threadInsertError);
+            continue;
+          }
+
+          const clientVisibleMessage = buildClientMessage(
+            "outbound_initial",
+            pendingContext.activity_type_key,
+            subject
+          );
+
+          const { error: activityInsertError } = await supabase
+            .from("crm_activities")
+            .insert({
+              rep_id: pendingContext.rep_id,
+              retailer_id: pendingContext.retailer_id,
+              brand_id: pendingContext.brand_id,
+              activity_type_key: pendingContext.activity_type_key,
+              source: "email",
+              direction: "outbound",
+              activity_kind: "outbound_initial",
+              visibility: "client_visible",
+              approval_status: "not_needed",
+              thread_id: threadId,
+              email_subject: subject,
+              email_body_raw: bodyText,
+              summary: "Rep sent initial email.",
+              client_visible_message: clientVisibleMessage,
+              sent_at: new Date().toISOString(),
+              gmail_message_id: msg.id,
+              gmail_thread_id: threadId,
+              sender_email: from,
+              recipient_emails: to,
+              raw_payload: fullMessage.data,
+            });
+
+          if (activityInsertError) {
+            console.error("initial activity insert error", activityInsertError);
+            continue;
+          }
+
+          const { error: pendingUpdateError } = await supabase
+            .from("gmail_pending_context")
+            .update({
+              used_at: new Date().toISOString(),
+            })
+            .eq("id", pendingContext.id);
+
+          if (pendingUpdateError) {
+            console.error("pending context update error", pendingUpdateError);
+          }
+
+          console.log("✅ Logged outbound initial email for thread:", threadId);
           continue;
         }
 
-        const { error: pendingUpdateError } = await supabase
-          .from("gmail_pending_context")
-          .update({
-            used_at: new Date().toISOString(),
-          })
-          .eq("id", pendingContext.id);
+        // INBOUND EMAILS
+        if (isInbound) {
+          if (!existingThreadContext) {
+            console.log("⏭️ Skipping inbound message with no known thread context:", {
+              messageId: msg.id,
+              subject,
+              threadId,
+              from,
+            });
+            continue;
+          }
 
-        if (pendingUpdateError) {
-          console.error("pending context update error", pendingUpdateError);
+          console.log("📥 Processing inbound retailer reply:", {
+            messageId: msg.id,
+            subject,
+            threadId,
+            from,
+          });
+
+          const ai = simpleAiDraftSummary(bodyText, subject);
+          const clientVisibleMessage = buildClientMessage(
+            "retailer_reply",
+            existingThreadContext.activity_type_key,
+            subject
+          );
+
+          const { data: insertedActivity, error: inboundInsertError } = await supabase
+            .from("crm_activities")
+            .insert({
+              rep_id: existingThreadContext.rep_id,
+              retailer_id: existingThreadContext.retailer_id,
+              brand_id: existingThreadContext.brand_id,
+              activity_type_key: existingThreadContext.activity_type_key,
+              source: "email",
+              direction: "inbound",
+              activity_kind: "retailer_reply",
+              visibility: "internal",
+              approval_status: ai.approvalStatus,
+              thread_id: threadId,
+              email_subject: subject,
+              email_body_raw: bodyText,
+              summary: ai.aiSummary,
+              ai_summary: ai.aiSummary,
+              client_draft_summary: ai.clientDraftSummary,
+              client_visible_message: clientVisibleMessage,
+              sent_at: new Date().toISOString(),
+              gmail_message_id: msg.id,
+              gmail_thread_id: threadId,
+              sender_email: from,
+              recipient_emails: to,
+              raw_payload: fullMessage.data,
+            })
+            .select("id")
+            .single();
+
+          if (inboundInsertError) {
+            console.error("inbound activity insert error", inboundInsertError);
+            continue;
+          }
+
+          const { error: reviewInsertError } = await supabase
+            .from("crm_activity_review_queue")
+            .insert({
+              crm_activity_id: insertedActivity.id,
+              rep_id: existingThreadContext.rep_id,
+              status: "pending",
+            });
+
+          if (reviewInsertError) {
+            console.error("review queue insert error", reviewInsertError);
+          }
+
+          console.log("✅ Logged inbound retailer reply for thread:", threadId);
         }
-
-        console.log(
-          "✅ CRM activity inserted using pending context:",
-          pendingContext.id
-        );
       }
     }
 
