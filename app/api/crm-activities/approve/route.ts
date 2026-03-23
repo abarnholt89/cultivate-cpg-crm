@@ -34,7 +34,6 @@ export async function POST(req: Request) {
         visibility: "client_visible",
         approval_status: "approved",
         client_visible_message: finalSummary,
-        updated_at: new Date().toISOString(),
       })
       .eq("id", activityId);
 
