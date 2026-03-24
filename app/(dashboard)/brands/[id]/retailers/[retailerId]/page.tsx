@@ -28,6 +28,19 @@ type MessageRow = {
   created_at: string;
 };
 
+type PendingReviewRow = {
+  id: string;
+  activity_kind: string;
+  visibility: string;
+  approval_status: string;
+  email_subject: string | null;
+  email_body_raw: string | null;
+  ai_summary: string | null;
+  client_draft_summary: string | null;
+  client_visible_message: string | null;
+  created_at: string;
+};
+
 type RepTaskRow = {
   task_id: string;
   brand_retailer_timing_id: string;
@@ -70,7 +83,9 @@ export default function BrandRetailerMessagesPage() {
   const retailerParam = params?.retailerId;
 
   const brandId = (Array.isArray(idParam) ? idParam[0] : idParam) as string;
-  const retailerId = (Array.isArray(retailerParam) ? retailerParam[0] : retailerParam) as string;
+  const retailerId = (Array.isArray(retailerParam)
+    ? retailerParam[0]
+    : retailerParam) as string;
 
   const [brand, setBrand] = useState<Brand | null>(null);
   const [retailer, setRetailer] = useState<Retailer | null>(null);
@@ -87,6 +102,9 @@ export default function BrandRetailerMessagesPage() {
   const [nudgesLoading, setNudgesLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [pendingReviews, setPendingReviews] = useState<PendingReviewRow[]>([]);
+  const [reviewEdits, setReviewEdits] = useState<Record<string, string>>({});
+  const [approvingId, setApprovingId] = useState<string | null>(null);
 
   const isRepOrAdmin = role === "rep" || role === "admin";
 
@@ -247,6 +265,15 @@ export default function BrandRetailerMessagesPage() {
     loadNudges();
   }, [timingRowId, isRepOrAdmin, tab]);
 
+  useEffect(() => {
+    if (!brandId || !retailerId || !isRepOrAdmin || tab !== "internal") {
+      setPendingReviews([]);
+      return;
+    }
+
+    loadPendingReviews();
+  }, [brandId, retailerId, isRepOrAdmin, tab]);
+
   const title = useMemo(() => {
     const brandName = brand?.name ?? "Brand";
     const retailerHeadline = retailer?.banner?.trim()
@@ -273,9 +300,12 @@ export default function BrandRetailerMessagesPage() {
   async function getClientEmails(): Promise<string[]> {
     if (!brandId) return [];
 
-    const { data: clientRows, error } = await supabase.rpc("get_brand_client_emails", {
-      p_brand_id: brandId,
-    });
+    const { data: clientRows, error } = await supabase.rpc(
+      "get_brand_client_emails",
+      {
+        p_brand_id: brandId,
+      }
+    );
 
     if (error) {
       setStatus(`Client email lookup failed: ${error.message}`);
@@ -340,6 +370,44 @@ export default function BrandRetailerMessagesPage() {
     setNudgesLoading(false);
   }
 
+  async function loadPendingReviews() {
+    const { data, error } = await supabase
+      .from("crm_activities")
+      .select(`
+        id,
+        activity_kind,
+        visibility,
+        approval_status,
+        email_subject,
+        email_body_raw,
+        ai_summary,
+        client_draft_summary,
+        client_visible_message,
+        created_at
+      `)
+      .eq("brand_id", brandId)
+      .eq("retailer_id", retailerId)
+      .eq("activity_kind", "retailer_reply")
+      .eq("approval_status", "pending_review")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      setStatus(error.message);
+      setPendingReviews([]);
+      return;
+    }
+
+    const rows = (data as PendingReviewRow[]) ?? [];
+    setPendingReviews(rows);
+
+    const initialEdits: Record<string, string> = {};
+    rows.forEach((row) => {
+      initialEdits[row.id] =
+        row.client_draft_summary || row.ai_summary || row.email_subject || "";
+    });
+    setReviewEdits(initialEdits);
+  }
+
   async function createNudge() {
     if (!timingRowId) {
       setStatus("No brand-retailer timing record found.");
@@ -381,7 +449,10 @@ export default function BrandRetailerMessagesPage() {
     await loadNudges();
   }
 
-  async function uploadAttachment(visibilityToSend: Visibility, messageId: string) {
+  async function uploadAttachment(
+    visibilityToSend: Visibility,
+    messageId: string
+  ) {
     if (!selectedFile) return;
 
     const { data: authData } = await supabase.auth.getUser();
@@ -423,7 +494,6 @@ export default function BrandRetailerMessagesPage() {
 
     if (attachmentError) {
       setStatus(attachmentError.message);
-      return;
     }
   }
 
@@ -443,13 +513,14 @@ export default function BrandRetailerMessagesPage() {
 
     setMessages((refreshed as MessageRow[]) ?? []);
 
-    const { data: refreshedAttachments, error: attachmentReloadErr } = await supabase
-      .from("brand_retailer_attachments")
-      .select("*")
-      .eq("brand_id", brandId)
-      .eq("retailer_id", retailerId)
-      .eq("visibility", visibilityToSend)
-      .order("created_at", { ascending: true });
+    const { data: refreshedAttachments, error: attachmentReloadErr } =
+      await supabase
+        .from("brand_retailer_attachments")
+        .select("*")
+        .eq("brand_id", brandId)
+        .eq("retailer_id", retailerId)
+        .eq("visibility", visibilityToSend)
+        .order("created_at", { ascending: true });
 
     if (attachmentReloadErr) {
       setStatus(attachmentReloadErr.message);
@@ -464,6 +535,39 @@ export default function BrandRetailerMessagesPage() {
     });
 
     setAttachmentsByMessageId(grouped);
+  }
+
+  async function approveReview(activityId: string) {
+    try {
+      setApprovingId(activityId);
+      setStatus("Approving summary...");
+
+      const editedSummary = reviewEdits[activityId]?.trim() || undefined;
+
+      const response = await fetch("/api/crm-activities/approve", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          activityId,
+          editedSummary,
+        }),
+      });
+
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(result?.error || "Failed to approve summary");
+      }
+
+      setStatus("Summary approved ✅");
+      await loadPendingReviews();
+    } catch (err: any) {
+      setStatus(err.message || "Failed to approve summary");
+    } finally {
+      setApprovingId(null);
+    }
   }
 
   async function send() {
@@ -502,7 +606,8 @@ export default function BrandRetailerMessagesPage() {
         brandId,
         retailerId,
         type: "note",
-        description: visibilityToSend === "client" ? "Client message" : "Internal note",
+        description:
+          visibilityToSend === "client" ? "Client message" : "Internal note",
       });
     } catch (err) {
       console.error("Activity log failed", err);
@@ -512,57 +617,60 @@ export default function BrandRetailerMessagesPage() {
       await uploadAttachment(visibilityToSend, insertedMessage.id);
     }
 
-let emailFailed = false;
+    let emailFailed = false;
 
-try {
-  if (
-    isRepOrAdmin &&
-    visibilityToSend === "client" &&
-    brand?.name &&
-    retailer?.name
-  ) {
-    const recipients = await getClientEmails();
-    const retailerName = retailer.banner?.trim() ? retailer.banner : retailer.name;
+    try {
+      if (
+        isRepOrAdmin &&
+        visibilityToSend === "client" &&
+        brand?.name &&
+        retailer?.name
+      ) {
+        const recipients = await getClientEmails();
+        const retailerName = retailer.banner?.trim()
+          ? retailer.banner
+          : retailer.name;
 
-    if (recipients.length > 0) {
-      const response = await fetch("/api/send-client-email", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          brand_name: brand.name,
-          retailer_name: retailerName,
-          message_body: text || "New attachment added.",
-          recipients,
-          actor_name: sender_name,
-          event_type: "message",
-        }),
-      });
+        if (recipients.length > 0) {
+          const response = await fetch("/api/send-client-email", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              brand_name: brand.name,
+              retailer_name: retailerName,
+              message_body: text || "New attachment added.",
+              recipients,
+              actor_name: sender_name,
+              event_type: "message",
+            }),
+          });
 
-      const result = await response.json().catch(() => ({}));
+          const result = await response.json().catch(() => ({}));
 
-      if (!response.ok) {
-        throw new Error(result?.error || "Failed to send email notification");
+          if (!response.ok) {
+            throw new Error(result?.error || "Failed to send email notification");
+          }
+        }
       }
+    } catch (emailErr) {
+      emailFailed = true;
+      console.error("Email notification failed", emailErr);
     }
+
+    setBody("");
+    setSelectedFile(null);
+
+    if (emailFailed) {
+      setStatus("Sent ✅ (message saved, but email notification failed)");
+    } else {
+      setStatus("Sent ✅");
+    }
+
+    await reloadMessagesAndAttachments(visibilityToSend);
   }
-} catch (emailErr) {
-  emailFailed = true;
-  console.error("Email notification failed", emailErr);
-}
 
-setBody("");
-setSelectedFile(null);
-
-if (emailFailed) {
-  setStatus("Sent ✅ (message saved, but email notification failed)");
-} else {
-  setStatus("Sent ✅");
-}
-
-await reloadMessagesAndAttachments(visibilityToSend);
-}
   async function openAttachment(path: string) {
     const { data, error } = await supabase.storage
       .from("brand-message-attachments")
@@ -597,7 +705,9 @@ await reloadMessagesAndAttachments(visibilityToSend);
         </Link>
 
         <h1 className="text-2xl font-bold mt-2">{title}</h1>
-        {retailer?.banner ? <p className="text-gray-500">{retailer.name}</p> : null}
+        {retailer?.banner ? (
+          <p className="text-gray-500">{retailer.name}</p>
+        ) : null}
 
         {status && <p className="mt-2 text-sm text-red-600">{status}</p>}
       </div>
@@ -688,6 +798,89 @@ await reloadMessagesAndAttachments(visibilityToSend);
             )}
           </div>
         </>
+      )}
+
+      {isRepOrAdmin && tab === "internal" && (
+        <div className="border rounded-xl p-4 space-y-4">
+          <div className="text-sm font-semibold">Pending Retailer Reply Reviews</div>
+
+          {pendingReviews.length === 0 ? (
+            <p className="text-sm text-gray-600">No pending reply drafts.</p>
+          ) : (
+            <div className="space-y-4">
+              {pendingReviews.map((review) => (
+                <div key={review.id} className="border rounded-lg p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-medium">
+                        {review.email_subject || "Retailer reply"}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {new Date(review.created_at).toLocaleString()}
+                      </div>
+                    </div>
+
+                    <span className="text-xs border rounded-full px-2 py-1 bg-yellow-50">
+                      Pending review
+                    </span>
+                  </div>
+
+                  {review.ai_summary ? (
+                    <div>
+                      <div className="text-xs font-semibold text-gray-500 mb-1">
+                        Internal AI Summary
+                      </div>
+                      <div className="text-sm border rounded-lg p-3 bg-gray-50">
+                        {review.ai_summary}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {review.email_body_raw ? (
+                    <div>
+                      <div className="text-xs font-semibold text-gray-500 mb-1">
+                        Retailer Reply
+                      </div>
+                      <div className="text-sm border rounded-lg p-3 bg-white whitespace-pre-wrap max-h-48 overflow-auto">
+                        {review.email_body_raw}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div>
+                    <div className="text-xs font-semibold text-gray-500 mb-1">
+                      Client-facing Draft
+                    </div>
+                    <textarea
+                      className="border rounded px-3 py-2 w-full"
+                      rows={3}
+                      value={reviewEdits[review.id] || ""}
+                      onChange={(e) =>
+                        setReviewEdits((prev) => ({
+                          ...prev,
+                          [review.id]: e.target.value,
+                        }))
+                      }
+                      placeholder="Edit summary before approving..."
+                    />
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => approveReview(review.id)}
+                      disabled={approvingId === review.id}
+                      className="bg-black text-white px-4 py-2 rounded disabled:opacity-50"
+                    >
+                      {approvingId === review.id
+                        ? "Approving..."
+                        : "Approve & Publish"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       <div className="border rounded-xl p-4 space-y-3">
