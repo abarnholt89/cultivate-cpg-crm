@@ -41,6 +41,14 @@ type PendingReviewRow = {
   created_at: string;
 };
 
+type ApprovedActivityRow = {
+  id: string;
+  client_visible_message: string | null;
+  email_subject: string | null;
+  created_at: string;
+  activity_kind: string | null;
+};
+
 type RepTaskRow = {
   task_id: string;
   brand_retailer_timing_id: string;
@@ -83,18 +91,20 @@ export default function BrandRetailerMessagesPage() {
   const retailerParam = params?.retailerId;
 
   const brandId = (Array.isArray(idParam) ? idParam[0] : idParam) as string;
-  const retailerId = (Array.isArray(retailerParam)
-    ? retailerParam[0]
-    : retailerParam) as string;
+  const retailerId = (Array.isArray(retailerParam) ? retailerParam[0] : retailerParam) as string;
 
   const [brand, setBrand] = useState<Brand | null>(null);
   const [retailer, setRetailer] = useState<Retailer | null>(null);
   const [role, setRole] = useState<Role>(null);
   const [tab, setTab] = useState<Visibility>("client");
+
   const [messages, setMessages] = useState<MessageRow[]>([]);
-  const [attachmentsByMessageId, setAttachmentsByMessageId] = useState<
-    Record<string, AttachmentRow[]>
-  >({});
+  const [approvedActivities, setApprovedActivities] = useState<ApprovedActivityRow[]>([]);
+  const [attachmentsByMessageId, setAttachmentsByMessageId] = useState<Record<string, AttachmentRow[]>>({});
+  const [pendingReviews, setPendingReviews] = useState<PendingReviewRow[]>([]);
+  const [reviewEdits, setReviewEdits] = useState<Record<string, string>>({});
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+
   const [body, setBody] = useState("");
   const [status, setStatus] = useState("");
   const [timingRowId, setTimingRowId] = useState<string | null>(null);
@@ -102,9 +112,6 @@ export default function BrandRetailerMessagesPage() {
   const [nudgesLoading, setNudgesLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
-  const [pendingReviews, setPendingReviews] = useState<PendingReviewRow[]>([]);
-  const [reviewEdits, setReviewEdits] = useState<Record<string, string>>({});
-  const [approvingId, setApprovingId] = useState<string | null>(null);
 
   const isRepOrAdmin = role === "rep" || role === "admin";
 
@@ -114,39 +121,39 @@ export default function BrandRetailerMessagesPage() {
     async function loadPage() {
       setStatus("");
 
-      const { data: b, error: bErr } = await supabase
+      const { data: brandData, error: brandError } = await supabase
         .from("brands")
         .select("id,name")
         .eq("id", brandId)
         .single();
 
-      if (bErr) {
-        setStatus(bErr.message);
+      if (brandError) {
+        setStatus(brandError.message);
         return;
       }
-      setBrand(b);
+      setBrand(brandData);
 
-      const { data: r, error: rErr } = await supabase
+      const { data: retailerData, error: retailerError } = await supabase
         .from("retailers")
         .select("id,name,banner")
         .eq("id", retailerId)
         .single();
 
-      if (rErr) {
-        setStatus(rErr.message);
+      if (retailerError) {
+        setStatus(retailerError.message);
         return;
       }
-      setRetailer(r);
+      setRetailer(retailerData);
 
-      const { data: timingRow, error: timingErr } = await supabase
+      const { data: timingRow, error: timingError } = await supabase
         .from("brand_retailer_timing")
         .select("id")
         .eq("brand_id", brandId)
         .eq("retailer_id", retailerId)
         .single();
 
-      if (timingErr) {
-        setStatus(timingErr.message);
+      if (timingError) {
+        setStatus(timingError.message);
         return;
       }
 
@@ -160,14 +167,14 @@ export default function BrandRetailerMessagesPage() {
         return;
       }
 
-      const { data: profile, error: profileErr } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from("profiles")
         .select("role")
         .eq("id", userId)
         .single();
 
-      if (profileErr) {
-        setStatus(profileErr.message);
+      if (profileError) {
+        setStatus(profileError.message);
         return;
       }
 
@@ -274,11 +281,21 @@ export default function BrandRetailerMessagesPage() {
     loadPendingReviews();
   }, [brandId, retailerId, isRepOrAdmin, tab]);
 
+  useEffect(() => {
+    if (!brandId || !retailerId || tab !== "client") {
+      setApprovedActivities([]);
+      return;
+    }
+
+    loadApprovedActivities();
+  }, [brandId, retailerId, tab]);
+
   const title = useMemo(() => {
     const brandName = brand?.name ?? "Brand";
     const retailerHeadline = retailer?.banner?.trim()
       ? retailer.banner
       : retailer?.name ?? "Retailer";
+
     return `${brandName} • ${retailerHeadline}`;
   }, [brand, retailer]);
 
@@ -300,12 +317,9 @@ export default function BrandRetailerMessagesPage() {
   async function getClientEmails(): Promise<string[]> {
     if (!brandId) return [];
 
-    const { data: clientRows, error } = await supabase.rpc(
-      "get_brand_client_emails",
-      {
-        p_brand_id: brandId,
-      }
-    );
+    const { data: clientRows, error } = await supabase.rpc("get_brand_client_emails", {
+      p_brand_id: brandId,
+    });
 
     if (error) {
       setStatus(`Client email lookup failed: ${error.message}`);
@@ -349,22 +363,21 @@ export default function BrandRetailerMessagesPage() {
       return;
     }
 
-    const mapped: RepTaskRow[] =
-      (data ?? []).map((row: any) => ({
-        task_id: row.id,
-        brand_retailer_timing_id: row.brand_retailer_timing_id,
-        retailer_id: retailerId,
-        retailer_name: retailer?.name ?? "Retailer",
-        brand_id: brandId,
-        title: row.title,
-        details: row.details,
-        task_type: row.task_type,
-        priority: row.priority,
-        status: row.status,
-        due_at: row.due_at,
-        created_at: row.created_at,
-        created_by_name: row.profiles?.full_name ?? null,
-      })) ?? [];
+    const mapped: RepTaskRow[] = (data ?? []).map((row: any) => ({
+      task_id: row.id,
+      brand_retailer_timing_id: row.brand_retailer_timing_id,
+      retailer_id: retailerId,
+      retailer_name: retailer?.name ?? "Retailer",
+      brand_id: brandId,
+      title: row.title,
+      details: row.details,
+      task_type: row.task_type,
+      priority: row.priority,
+      status: row.status,
+      due_at: row.due_at,
+      created_at: row.created_at,
+      created_by_name: row.profiles?.full_name ?? null,
+    }));
 
     setNudges(mapped);
     setNudgesLoading(false);
@@ -408,6 +421,30 @@ export default function BrandRetailerMessagesPage() {
     setReviewEdits(initialEdits);
   }
 
+  async function loadApprovedActivities() {
+    const { data, error } = await supabase
+      .from("crm_activities")
+      .select(`
+        id,
+        client_visible_message,
+        email_subject,
+        created_at,
+        activity_kind
+      `)
+      .eq("brand_id", brandId)
+      .eq("retailer_id", retailerId)
+      .eq("visibility", "client_visible")
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      setStatus(error.message);
+      setApprovedActivities([]);
+      return;
+    }
+
+    setApprovedActivities((data as ApprovedActivityRow[]) ?? []);
+  }
+
   async function createNudge() {
     if (!timingRowId) {
       setStatus("No brand-retailer timing record found.");
@@ -449,10 +486,7 @@ export default function BrandRetailerMessagesPage() {
     await loadNudges();
   }
 
-  async function uploadAttachment(
-    visibilityToSend: Visibility,
-    messageId: string
-  ) {
+  async function uploadAttachment(visibilityToSend: Visibility, messageId: string) {
     if (!selectedFile) return;
 
     const { data: authData } = await supabase.auth.getUser();
@@ -513,14 +547,13 @@ export default function BrandRetailerMessagesPage() {
 
     setMessages((refreshed as MessageRow[]) ?? []);
 
-    const { data: refreshedAttachments, error: attachmentReloadErr } =
-      await supabase
-        .from("brand_retailer_attachments")
-        .select("*")
-        .eq("brand_id", brandId)
-        .eq("retailer_id", retailerId)
-        .eq("visibility", visibilityToSend)
-        .order("created_at", { ascending: true });
+    const { data: refreshedAttachments, error: attachmentReloadErr } = await supabase
+      .from("brand_retailer_attachments")
+      .select("*")
+      .eq("brand_id", brandId)
+      .eq("retailer_id", retailerId)
+      .eq("visibility", visibilityToSend)
+      .order("created_at", { ascending: true });
 
     if (attachmentReloadErr) {
       setStatus(attachmentReloadErr.message);
@@ -563,6 +596,7 @@ export default function BrandRetailerMessagesPage() {
 
       setStatus("Summary approved ✅");
       await loadPendingReviews();
+      await loadApprovedActivities();
     } catch (err: any) {
       setStatus(err.message || "Failed to approve summary");
     } finally {
@@ -606,8 +640,7 @@ export default function BrandRetailerMessagesPage() {
         brandId,
         retailerId,
         type: "note",
-        description:
-          visibilityToSend === "client" ? "Client message" : "Internal note",
+        description: visibilityToSend === "client" ? "Client message" : "Internal note",
       });
     } catch (err) {
       console.error("Activity log failed", err);
@@ -627,9 +660,7 @@ export default function BrandRetailerMessagesPage() {
         retailer?.name
       ) {
         const recipients = await getClientEmails();
-        const retailerName = retailer.banner?.trim()
-          ? retailer.banner
-          : retailer.name;
+        const retailerName = retailer.banner?.trim() ? retailer.banner : retailer.name;
 
         if (recipients.length > 0) {
           const response = await fetch("/api/send-client-email", {
@@ -669,6 +700,10 @@ export default function BrandRetailerMessagesPage() {
     }
 
     await reloadMessagesAndAttachments(visibilityToSend);
+
+    if (visibilityToSend === "client") {
+      await loadApprovedActivities();
+    }
   }
 
   async function openAttachment(path: string) {
@@ -705,10 +740,7 @@ export default function BrandRetailerMessagesPage() {
         </Link>
 
         <h1 className="text-2xl font-bold mt-2">{title}</h1>
-        {retailer?.banner ? (
-          <p className="text-gray-500">{retailer.name}</p>
-        ) : null}
-
+        {retailer?.banner ? <p className="text-gray-500">{retailer.name}</p> : null}
         {status && <p className="mt-2 text-sm text-red-600">{status}</p>}
       </div>
 
@@ -740,7 +772,6 @@ export default function BrandRetailerMessagesPage() {
         <>
           <div className="border rounded-xl p-4 flex justify-between items-center">
             <div className="text-sm font-semibold">Manager Tools</div>
-
             <button
               onClick={createNudge}
               className="border px-3 py-2 rounded hover:bg-gray-50"
@@ -871,10 +902,41 @@ export default function BrandRetailerMessagesPage() {
                       disabled={approvingId === review.id}
                       className="bg-black text-white px-4 py-2 rounded disabled:opacity-50"
                     >
-                      {approvingId === review.id
-                        ? "Approving..."
-                        : "Approve & Publish"}
+                      {approvingId === review.id ? "Approving..." : "Approve & Publish"}
                     </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "client" && (
+        <div className="border rounded-xl p-4 space-y-3">
+          <div className="text-sm font-semibold">Approved Email Activity</div>
+
+          {approvedActivities.length === 0 ? (
+            <p className="text-sm text-gray-600">No approved email activity yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {approvedActivities.map((activity) => (
+                <div key={activity.id} className="border rounded-lg p-3">
+                  <div className="text-xs text-gray-500 flex items-center justify-between gap-2">
+                    <span>
+                      {activity.activity_kind === "retailer_reply"
+                        ? "Retailer email update"
+                        : "Email activity"}
+                    </span>
+                    <span>{new Date(activity.created_at).toLocaleString()}</span>
+                  </div>
+
+                  {activity.email_subject ? (
+                    <div className="mt-2 text-sm font-medium">{activity.email_subject}</div>
+                  ) : null}
+
+                  <div className="mt-2 text-sm whitespace-pre-wrap">
+                    {activity.client_visible_message || "Email activity approved."}
                   </div>
                 </div>
               ))}
