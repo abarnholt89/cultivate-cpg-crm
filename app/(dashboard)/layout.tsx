@@ -10,6 +10,8 @@ type Role = "admin" | "rep" | "client" | null;
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  const brandMatch = pathname?.match(/^\/brands\/([^/]+)/);
+const brandId = brandMatch ? brandMatch[1] : null;
 
   const [ready, setReady] = useState(false);
   const [role, setRole] = useState<Role>(null);
@@ -224,6 +226,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               )}
             </span>
           </Link>
+          {brandId && (
+  <Link
+    href={`/brands/${brandId}/category-review`}
+    className={linkClass(`/brands/${brandId}/category-review`)}
+  >
+    <span className="relative inline-block pb-1">
+      Category Review
+      {isActive(`/brands/${brandId}/category-review`) && (
+        <span className="absolute -bottom-[17px] left-0 h-[3px] w-full rounded-full bg-primary" />
+      )}
+    </span>
+  </Link>
+)}
 
           <button
             type="button"
