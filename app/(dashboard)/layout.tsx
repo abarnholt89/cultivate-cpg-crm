@@ -10,8 +10,10 @@ type Role = "admin" | "rep" | "client" | null;
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+
   const brandMatch = pathname?.match(/^\/brands\/([^/]+)/);
-const brandId = brandMatch ? brandMatch[1] : null;
+  const brandId = brandMatch ? brandMatch[1] : null;
+  const inBrandContext = Boolean(brandId);
 
   const [ready, setReady] = useState(false);
   const [role, setRole] = useState<Role>(null);
@@ -101,13 +103,11 @@ const brandId = brandMatch ? brandMatch[1] : null;
     const nextRole = (profile?.role as Role) ?? null;
     setRole(nextRole);
 
-    // Clients do not use the rep/admin inbox.
     if (nextRole === "client") {
       setInboxCount(0);
       return;
     }
 
-    // For launch: admins and reps only see badge counts for their owned retailers.
     const { data: ownedRetailers, error: ownedRetailersError } = await supabase
       .from("retailers")
       .select("id")
@@ -173,6 +173,9 @@ const brandId = brandMatch ? brandMatch[1] : null;
         : "text-muted-foreground hover:text-foreground"
     }`;
 
+  const promotionsHref = inBrandContext ? `/brands/${brandId}/promotions` : "/promotions";
+  const brandsHref = inBrandContext ? `/brands/${brandId}` : "/brands";
+
   if (!ready) {
     return (
       <div className="min-h-screen bg-background p-6 text-sm text-muted-foreground">
@@ -193,10 +196,10 @@ const brandId = brandMatch ? brandMatch[1] : null;
             className="h-[26px] w-[26px] object-contain"
           />
 
-          <Link href="/brands" className={linkClass("/brands")}>
+          <Link href={brandsHref} className={linkClass("/brands")}>
             <span className="relative inline-block pb-1">
               Brands
-              {isActive("/brands") && (
+              {pathname?.startsWith("/brands") && (
                 <span className="absolute -bottom-[17px] left-0 h-[3px] w-full rounded-full bg-primary" />
               )}
             </span>
@@ -218,27 +221,34 @@ const brandId = brandMatch ? brandMatch[1] : null;
             </Link>
           ) : null}
 
-          <Link href="/promotions" className={linkClass("/promotions")}>
+          <Link href={promotionsHref} className={linkClass(promotionsHref)}>
             <span className="relative inline-block pb-1">
               Promotions
-              {isActive("/promotions") && (
+              {isActive(promotionsHref) && (
                 <span className="absolute -bottom-[17px] left-0 h-[3px] w-full rounded-full bg-primary" />
               )}
             </span>
           </Link>
-          {brandId && (
-  <Link
-    href={`/brands/${brandId}/category-review`}
-    className={linkClass(`/brands/${brandId}/category-review`)}
-  >
-    <span className="relative inline-block pb-1">
-      Category Review
-      {isActive(`/brands/${brandId}/category-review`) && (
-        <span className="absolute -bottom-[17px] left-0 h-[3px] w-full rounded-full bg-primary" />
-      )}
-    </span>
-  </Link>
-)}
+
+<Link
+  href={brandId ? `/brands/${brandId}/category-review` : "/category-review"}
+  className={
+    brandId
+      ? linkClass(`/brands/${brandId}/category-review`)
+      : linkClass("/category-review")
+  }
+>
+  <span className="relative inline-block pb-1">
+    Category Review
+    {brandId
+      ? isActive(`/brands/${brandId}/category-review`) && (
+          <span className="absolute -bottom-[17px] left-0 h-[3px] w-full rounded-full bg-primary" />
+        )
+      : isActive("/category-review") && (
+          <span className="absolute -bottom-[17px] left-0 h-[3px] w-full rounded-full bg-primary" />
+        )}
+  </span>
+</Link>
 
           <button
             type="button"

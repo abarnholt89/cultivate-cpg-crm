@@ -129,22 +129,27 @@ async function fetchAllRows<T>(query: any): Promise<T[]> {
   return allRows;
 }
 
-function splitPromotions(rows: PromotionRow[]) {
-  const distributorSupport = rows.filter(
-    (r) =>
-      r.promo_scope === "distributor" ||
-      r.promo_name === "Distributor OI" ||
-      r.promo_type === "Distributor OI"
-  );
+function isDistributorRow(row: PromotionRow) {
+  const scope = (row.promo_scope || "").toLowerCase();
+  const promoName = (row.promo_name || "").toLowerCase();
+  const promoType = (row.promo_type || "").toLowerCase();
 
-  const retailerActivations = rows.filter(
-    (r) =>
-      !(
-        r.promo_scope === "distributor" ||
-        r.promo_name === "Distributor OI" ||
-        r.promo_type === "Distributor OI"
-      )
+  const hasRetailerName = Boolean(row.retailer_name && row.retailer_name.trim() !== "");
+  const retailerName = (row.retailer_name || "").toLowerCase();
+
+  return (
+    scope === "distributor" ||
+    promoName === "distributor oi" ||
+    promoType === "distributor oi" ||
+    (!hasRetailerName && Boolean(row.distributor)) ||
+    retailerName === "distributor" ||
+    retailerName === "distributor oi"
   );
+}
+
+function splitPromotions(rows: PromotionRow[]) {
+  const distributorSupport = rows.filter(isDistributorRow);
+  const retailerActivations = rows.filter((r) => !isDistributorRow(r));
 
   return { distributorSupport, retailerActivations };
 }
@@ -533,20 +538,15 @@ export default function PromotionsPage() {
     [distributorSupport]
   );
 
-  const distributorOiKeys = useMemo(() => {
-    const rows = promotions.filter(
-      (r) =>
-        r.promo_name === "Distributor OI" ||
-        r.promo_type === "Distributor OI" ||
-        r.promo_scope === "distributor"
-    );
+const distributorOiKeys = useMemo(() => {
+  const rows = promotions.filter(isDistributorRow);
 
-    return new Set(
-      rows.map((r) =>
-        [r.brand_id, r.distributor || "", r.promo_year, r.promo_month].join("||")
-      )
-    );
-  }, [promotions]);
+  return new Set(
+    rows.map((r) =>
+      [r.brand_id, r.distributor || "", r.promo_year, r.promo_month].join("||")
+    )
+  );
+}, [promotions]);
 
   const retailerGroups = useMemo(
     () => groupRetailerActivations(retailerActivations),
@@ -555,7 +555,9 @@ export default function PromotionsPage() {
 
   function renderDistributorGroups(groups: DistributorGroup[]) {
     return groups.map((group) => {
-      const skuCount = group.rows.length;
+      const skuCount = new Set(
+  group.rows.map((row) => row.unit_upc || row.sku_description).filter(Boolean)
+).size;
       const startDate = getPromoStart(group.rows);
       const endDate = getPromoEnd(group.rows);
 
@@ -650,7 +652,9 @@ export default function PromotionsPage() {
         (sum, brandGroup) => sum + brandGroup.promoGroups.length,
         0
       );
-      const skuCount = group.rows.length;
+      const skuCount = new Set(
+  group.rows.map((row) => row.unit_upc || row.sku_description).filter(Boolean)
+).size;
       const brandCount = group.brandGroups.length;
 
       return (
@@ -700,7 +704,9 @@ export default function PromotionsPage() {
                 <div className="space-y-3">
                   {group.brandGroups.map((brandGroup) => {
                     const brandPromoCount = brandGroup.promoGroups.length;
-                    const brandSkuCount = brandGroup.rows.length;
+                    const brandSkuCount = new Set(
+  brandGroup.rows.map((row) => row.unit_upc || row.sku_description).filter(Boolean)
+).size;
                     const hasAnyOiLoaded = brandGroup.promoGroups.some((promoGroup) =>
                       promoGroup.rows.some((item) =>
                         distributorOiKeys.has(
@@ -749,7 +755,9 @@ export default function PromotionsPage() {
                         {expandedBrands[brandGroup.key] ? (
                           <div className="px-3 pb-3 space-y-2">
                             {brandGroup.promoGroups.map((promoGroup) => {
-                              const promoSkuCount = promoGroup.rows.length;
+                              const promoSkuCount = new Set(
+  promoGroup.rows.map((row) => row.unit_upc || row.sku_description).filter(Boolean)
+).size;
                               const hasOiLoaded = promoGroup.rows.some((item) =>
                                 distributorOiKeys.has(
                                   [

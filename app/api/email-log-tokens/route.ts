@@ -5,91 +5,84 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-function generateToken(length = 12) {
-  const chars =
-    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-  let result = "";
-  for (let i = 0; i < length; i++) {
-    result += chars[Math.floor(Math.random() * chars.length)];
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+async function getRepByEmail(gmailEmail: string) {
+  const email = normalizeEmail(gmailEmail);
+
+  const { data: repRow, error: repError } = await supabase
+    .from("rep_user_uploads")
+    .select("id, rep_email, rep_full_name")
+    .eq("rep_email", email)
+    .maybeSingle();
+
+  if (repError) {
+    throw new Error(`rep_user_uploads lookup failed: ${repError.message}`);
   }
-  return result;
+
+  if (!repRow) {
+    throw new Error(`No rep found for ${email} in rep_user_uploads`);
+  }
+
+  return repRow;
 }
 
 export async function POST(req: Request) {
   try {
-    const { repEmail, retailerId, brandId, activityTypeKey } = await req.json();
+    const body = await req.json();
+
+    const repEmail = normalizeEmail(body.repEmail || "");
+    const retailerId = body.retailerId;
+    const brandId = body.brandId;
+    const activityTypeKey = body.activityTypeKey;
 
     if (!repEmail || !retailerId || !brandId || !activityTypeKey) {
       return Response.json(
-        { error: "Missing required fields" },
+        { ok: false, error: "Missing required fields" },
         { status: 400 }
       );
     }
 
-    const { data: repProfile, error: repError } = await supabase
-      .from("profiles")
-      .select("id, email")
-      .eq("email", repEmail)
-      .maybeSingle();
-
-    if (repError) {
-      return Response.json({ error: repError.message }, { status: 500 });
-    }
-
-    if (!repProfile) {
-      return Response.json(
-        { error: `No profile found for ${repEmail}` },
-        { status: 404 }
-      );
-    }
-
-    const token = generateToken();
+    const rep = await getRepByEmail(repEmail);
+    const token = crypto.randomUUID();
 
     const { error: tokenError } = await supabase
       .from("email_log_tokens")
       .insert({
         token,
-        rep_id: repProfile.id,
+        rep_id: rep.id,
+        rep_email: repEmail,
         retailer_id: retailerId,
         brand_id: brandId,
         activity_type_key: activityTypeKey,
+        status: "pending",
+        created_at: new Date().toISOString(),
       });
 
     if (tokenError) {
-      return Response.json({ error: tokenError.message }, { status: 500 });
+      return Response.json(
+        { ok: false, error: tokenError.message },
+        { status: 500 }
+      );
     }
 
-    // Close out any older unused pending contexts for this rep/email
-    const { error: cleanupError } = await supabase
-      .from("gmail_pending_context")
-      .update({
-        used_at: new Date().toISOString(),
-      })
-      .eq("gmail_email", repEmail)
-      .is("used_at", null);
-
-    if (cleanupError) {
-      return Response.json({ error: cleanupError.message }, { status: 500 });
-    }
-
-    const { error: pendingError } = await supabase
-      .from("gmail_pending_context")
-      .insert({
-        rep_id: repProfile.id,
-        gmail_email: repEmail,
-        retailer_id: retailerId,
-        brand_id: brandId,
-        activity_type_key: activityTypeKey,
-      });
-
-    if (pendingError) {
-      return Response.json({ error: pendingError.message }, { status: 500 });
-    }
-
-    return Response.json({ ok: true, token });
+    return Response.json({
+      ok: true,
+      token,
+      repId: rep.id,
+      repEmail,
+      repName: rep.rep_full_name,
+    });
   } catch (err: any) {
+    console.error("email-log-tokens error", err);
+
     return Response.json(
-      { error: err.message || "Unknown error" },
+      {
+        ok: false,
+        error: err.message || "Unknown error",
+      },
       { status: 500 }
     );
   }
