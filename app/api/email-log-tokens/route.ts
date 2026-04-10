@@ -70,17 +70,18 @@ export async function POST(req: Request) {
     const rep = await getRepByEmail(repEmail);
     const token = crypto.randomUUID();
 
-    const { error: tokenError } = await supabase
-      .from("email_log_tokens")
-      .insert({
-        token,
-        rep_id: rep.id,
-        retailer_id: retailerId,
-        brand_id: brandId,
-        activity_type_key: activityTypeKey,
-        status: "pending",
-        created_at: new Date().toISOString(),
-      });
+const { error: tokenError } = await supabase
+  .from("email_log_tokens")
+  .insert({
+    token,
+    rep_id: rep.id,
+    rep_email: rep.email,
+    retailer_id: retailerId,
+    brand_id: brandId,
+    activity_type_key: activityTypeKey,
+    status: "pending",
+    created_at: new Date().toISOString(),
+  });
 
     if (tokenError) {
       return Response.json(

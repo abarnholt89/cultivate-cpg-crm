@@ -340,49 +340,33 @@ export async function POST(req: Request) {
           }
 
 const mailboxEmail = normalizeEmail(emailAddress);
-const normalizedRecipients = normalizeEmailList(to);
-const normalizedSubject = String(subject || "").trim();
 
 const thirtyMinutesAgo = new Date(
   Date.now() - 30 * 60 * 1000
 ).toISOString();
 
-const { data: pendingCandidates, error: pendingError } = await supabase
+const { data: pendingContext, error: pendingError } = await supabase
   .from("email_log_tokens")
   .select("*")
   .eq("rep_email", mailboxEmail)
   .eq("status", "pending")
   .gte("created_at", thirtyMinutesAgo)
-  .order("created_at", { ascending: false });
+  .order("created_at", { ascending: false })
+  .limit(1)
+  .maybeSingle();
 
 if (pendingError) {
   console.error("pending token lookup error", pendingError);
   continue;
 }
 
-const pendingContext =
-  (pendingCandidates || []).find((row: any) => {
-    const subjectMatches =
-      !row.email_subject ||
-      !normalizedSubject ||
-      String(row.email_subject).trim() === normalizedSubject;
-
-    const recipientMatches =
-      !row.recipient_emails ||
-      row.recipient_emails.length === 0 ||
-      arraysOverlap(row.recipient_emails, normalizedRecipients);
-
-    return subjectMatches && recipientMatches;
-  }) || null;
-
 if (!pendingContext) {
   console.log("No matching pending context found for:", {
     emailAddress: mailboxEmail,
-    subject: normalizedSubject,
-    recipients: normalizedRecipients,
   });
   continue;
 }
+
 
           if (pendingError) {
             console.error("pending context lookup error", pendingError);
