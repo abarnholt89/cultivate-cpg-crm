@@ -5,7 +5,18 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
+function normalizeEmail(email: string) {
+  return String(email || "").trim().toLowerCase();
+}
 
+function normalizeEmailList(values: string[] = []) {
+  return values.map((v) => normalizeEmail(v)).filter(Boolean);
+}
+
+function arraysOverlap(a: string[] = [], b: string[] = []) {
+  const setB = new Set(b.map(normalizeEmail));
+  return a.map(normalizeEmail).some((x) => setB.has(x));
+}
 function extractEmailAddresses(headers: any[] = [], name: string) {
   const header = headers.find(
     (h) => h.name?.toLowerCase() === name.toLowerCase()
@@ -328,19 +339,50 @@ export async function POST(req: Request) {
             continue;
           }
 
-          const fiveMinutesAgo = new Date(
-            Date.now() - 5 * 60 * 1000
-          ).toISOString();
+const mailboxEmail = normalizeEmail(emailAddress);
+const normalizedRecipients = normalizeEmailList(to);
+const normalizedSubject = String(subject || "").trim();
 
-          const { data: pendingContext, error: pendingError } = await supabase
-            .from("gmail_pending_context")
-            .select("*")
-            .eq("gmail_email", emailAddress)
-            .is("used_at", null)
-            .gte("created_at", fiveMinutesAgo)
-            .order("created_at", { ascending: false })
-            .limit(1)
-            .maybeSingle();
+const thirtyMinutesAgo = new Date(
+  Date.now() - 30 * 60 * 1000
+).toISOString();
+
+const { data: pendingCandidates, error: pendingError } = await supabase
+  .from("email_log_tokens")
+  .select("*")
+  .eq("rep_email", mailboxEmail)
+  .eq("status", "pending")
+  .gte("created_at", thirtyMinutesAgo)
+  .order("created_at", { ascending: false });
+
+if (pendingError) {
+  console.error("pending token lookup error", pendingError);
+  continue;
+}
+
+const pendingContext =
+  (pendingCandidates || []).find((row: any) => {
+    const subjectMatches =
+      !row.email_subject ||
+      !normalizedSubject ||
+      String(row.email_subject).trim() === normalizedSubject;
+
+    const recipientMatches =
+      !row.recipient_emails ||
+      row.recipient_emails.length === 0 ||
+      arraysOverlap(row.recipient_emails, normalizedRecipients);
+
+    return subjectMatches && recipientMatches;
+  }) || null;
+
+if (!pendingContext) {
+  console.log("No matching pending context found for:", {
+    emailAddress: mailboxEmail,
+    subject: normalizedSubject,
+    recipients: normalizedRecipients,
+  });
+  continue;
+}
 
           if (pendingError) {
             console.error("pending context lookup error", pendingError);
@@ -354,19 +396,22 @@ export async function POST(req: Request) {
 
           console.log("🧩 Matched pending context:", pendingContext);
 
-          const { error: threadInsertError } = await supabase
-            .from("gmail_thread_context")
-            .insert({
-              thread_id: threadId,
-              initial_message_id: msg.id,
-              rep_id: pendingContext.rep_id,
-              gmail_email: emailAddress,
-              retailer_id: pendingContext.retailer_id,
-              brand_id: pendingContext.brand_id,
-              activity_type_key: pendingContext.activity_type_key,
-              status: "active",
-              updated_at: new Date().toISOString(),
-            });
+const { error: threadInsertError } = await supabase
+  .from("gmail_thread_context")
+  .upsert(
+    {
+      thread_id: threadId,
+      initial_message_id: msg.id,
+      rep_id: pendingContext.rep_id,
+      gmail_email: emailAddress,
+      retailer_id: pendingContext.retailer_id,
+      brand_id: pendingContext.brand_id,
+      activity_type_key: pendingContext.activity_type_key,
+      status: "active",
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "thread_id" }
+  );
 
           if (threadInsertError) {
             console.error("thread context insert error", threadInsertError);
@@ -409,12 +454,16 @@ export async function POST(req: Request) {
             continue;
           }
 
-          const { error: pendingUpdateError } = await supabase
-            .from("gmail_pending_context")
-            .update({
-              used_at: new Date().toISOString(),
-            })
-            .eq("id", pendingContext.id);
+const { error: pendingUpdateError } = await supabase
+  .from("email_log_tokens")
+  .update({
+    status: "used",
+    used_at: new Date().toISOString(),
+    matched_at: new Date().toISOString(),
+    gmail_message_id: msg.id,
+    gmail_thread_id: threadId,
+  })
+  .eq("id", pendingContext.id);
 
           if (pendingUpdateError) {
             console.error("pending context update error", pendingUpdateError);
