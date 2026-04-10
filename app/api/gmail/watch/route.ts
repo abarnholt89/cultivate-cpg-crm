@@ -6,12 +6,51 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+function normalizeEmail(email: string) {
+  return String(email || "").trim().toLowerCase();
+}
+
+async function getRepIdByEmail(gmailEmail: string) {
+  const email = normalizeEmail(gmailEmail);
+
+  const { data: repUpload, error: repUploadError } = await supabase
+    .from("rep_user_uploads")
+    .select("id")
+    .eq("rep_email", email)
+    .maybeSingle();
+
+  if (repUploadError) {
+    throw new Error(`rep_user_uploads lookup failed: ${repUploadError.message}`);
+  }
+
+  if (repUpload?.id) {
+    return repUpload.id;
+  }
+
+  const { data: repProfile, error: repError } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("email", email)
+    .maybeSingle();
+
+  if (repError) {
+    throw new Error(`profiles lookup failed: ${repError.message}`);
+  }
+
+  if (repProfile?.id) {
+    return repProfile.id;
+  }
+
+  throw new Error(`No user found for ${email}`);
+}
+
 export async function POST(req: Request) {
   try {
-    const { gmailEmail } = await req.json();
+    const body = await req.json();
+    const gmailEmail = normalizeEmail(body.gmailEmail);
 
     if (!gmailEmail) {
-      return Response.json({ error: "Missing gmailEmail" }, { status: 400 });
+      return Response.json({ ok: false, error: "Missing gmailEmail" }, { status: 400 });
     }
 
     const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -26,22 +65,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const { data: repProfile, error: repError } = await supabase
-      .from("profiles")
-      .select("id, email")
-      .eq("email", gmailEmail)
-      .maybeSingle();
-
-    if (repError) {
-      return Response.json({ ok: false, error: repError.message }, { status: 500 });
-    }
-
-    if (!repProfile) {
-      return Response.json(
-        { ok: false, error: `No profile found for ${gmailEmail}` },
-        { status: 404 }
-      );
-    }
+    const repId = await getRepIdByEmail(gmailEmail);
 
     const auth = new google.auth.JWT({
       email: clientEmail,
@@ -51,7 +75,6 @@ export async function POST(req: Request) {
     });
 
     const gmail = google.gmail({ version: "v1", auth });
-
     const topicName = `projects/${projectId}/topics/${topic}`;
 
     const res = await gmail.users.watch({
@@ -79,7 +102,7 @@ export async function POST(req: Request) {
       .from("gmail_mailbox_watches")
       .upsert(
         {
-          rep_id: repProfile.id,
+          rep_id: repId,
           gmail_email: gmailEmail,
           gmail_history_id: historyId,
           watch_expiration: expiration,
@@ -98,6 +121,7 @@ export async function POST(req: Request) {
     return Response.json({
       ok: true,
       gmailEmail,
+      repId,
       historyId,
       expiration,
       topicName,
