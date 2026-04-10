@@ -10,13 +10,14 @@ function normalizeEmail(email: string) {
   return String(email || "").trim().toLowerCase();
 }
 
+
 async function getRepIdByEmail(gmailEmail: string) {
   const email = normalizeEmail(gmailEmail);
 
   const { data: repUpload, error: repUploadError } = await supabase
     .from("rep_user_uploads")
-    .select("id")
-    .eq("rep_email", email)
+    .select("id, rep_email")
+    .ilike("rep_email", email)
     .maybeSingle();
 
   if (repUploadError) {
@@ -29,8 +30,8 @@ async function getRepIdByEmail(gmailEmail: string) {
 
   const { data: repProfile, error: repError } = await supabase
     .from("profiles")
-    .select("id")
-    .eq("email", email)
+    .select("id, email")
+    .ilike("email", email)
     .maybeSingle();
 
   if (repError) {
