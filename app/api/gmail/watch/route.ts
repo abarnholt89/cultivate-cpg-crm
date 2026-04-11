@@ -10,26 +10,12 @@ function normalizeEmail(email: string) {
   return String(email || "").trim().toLowerCase();
 }
 
-async function getOrCreateProfileIdByEmail(gmailEmail: string) {
+async function ensureRepExists(gmailEmail: string) {
   const email = normalizeEmail(gmailEmail);
-
-  const { data: existingProfile, error: existingProfileError } = await supabase
-    .from("profiles")
-    .select("id, email")
-    .ilike("email", email)
-    .maybeSingle();
-
-  if (existingProfileError) {
-    throw new Error(`profiles lookup failed: ${existingProfileError.message}`);
-  }
-
-  if (existingProfile?.id) {
-    return existingProfile.id;
-  }
 
   const { data: repUpload, error: repUploadError } = await supabase
     .from("rep_user_uploads")
-    .select("id, rep_email, rep_full_name")
+    .select("id, rep_email")
     .ilike("rep_email", email)
     .maybeSingle();
 
@@ -37,32 +23,21 @@ async function getOrCreateProfileIdByEmail(gmailEmail: string) {
     throw new Error(`rep_user_uploads lookup failed: ${repUploadError.message}`);
   }
 
-  if (!repUpload?.id) {
-    throw new Error(`No user found for ${email}`);
-  }
+  if (repUpload) return true;
 
-  const { data: insertedProfile, error: insertProfileError } = await supabase
+  const { data: repProfile, error: repError } = await supabase
     .from("profiles")
-    .upsert(
-      {
-        id: repUpload.id,
-        email,
-        full_name: repUpload.rep_full_name ?? null,
-      },
-      { onConflict: "id" }
-    )
-    .select("id")
-    .single();
+    .select("id, email")
+    .ilike("email", email)
+    .maybeSingle();
 
-  if (insertProfileError) {
-    throw new Error(`profiles upsert failed: ${insertProfileError.message}`);
+  if (repError) {
+    throw new Error(`profiles lookup failed: ${repError.message}`);
   }
 
-  if (!insertedProfile?.id) {
-    throw new Error(`Failed to create profile for ${email}`);
-  }
+  if (repProfile) return true;
 
-  return insertedProfile.id;
+  throw new Error(`No user found for ${email}`);
 }
 
 export async function POST(req: Request) {
@@ -71,10 +46,7 @@ export async function POST(req: Request) {
     const gmailEmail = normalizeEmail(body.gmailEmail);
 
     if (!gmailEmail) {
-      return Response.json(
-        { ok: false, error: "Missing gmailEmail" },
-        { status: 400 }
-      );
+      return Response.json({ ok: false, error: "Missing gmailEmail" }, { status: 400 });
     }
 
     const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -89,7 +61,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const repId = await getOrCreateProfileIdByEmail(gmailEmail);
+    await ensureRepExists(gmailEmail);
 
     const auth = new google.auth.JWT({
       email: clientEmail,
@@ -126,7 +98,6 @@ export async function POST(req: Request) {
       .from("gmail_mailbox_watches")
       .upsert(
         {
-          rep_id: repId,
           gmail_email: gmailEmail,
           gmail_history_id: historyId,
           watch_expiration: expiration,
@@ -145,7 +116,6 @@ export async function POST(req: Request) {
     return Response.json({
       ok: true,
       gmailEmail,
-      repId,
       historyId,
       expiration,
       topicName,
