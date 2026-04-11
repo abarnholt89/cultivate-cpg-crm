@@ -10,13 +10,26 @@ function normalizeEmail(email: string) {
   return String(email || "").trim().toLowerCase();
 }
 
-
-async function getRepIdByEmail(gmailEmail: string) {
+async function getOrCreateProfileIdByEmail(gmailEmail: string) {
   const email = normalizeEmail(gmailEmail);
+
+  const { data: existingProfile, error: existingProfileError } = await supabase
+    .from("profiles")
+    .select("id, email")
+    .ilike("email", email)
+    .maybeSingle();
+
+  if (existingProfileError) {
+    throw new Error(`profiles lookup failed: ${existingProfileError.message}`);
+  }
+
+  if (existingProfile?.id) {
+    return existingProfile.id;
+  }
 
   const { data: repUpload, error: repUploadError } = await supabase
     .from("rep_user_uploads")
-    .select("id, rep_email")
+    .select("id, rep_email, rep_full_name")
     .ilike("rep_email", email)
     .maybeSingle();
 
@@ -24,25 +37,32 @@ async function getRepIdByEmail(gmailEmail: string) {
     throw new Error(`rep_user_uploads lookup failed: ${repUploadError.message}`);
   }
 
-  if (repUpload?.id) {
-    return repUpload.id;
+  if (!repUpload?.id) {
+    throw new Error(`No user found for ${email}`);
   }
 
-  const { data: repProfile, error: repError } = await supabase
+  const { data: insertedProfile, error: insertProfileError } = await supabase
     .from("profiles")
-    .select("id, email")
-    .ilike("email", email)
-    .maybeSingle();
+    .upsert(
+      {
+        id: repUpload.id,
+        email,
+        full_name: repUpload.rep_full_name ?? null,
+      },
+      { onConflict: "id" }
+    )
+    .select("id")
+    .single();
 
-  if (repError) {
-    throw new Error(`profiles lookup failed: ${repError.message}`);
+  if (insertProfileError) {
+    throw new Error(`profiles upsert failed: ${insertProfileError.message}`);
   }
 
-  if (repProfile?.id) {
-    return repProfile.id;
+  if (!insertedProfile?.id) {
+    throw new Error(`Failed to create profile for ${email}`);
   }
 
-  throw new Error(`No user found for ${email}`);
+  return insertedProfile.id;
 }
 
 export async function POST(req: Request) {
@@ -51,7 +71,10 @@ export async function POST(req: Request) {
     const gmailEmail = normalizeEmail(body.gmailEmail);
 
     if (!gmailEmail) {
-      return Response.json({ ok: false, error: "Missing gmailEmail" }, { status: 400 });
+      return Response.json(
+        { ok: false, error: "Missing gmailEmail" },
+        { status: 400 }
+      );
     }
 
     const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -66,7 +89,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const repId = await getRepIdByEmail(gmailEmail);
+    const repId = await getOrCreateProfileIdByEmail(gmailEmail);
 
     const auth = new google.auth.JWT({
       email: clientEmail,
