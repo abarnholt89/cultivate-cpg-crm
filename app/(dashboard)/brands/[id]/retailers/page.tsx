@@ -141,6 +141,7 @@ function Badge({
 
 const STATUS_FILTERS: Array<{ value: string; label: string }> = [
   { value: "all", label: "All Accounts" },
+  { value: "in_motion", label: "In Motion" },
   { value: "active_account", label: "Active Accounts" },
   { value: "open_review", label: "In Progress" },
   { value: "under_review", label: "Under Review" },
@@ -379,6 +380,13 @@ export default function BrandRetailersPage() {
       const authorized = authorizedMap[r.id];
 
       if (selectedFilter === "all") return true;
+      if (selectedFilter === "in_motion") {
+  return (
+    row.account_status === "open_review" ||
+    row.account_status === "under_review" ||
+    row.account_status === "waiting_for_retailer_to_publish_review"
+  );
+}
 
       if (selectedFilter === "upcoming") {
         return (

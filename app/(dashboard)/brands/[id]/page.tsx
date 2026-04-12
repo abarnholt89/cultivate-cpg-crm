@@ -10,19 +10,21 @@ type Brand = {
   name: string;
 };
 
+type PipelineStatus =
+  | "active_account"
+  | "cultivate_does_not_rep"
+  | "not_a_target_account"
+  | "retailer_declined"
+  | "waiting_for_retailer_to_publish_review"
+  | "under_review"
+  | "open_review"
+  | "working_to_secure_anchor_account"
+  | "upcoming_review";
+
 type PipelineRow = {
   id: string;
   retailer_id: string;
-  account_status:
-    | "active_account"
-    | "cultivate_does_not_rep"
-    | "not_a_target_account"
-    | "retailer_declined"
-    | "waiting_for_retailer_to_publish_review"
-    | "under_review"
-    | "open_review"
-    | "working_to_secure_anchor_account"
-    | "upcoming_review";
+  account_status: PipelineStatus;
   schedule_mode: "scheduled" | "open";
   submitted_date: string | null;
   notes: string | null;
@@ -85,7 +87,7 @@ function prettyDate(value: string | null) {
   });
 }
 
-function statusLabel(status: PipelineRow["account_status"]) {
+function statusLabel(status: PipelineStatus) {
   switch (status) {
     case "active_account":
       return "Active Account";
@@ -108,6 +110,14 @@ function statusLabel(status: PipelineRow["account_status"]) {
     default:
       return status;
   }
+}
+
+function isInMotion(status: PipelineStatus) {
+  return (
+    status === "open_review" ||
+    status === "under_review" ||
+    status === "waiting_for_retailer_to_publish_review"
+  );
 }
 
 export default function BrandDashboardPage() {
@@ -189,7 +199,7 @@ export default function BrandDashboardPage() {
       const retailerIds = [
         ...new Set([
           ...nextPipelineRows.map((r) => r.retailer_id).filter(Boolean),
-          ...nextCalendarRows.map((r) => r.retailer_id).filter(Boolean) as string[],
+          ...((nextCalendarRows.map((r) => r.retailer_id).filter(Boolean) as string[]) ?? []),
           ...nextAuthorizedRows.map((r) => r.retailer_id).filter(Boolean),
         ]),
       ];
@@ -224,11 +234,8 @@ export default function BrandDashboardPage() {
     const next30 = addDaysISO(today, 30);
 
     let upcomingReviews = 0;
-    let inProgress = 0;
-    let underReview = 0;
+    let inMotion = 0;
     let activeAccounts = 0;
-    let awaitingDecision = 0;
-    let distributorRequired = 0;
 
     calendarRows.forEach((r) => {
       if (r.review_date && isBetweenInclusive(r.review_date, today, next30)) {
@@ -237,25 +244,19 @@ export default function BrandDashboardPage() {
     });
 
     pipelineRows.forEach((r) => {
-      if (r.account_status === "open_review") inProgress++;
-      if (r.account_status === "under_review") underReview++;
+      if (isInMotion(r.account_status)) inMotion++;
       if (r.account_status === "active_account") activeAccounts++;
-      if (r.account_status === "waiting_for_retailer_to_publish_review") awaitingDecision++;
-      if (r.account_status === "working_to_secure_anchor_account") distributorRequired++;
     });
+
+    const recentUpdates = pipelineRows.filter((r) => r.submitted_date || r.notes).length;
 
     return {
       upcomingReviews,
-      inProgress,
-      underReview,
+      inMotion,
       activeAccounts,
-      awaitingDecision,
-      distributorRequired,
-      allRetailers: new Set(pipelineRows.map((r) => r.retailer_id)).size,
-      authorizedAccounts: new Set(authorizedRows.map((r) => r.retailer_id)).size,
-      authorizedItems: authorizedRows.reduce((sum, r) => sum + (r.authorized_item_count ?? 0), 0),
+      recentUpdates,
     };
-  }, [pipelineRows, calendarRows, authorizedRows]);
+  }, [pipelineRows, calendarRows]);
 
   const upcomingList = useMemo(() => {
     const today = todayISO();
@@ -294,24 +295,18 @@ export default function BrandDashboardPage() {
         ← Back to Brands
       </Link>
 
-      <div>
-        <h1 className="text-3xl font-bold mt-2">{brand?.name ?? "Brand"}</h1>
-        <p className="text-gray-600 mt-1">Brand dashboard</p>
-        {error ? <div className="text-red-600 text-sm mt-2">{error}</div> : null}
-      </div>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold mt-2">{brand?.name ?? "Brand"}</h1>
+          <p className="text-gray-600 mt-1">Brand dashboard</p>
+          {error ? <div className="text-red-600 text-sm mt-2">{error}</div> : null}
+        </div>
 
-      <div className="flex flex-wrap gap-3">
         <Link
           href={`/brands/${brandId}/retailers`}
           className="inline-block bg-black text-white px-4 py-2 rounded"
         >
-          Open Retailers
-        </Link>
-        <Link
-          href={`/brands/${brandId}/category-review`}
-          className="inline-block border px-4 py-2 rounded"
-        >
-          Open Category Review
+          View Retailers
         </Link>
       </div>
 
@@ -322,14 +317,9 @@ export default function BrandDashboardPage() {
           href={`/brands/${brandId}/category-review`}
         />
         <SummaryCard
-          label="In Progress"
-          value={summary.inProgress}
-          href={`/brands/${brandId}/retailers?filter=open_review`}
-        />
-        <SummaryCard
-          label="Under Review"
-          value={summary.underReview}
-          href={`/brands/${brandId}/retailers?filter=under_review`}
+          label="In Motion"
+          value={summary.inMotion}
+          href={`/brands/${brandId}/retailers?filter=in_motion`}
         />
         <SummaryCard
           label="Active Accounts"
@@ -337,35 +327,59 @@ export default function BrandDashboardPage() {
           href={`/brands/${brandId}/retailers?filter=active_account`}
         />
         <SummaryCard
-          label="Awaiting Decision"
-          value={summary.awaitingDecision}
-          href={`/brands/${brandId}/retailers?filter=waiting_for_retailer_to_publish_review`}
+          label="Recent Updates"
+          value={summary.recentUpdates}
+          href={`/brands/${brandId}/retailers`}
         />
-        <SummaryCard
-          label="Distributor Required"
-          value={summary.distributorRequired}
-          href={`/brands/${brandId}/retailers?filter=working_to_secure_anchor_account`}
-        />
-        <SummaryCard
-          label="Authorized Accounts"
-          value={summary.authorizedAccounts}
-          href={`/brands/${brandId}/retailers?filter=authorized`}
-        />
-        <SummaryCard
-          label="Authorized Items"
-          value={summary.authorizedItems}
-          href={`/brands/${brandId}/retailers?filter=authorized`}
-        />
+      </div>
+
+      <div className="border rounded-xl p-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">What’s Happening Now</h2>
+          <Link href={`/brands/${brandId}/retailers`} className="text-sm underline">
+            Open retailer list
+          </Link>
+        </div>
+
+        {recentWorkflow.length === 0 ? (
+          <p className="text-sm text-gray-600 mt-4">No recent workflow notes yet.</p>
+        ) : (
+          <div className="space-y-3 mt-4">
+            {recentWorkflow.map((row, index) => {
+              const retailer = retailersById[row.retailer_id];
+              const headline = retailer?.banner?.trim()
+                ? retailer.banner
+                : retailer?.name ?? "Retailer";
+
+              return (
+                <Link
+                  key={row.id ?? `${row.retailer_id ?? "no-retailer"}-${index}`}
+                  href={`/brands/${brandId}/retailers/${row.retailer_id}`}
+                  className="block border rounded-lg p-3 hover:bg-gray-50"
+                >
+                  <div className="font-medium">{headline}</div>
+                  <div className="text-sm text-gray-600 mt-1">
+                    {statusLabel(row.account_status)}
+                    {row.submitted_date ? ` • Updated ${prettyDate(row.submitted_date)}` : ""}
+                  </div>
+                  {row.notes ? (
+                    <div className="text-sm text-gray-700 mt-2 line-clamp-3">{row.notes}</div>
+                  ) : (
+                    <div className="text-sm text-gray-500 mt-2">No notes yet.</div>
+                  )}
+                  <div className="text-sm underline mt-2">Open retailer</div>
+                </Link>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="border rounded-xl p-4">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold">Upcoming Reviews (30 days)</h2>
-            <Link
-              href={`/brands/${brandId}/category-review`}
-              className="text-sm underline"
-            >
+            <Link href={`/brands/${brandId}/category-review`} className="text-sm underline">
               View all
             </Link>
           </div>
@@ -436,7 +450,7 @@ export default function BrandDashboardPage() {
                 return (
                   <Link
                     key={`${row.retailer_id ?? "no-retailer"}-${index}`}
-                    href={`/brands/${brandId}/retailers`}
+                    href={`/brands/${brandId}/retailers?filter=authorized`}
                     className="block border rounded-lg p-3 hover:bg-gray-50"
                   >
                     <div className="font-medium">{headline}</div>
@@ -449,51 +463,6 @@ export default function BrandDashboardPage() {
             </div>
           )}
         </div>
-      </div>
-
-      <div className="border rounded-xl p-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Recent Workflow Notes</h2>
-          <Link href={`/brands/${brandId}/retailers`} className="text-sm underline">
-            Open retailer list
-          </Link>
-        </div>
-
-        {recentWorkflow.length === 0 ? (
-          <p className="text-sm text-gray-600 mt-4">No recent workflow notes yet.</p>
-        ) : (
-          <div className="space-y-3 mt-4">
-            {recentWorkflow.map((row, index) => {
-              const retailer = retailersById[row.retailer_id];
-              const headline = retailer?.banner?.trim()
-                ? retailer.banner
-                : retailer?.name ?? "Retailer";
-
-              return (
-                <Link
-                  key={row.id ?? `${row.retailer_id ?? "no-retailer"}-${index}`}
-                  href={`/brands/${brandId}/retailers/${row.retailer_id}`}
-                  className="block border rounded-lg p-3 hover:bg-gray-50"
-                >
-                  <div className="font-medium">{headline}</div>
-                  <div className="text-sm text-gray-600 mt-1">
-                    Status: {statusLabel(row.account_status)}
-                  </div>
-                  {row.submitted_date ? (
-                    <div className="text-sm text-gray-600">
-                      Submitted: {prettyDate(row.submitted_date)}
-                    </div>
-                  ) : null}
-                  {row.notes ? (
-                    <div className="text-sm text-gray-700 mt-2 line-clamp-3">
-                      {row.notes}
-                    </div>
-                  ) : null}
-                </Link>
-              );
-            })}
-          </div>
-        )}
       </div>
     </div>
   );

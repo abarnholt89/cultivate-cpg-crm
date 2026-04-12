@@ -66,7 +66,17 @@ export default function BrandCategoryReviewPage() {
 
     async function load() {
       setError("");
+const {
+  data: { user },
+} = await supabase.auth.getUser();
 
+const { data: profile } = await supabase
+  .from("profiles")
+  .select("role")
+  .eq("id", user?.id)
+  .single();
+
+const role = profile?.role;
       const { data: brandData, error: brandError } = await supabase
         .from("brands")
         .select("id,name")
@@ -85,13 +95,20 @@ export default function BrandCategoryReviewPage() {
 
       setBrand(brandData);
 
-      const { data, error: reviewError } = await supabase
-        .from("brand_category_review_view")
-        .select(
-          "brand_id,retailer_id,retailer_name,retailer_category_review_name,universal_department,universal_category,review_date,reset_date"
-        )
-        .eq("brand_id", brandId)
-        .order("review_date", { ascending: true, nullsFirst: false });
+let query = supabase
+  .from("brand_category_review_view")
+  .select(
+    "brand_id,retailer_id,retailer_name,retailer_category_review_name,universal_department,universal_category,review_date,reset_date"
+  )
+  .order("review_date", { ascending: true, nullsFirst: false });
+
+// only restrict clients
+// only restrict clients
+if (role === "client") {
+  query = query.eq("brand_id", brandId);
+}
+
+const { data, error: reviewError } = await query;
 
       if (reviewError) {
         setError(reviewError.message);

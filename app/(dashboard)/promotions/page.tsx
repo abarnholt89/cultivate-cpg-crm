@@ -109,7 +109,23 @@ function discountLabel(row: PromotionRow) {
   if (row.discount_amount != null) parts.push(`$${row.discount_amount}`);
   return parts.join(" • ");
 }
+function normalizeText(value: string | null | undefined) {
+  return (value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
 
+function skuKey(row: PromotionRow) {
+  const upc = normalizeText(row.unit_upc);
+  if (upc) return `upc:${upc}`;
+
+  const desc = normalizeText(row.sku_description);
+  if (desc) return `desc:${desc}`;
+
+  return `row:${row.id}`;
+}
+
+function uniqueSkuCount(rows: PromotionRow[]) {
+  return new Set(rows.map(skuKey)).size;
+}
 async function fetchAllRows<T>(query: any): Promise<T[]> {
   const pageSize = 1000;
   let from = 0;
@@ -244,13 +260,15 @@ function groupRetailerActivations(rows: PromotionRow[]): RetailerGroup[] {
       const promoMap = new Map<string, RetailerPromoGroup>();
 
       for (const row of brandGroup.rows) {
-        const promoKey = [
-          brandGroup.key,
-          row.promo_year,
-          row.promo_month,
-          row.promo_name || "",
-          row.promo_type,
-        ].join("||");
+const promoKey = [
+  brandGroup.key,
+  row.promo_year,
+  row.promo_month,
+  row.promo_name || "",
+  row.promo_type,
+  row.start_date || "",
+  row.end_date || "",
+].join("||");
 
         if (!promoMap.has(promoKey)) {
           promoMap.set(promoKey, {
@@ -377,51 +395,19 @@ export default function PromotionsPage() {
           return;
         }
 
-        if (nextRole === "rep") {
-          const { data: ownedRetailers, error: ownedRetailersError } = await supabase
-            .from("retailers")
-            .select("id")
-            .eq("rep_owner_user_id", userId);
+if (nextRole === "admin" || nextRole === "rep") {
+const rows = await fetchAllRows<PromotionRow>(
+  supabase
+    .from("promotions")
+    .select("*")
+    .order("promo_year", { ascending: false })
+    .order("promo_month", { ascending: true })
+);
 
-          if (ownedRetailersError) {
-            setStatus(ownedRetailersError.message);
-            setLoading(false);
-            return;
-          }
-
-          const retailerIds = (ownedRetailers ?? []).map((row) => row.id);
-
-          const distributorRows = await fetchAllRows<PromotionRow>(
-            supabase
-              .from("promotions")
-              .select("*")
-              .or("promo_scope.eq.distributor,promo_name.eq.Distributor OI")
-              .order("promo_year", { ascending: false })
-              .order("promo_month", { ascending: true })
-          );
-
-          let retailerRows: PromotionRow[] = [];
-
-          if (retailerIds.length > 0) {
-            retailerRows = await fetchAllRows<PromotionRow>(
-              supabase
-                .from("promotions")
-                .select("*")
-                .in("retailer_id", retailerIds)
-                .order("promo_year", { ascending: false })
-                .order("promo_month", { ascending: true })
-            );
-          }
-
-          const combined = [...retailerRows, ...distributorRows];
-          const uniqueRows = Array.from(
-            new Map(combined.map((row) => [row.id, row])).values()
-          );
-
-          setPromotions(uniqueRows);
-          setFiltered(uniqueRows);
-          setLoading(false);
-          return;
+setPromotions(rows);
+setFiltered(rows);
+setLoading(false);
+return;
         }
 
         if (nextRole === "admin") {
@@ -555,9 +541,7 @@ const distributorOiKeys = useMemo(() => {
 
   function renderDistributorGroups(groups: DistributorGroup[]) {
     return groups.map((group) => {
-      const skuCount = new Set(
-  group.rows.map((row) => row.unit_upc || row.sku_description).filter(Boolean)
-).size;
+const skuCount = uniqueSkuCount(group.rows);
       const startDate = getPromoStart(group.rows);
       const endDate = getPromoEnd(group.rows);
 
@@ -652,9 +636,7 @@ const distributorOiKeys = useMemo(() => {
         (sum, brandGroup) => sum + brandGroup.promoGroups.length,
         0
       );
-      const skuCount = new Set(
-  group.rows.map((row) => row.unit_upc || row.sku_description).filter(Boolean)
-).size;
+const skuCount = uniqueSkuCount(group.rows);
       const brandCount = group.brandGroups.length;
 
       return (
@@ -704,9 +686,7 @@ const distributorOiKeys = useMemo(() => {
                 <div className="space-y-3">
                   {group.brandGroups.map((brandGroup) => {
                     const brandPromoCount = brandGroup.promoGroups.length;
-                    const brandSkuCount = new Set(
-  brandGroup.rows.map((row) => row.unit_upc || row.sku_description).filter(Boolean)
-).size;
+const brandSkuCount = uniqueSkuCount(brandGroup.rows);
                     const hasAnyOiLoaded = brandGroup.promoGroups.some((promoGroup) =>
                       promoGroup.rows.some((item) =>
                         distributorOiKeys.has(
@@ -755,9 +735,7 @@ const distributorOiKeys = useMemo(() => {
                         {expandedBrands[brandGroup.key] ? (
                           <div className="px-3 pb-3 space-y-2">
                             {brandGroup.promoGroups.map((promoGroup) => {
-                              const promoSkuCount = new Set(
-  promoGroup.rows.map((row) => row.unit_upc || row.sku_description).filter(Boolean)
-).size;
+const promoSkuCount = uniqueSkuCount(promoGroup.rows);
                               const hasOiLoaded = promoGroup.rows.some((item) =>
                                 distributorOiKeys.has(
                                   [
