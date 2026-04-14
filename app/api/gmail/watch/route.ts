@@ -77,8 +77,6 @@ export async function POST(req: Request) {
       userId: "me",
       requestBody: {
         topicName,
-        labelIds: ["SENT"],
-        labelFilterAction: "include",
       },
     });
 
