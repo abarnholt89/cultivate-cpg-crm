@@ -5,6 +5,16 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+function buildClientMessage(activityTypeKey: string): string {
+  switch (activityTypeKey) {
+    case "intro":       return "Your Cultivate rep made an introduction to this retailer.";
+    case "follow_up":   return "Your Cultivate rep followed up with this retailer.";
+    case "meeting":     return "Your Cultivate rep had a meeting with this retailer.";
+    case "email":       return "Your Cultivate rep sent an email to this retailer.";
+    default:            return "Your Cultivate rep took action on this account.";
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const {
@@ -61,6 +71,7 @@ export async function POST(req: Request) {
         gmail_message_id: gmailMessageId || null,
         gmail_thread_id: gmailThreadId || null,
         source: source || "gmail_addon",
+        client_visible_message: buildClientMessage(activityTypeKey),
         direction: "outbound",
         activity_kind: "manual_log",
         visibility: "client_visible",
