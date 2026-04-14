@@ -302,12 +302,26 @@ export default function BrandDashboardPage() {
           {error ? <div className="text-red-600 text-sm mt-2">{error}</div> : null}
         </div>
 
-        <Link
-          href={`/brands/${brandId}/retailers`}
-          className="inline-block bg-black text-white px-4 py-2 rounded"
-        >
-          View Retailers
-        </Link>
+        <div className="flex gap-2 text-sm flex-wrap">
+          <Link
+            href={`/brands/${brandId}/retailers`}
+            className="inline-block px-4 py-2 rounded border hover:bg-gray-50"
+          >
+            Retailers
+          </Link>
+          <Link
+            href={`/brands/${brandId}/board`}
+            className="inline-block px-4 py-2 rounded border bg-black text-white"
+          >
+            Board
+          </Link>
+          <Link
+            href={`/brands/${brandId}/category-review`}
+            className="inline-block px-4 py-2 rounded border hover:bg-gray-50"
+          >
+            Category Review
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
