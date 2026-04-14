@@ -1,0 +1,35 @@
+{
+  "timeZone": "America/New_York",
+  "dependencies": {},
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/gmail.addons.execute",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/script.locale",
+    "https://www.googleapis.com/auth/script.external_request"
+  ],
+  "addOns": {
+    "common": {
+      "name": "Cultivate CPG CRM",
+      "logoUrl": "https://www.gstatic.com/images/branding/product/2x/gmail_2020q4_32dp.png",
+      "homepageTrigger": {
+        "runFunction": "buildHomepageCard"
+      },
+      "universalActions": [
+        {
+          "label": "Cultivate CRM",
+          "runFunction": "buildHomepageCard"
+        }
+      ]
+    },
+    "gmail": {
+      "contextualTriggers": [
+        {
+          "unconditional": {},
+          "onTriggerFunction": "buildContextualCard"
+        }
+      ]
+    }
+  }
+}
