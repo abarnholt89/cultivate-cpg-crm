@@ -17,11 +17,15 @@ type CategoryReviewRow = {
   reset_date: string | null;
 };
 
+type BrandChoice = {
+  brand_id: string;
+  brand_name: string;
+};
+
 function prettyDate(value: string | null) {
   if (!value) return "—";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
-
   return d.toLocaleDateString(undefined, {
     year: "numeric",
     month: "short",
@@ -71,7 +75,13 @@ export default function GlobalCategoryReviewPage() {
   const [role, setRole] = useState<Role>(null);
   const [search, setSearch] = useState("");
   const [dateFilter, setDateFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("none");
   const [loading, setLoading] = useState(true);
+
+  const [showModal, setShowModal] = useState(false);
+  const [selectedBrands, setSelectedBrands] = useState<BrandChoice[]>([]);
+  const [selectedRow, setSelectedRow] = useState<CategoryReviewRow | null>(null);
+  const [modalLoading, setModalLoading] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -182,14 +192,66 @@ export default function GlobalCategoryReviewPage() {
     }
   }, [role]);
 
-  const filteredRows = useMemo(() => {
+  async function handleRowClick(row: CategoryReviewRow) {
+    if (!row.retailer_id) return;
+
+    setSelectedRow(row);
+    setSelectedBrands([]);
+    setShowModal(true);
+    setModalLoading(true);
+
+    try {
+      const { data: reviewRows, error: reviewError } = await supabase
+        .from("brand_category_review_view")
+        .select("brand_id")
+        .eq("retailer_id", row.retailer_id)
+        .eq("retailer_category_review_name", row.retailer_category_review_name);
+
+      if (reviewError) {
+        setError(reviewError.message);
+        setModalLoading(false);
+        return;
+      }
+
+      const brandIds = Array.from(
+        new Set((reviewRows ?? []).map((r: any) => r.brand_id).filter(Boolean))
+      );
+
+      if (brandIds.length === 0) {
+        setModalLoading(false);
+        return;
+      }
+
+      const { data: brandRows, error: brandError } = await supabase
+        .from("brands")
+        .select("id,name")
+        .in("id", brandIds)
+        .order("name", { ascending: true });
+
+      if (brandError) {
+        setError(brandError.message);
+        setModalLoading(false);
+        return;
+      }
+
+      setSelectedBrands(
+        (brandRows ?? []).map((b: any) => ({
+          brand_id: b.id,
+          brand_name: b.name,
+        }))
+      );
+    } finally {
+      setModalLoading(false);
+    }
+  }
+
+  const finalRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     const today = todayISO();
-    const next30 = addDaysISO(today, 30);
     const next90 = addDaysISO(today, 90);
     const last180 = addDaysISO(today, -180);
 
-    return rows.filter((row) => {
+    let filtered = rows.filter((row) => {
       const matchesSearch =
         !q ||
         row.retailer_name.toLowerCase().includes(q) ||
@@ -201,12 +263,7 @@ export default function GlobalCategoryReviewPage() {
 
       if (dateFilter === "all") return true;
       if (dateFilter === "missing") return !row.review_date;
-
       if (!row.review_date) return false;
-
-      if (dateFilter === "next30") {
-        return row.review_date >= today && row.review_date <= next30;
-      }
 
       if (dateFilter === "next90") {
         return row.review_date >= today && row.review_date <= next90;
@@ -218,160 +275,147 @@ export default function GlobalCategoryReviewPage() {
 
       return true;
     });
-  }, [rows, search, dateFilter]);
 
-  const stats = useMemo(() => {
-    const today = todayISO();
-    const next30 = addDaysISO(today, 30);
-    const next90 = addDaysISO(today, 90);
-    const last180 = addDaysISO(today, -180);
+    if (sortBy === "category") {
+      filtered = [...filtered].sort((a, b) =>
+        a.universal_category.localeCompare(b.universal_category)
+      );
+    }
 
-    let next30Count = 0;
-    let next90Count = 0;
-    let pastDueCount = 0;
-    let missingCount = 0;
+    if (sortBy === "retailer") {
+      filtered = [...filtered].sort((a, b) =>
+        a.retailer_name.localeCompare(b.retailer_name)
+      );
+    }
 
-    rows.forEach((row) => {
-      if (!row.review_date) {
-        missingCount++;
-        return;
-      }
+    if (sortBy === "review_date") {
+      filtered = [...filtered].sort((a, b) =>
+        (a.review_date || "9999-12-31").localeCompare(b.review_date || "9999-12-31")
+      );
+    }
 
-      if (row.review_date >= last180 && row.review_date < today) {
-        pastDueCount++;
-      }
-
-      if (row.review_date >= today && row.review_date <= next30) {
-        next30Count++;
-      }
-
-      if (row.review_date >= today && row.review_date <= next90) {
-        next90Count++;
-      }
-    });
-
-    return {
-      total: rows.length,
-      next30: next30Count,
-      next90: next90Count,
-      pastDue: pastDueCount,
-      missing: missingCount,
-    };
-  }, [rows]);
+    return filtered;
+  }, [rows, search, dateFilter, sortBy]);
 
   return (
     <div className="p-6 space-y-6">
       <div>
         <h1 className="text-3xl font-bold">Category Review</h1>
-        <p className="text-gray-600 mt-1">
-          Master category review and reset calendar across brands.
-        </p>
-        {role ? (
-          <p className="text-sm text-gray-500 mt-1">
-            Viewing as: <span className="font-medium">{role}</span>
-          </p>
-        ) : null}
         {error ? <div className="text-red-600 text-sm mt-2">{error}</div> : null}
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <StatCard label="Total Rows" value={stats.total} />
-        <StatCard label="Next 30 Days" value={stats.next30} />
-        <StatCard label="Next 90 Days" value={stats.next90} />
-        <StatCard label="Past Due" value={stats.pastDue} />
-        <StatCard label="Missing Review Date" value={stats.missing} />
+      <div className="flex flex-col md:flex-row gap-3">
+        <input
+          className="border rounded px-3 py-2 w-full"
+          placeholder="Search retailer, review, category..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+
+        <select
+          className="border rounded px-3 py-2 bg-white"
+          value={dateFilter}
+          onChange={(e) => setDateFilter(e.target.value)}
+        >
+          <option value="all">All Dates</option>
+          <option value="next90">Next 90 Days</option>
+          <option value="past">Past Due</option>
+          <option value="missing">Missing Review Date</option>
+        </select>
+
+        <select
+          className="border rounded px-3 py-2 bg-white"
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value)}
+        >
+          <option value="none">Sort</option>
+          <option value="retailer">Retailer</option>
+          <option value="category">Category</option>
+          <option value="review_date">Review Date</option>
+        </select>
       </div>
 
-      <div className="border rounded-xl p-4 space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <input
-            className="border rounded px-3 py-2 w-full"
-            placeholder="Search retailer, review name, department, or category..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-
-          <select
-            className="border rounded px-3 py-2 w-full bg-white"
-            value={dateFilter}
-            onChange={(e) => setDateFilter(e.target.value)}
-          >
-            <option value="all">All Dates</option>
-            <option value="next30">Next 30 Days</option>
-            <option value="next90">Next 90 Days</option>
-            <option value="past">Past Due</option>
-            <option value="missing">Missing Review Date</option>
-          </select>
-        </div>
-
-        {loading ? (
-          <p className="text-sm text-gray-600">Loading category review rows…</p>
-        ) : filteredRows.length === 0 ? (
-          <p className="text-sm text-gray-600">
-            No category review rows match your current filters.
-          </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left border-b">
-                  <th className="py-2 pr-4">Retailer</th>
-                  <th className="py-2 pr-4">Retailer Review Name</th>
-                  <th className="py-2 pr-4">Department</th>
-                  <th className="py-2 pr-4">Universal Category</th>
-                  <th className="py-2 pr-4">Review Date</th>
-                  <th className="py-2 pr-4">Reset Date</th>
+      {loading ? (
+        <div>Loading…</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left border-b">
+                <th className="py-2 pr-4">Retailer</th>
+                <th className="py-2 pr-4">Review</th>
+                <th className="py-2 pr-4">Department</th>
+                <th className="py-2 pr-4">Category</th>
+                <th className="py-2 pr-4">Review Date</th>
+                <th className="py-2 pr-4">Reset Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {finalRows.map((row, idx) => (
+                <tr
+                  key={`${row.brand_id}-${row.retailer_name}-${row.universal_category}-${row.review_date ?? "none"}-${idx}`}
+                  className="border-b last:border-b-0"
+                >
+                  <td className="py-3 pr-4">
+                    {row.retailer_id ? (
+                      <span
+                        onClick={() => handleRowClick(row)}
+                        className="underline hover:text-black cursor-pointer"
+                      >
+                        {row.retailer_name}
+                      </span>
+                    ) : (
+                      row.retailer_name
+                    )}
+                  </td>
+                  <td className="py-3 pr-4">
+                    {row.retailer_category_review_name || "—"}
+                  </td>
+                  <td className="py-3 pr-4">
+                    {row.universal_department || "—"}
+                  </td>
+                  <td className="py-3 pr-4">{row.universal_category}</td>
+                  <td className="py-3 pr-4">{prettyDate(row.review_date)}</td>
+                  <td className="py-3 pr-4">{prettyDate(row.reset_date)}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {filteredRows.map((row, idx) => (
-                  <tr
-                    key={`${row.brand_id}-${row.retailer_name}-${row.universal_category}-${row.review_date ?? "none"}-${idx}`}
-                    className="border-b last:border-b-0"
-                  >
-                    <td className="py-3 pr-4">
-                      {row.retailer_id ? (
-                        <Link
-                          href={`/brands/${row.brand_id}/retailers/${row.retailer_id}`}
-                          className="underline hover:text-black"
-                        >
-                          {row.retailer_name}
-                        </Link>
-                      ) : (
-                        row.retailer_name
-                      )}
-                    </td>
-                    <td className="py-3 pr-4">
-                      {row.retailer_category_review_name || "—"}
-                    </td>
-                    <td className="py-3 pr-4">
-                      {row.universal_department || "—"}
-                    </td>
-                    <td className="py-3 pr-4">{row.universal_category}</td>
-                    <td className="py-3 pr-4">{prettyDate(row.review_date)}</td>
-                    <td className="py-3 pr-4">{prettyDate(row.reset_date)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-function StatCard({
-  label,
-  value,
-}: {
-  label: string;
-  value: number;
-}) {
-  return (
-    <div className="border rounded-lg p-4">
-      <div className="text-2xl font-bold">{value}</div>
-      <div className="text-sm text-gray-600 mt-1">{label}</div>
+      {showModal && selectedRow ? (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl p-6 w-[520px] max-h-[70vh] overflow-y-auto">
+            <h3 className="font-semibold mb-4">
+              Select Brand ({selectedBrands.length})
+            </h3>
+
+            {modalLoading ? (
+              <div className="text-sm text-gray-600">Loading brands…</div>
+            ) : (
+              <div className="space-y-2">
+                {selectedBrands.map((b) => (
+                  <Link
+                    key={b.brand_id}
+                    href={`/brands/${b.brand_id}/retailers/${selectedRow.retailer_id}`}
+                    className="block border rounded-lg p-3 hover:bg-gray-50"
+                  >
+                    <div className="font-medium">{b.brand_name}</div>
+                  </Link>
+                ))}
+              </div>
+            )}
+
+            <button
+              onClick={() => setShowModal(false)}
+              className="mt-4 text-sm"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
