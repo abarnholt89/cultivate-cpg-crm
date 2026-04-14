@@ -135,29 +135,6 @@ export default function GlobalCategoryReviewPage() {
           )
           .order("review_date", { ascending: true, nullsFirst: false });
 
-        if (nextRole === "client") {
-          const { data: brandUsers, error: brandUsersError } = await supabase
-            .from("brand_users")
-            .select("brand_id")
-            .eq("user_id", user.id);
-
-          if (brandUsersError) {
-            setError(brandUsersError.message);
-            setLoading(false);
-            return;
-          }
-
-          const brandIds = (brandUsers ?? []).map((row) => row.brand_id);
-
-          if (brandIds.length === 0) {
-            setRows([]);
-            setLoading(false);
-            return;
-          }
-
-          query = query.in("brand_id", brandIds);
-        }
-
         if (nextRole === "rep") {
           const { data: ownedRetailers, error: ownedRetailersError } = await supabase
             .from("retailers")
