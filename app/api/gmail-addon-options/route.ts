@@ -36,12 +36,14 @@ export async function GET() {
     );
   }
 
+  const allowedActivityTypeKeys = new Set(["intro", "follow_up", "submission"]);
+
   return NextResponse.json({
     retailers: (retailers || []).map((r) => ({
       id: r.id,
       name: r.banner,
     })),
     brands,
-    activityTypes,
+    activityTypes: (activityTypes || []).filter((t) => allowedActivityTypeKeys.has(t.key)),
   });
 }
