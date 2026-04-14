@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 type Brand = {
@@ -52,6 +52,7 @@ function addDaysISO(iso: string, days: number) {
 
 export default function BrandCategoryReviewPage() {
   const params = useParams();
+  const router = useRouter();
   const idParam = params?.id;
   const brandId = Array.isArray(idParam) ? idParam[0] : idParam;
 
@@ -77,6 +78,11 @@ const { data: profile } = await supabase
   .single();
 
 const role = profile?.role;
+
+      if (role === "client") {
+        router.replace("/brands");
+        return;
+      }
       const { data: brandData, error: brandError } = await supabase
         .from("brands")
         .select("id,name")

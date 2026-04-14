@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 type Role = "admin" | "rep" | "client" | null;
@@ -70,6 +71,7 @@ async function fetchAllRows<T>(query: any): Promise<T[]> {
 }
 
 export default function GlobalCategoryReviewPage() {
+  const router = useRouter();
   const [rows, setRows] = useState<CategoryReviewRow[]>([]);
   const [error, setError] = useState("");
   const [role, setRole] = useState<Role>(null);
@@ -120,6 +122,11 @@ export default function GlobalCategoryReviewPage() {
 
         const nextRole = (profile?.role as Role) ?? null;
         setRole(nextRole);
+
+        if (nextRole === "client") {
+          router.replace("/brands");
+          return;
+        }
 
         let query = supabase
           .from("brand_category_review_view")
