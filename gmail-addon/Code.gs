@@ -240,7 +240,7 @@ function onSubmitActivity(e) {
       source: "gmail_addon",
     };
 
-    var response = UrlFetchApp.fetch(CONFIG.BASE_URL + "/api/crm-activities/approve", {
+    var response = UrlFetchApp.fetch(CONFIG.BASE_URL + "/api/crm-activities/create", {
       method: "post",
       contentType: "application/json",
       payload: JSON.stringify(payload),

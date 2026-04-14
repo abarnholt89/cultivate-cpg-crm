@@ -1,0 +1,61 @@
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
+
+export async function POST(req: Request) {
+  try {
+    const {
+      retailerId,
+      brandId,
+      activityTypeKey,
+      summary,
+      senderEmail,
+      subject,
+      gmailMessageId,
+      gmailThreadId,
+      source,
+    } = await req.json();
+
+    if (!retailerId || !brandId || !activityTypeKey) {
+      return Response.json(
+        { error: "Missing required fields: retailerId, brandId, activityTypeKey" },
+        { status: 400 }
+      );
+    }
+
+    const { data, error } = await supabase
+      .from("crm_activities")
+      .insert({
+        retailer_id: retailerId,
+        brand_id: brandId,
+        activity_type_key: activityTypeKey,
+        summary: summary || "",
+        sender_email: senderEmail || "",
+        email_subject: subject || "",
+        gmail_message_id: gmailMessageId || null,
+        gmail_thread_id: gmailThreadId || null,
+        source: source || "gmail_addon",
+        direction: "outbound",
+        activity_kind: "manual_log",
+        visibility: "client_visible",
+        approval_status: "not_needed",
+        sent_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+
+    if (error) {
+      return Response.json({ error: error.message }, { status: 500 });
+    }
+
+    return Response.json({ activityId: data.id });
+  } catch (err: any) {
+    return Response.json(
+      { error: err.message || "Unknown error" },
+      { status: 500 }
+    );
+  }
+}
