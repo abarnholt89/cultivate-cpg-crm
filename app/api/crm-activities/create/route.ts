@@ -26,6 +26,8 @@ export async function POST(req: Request) {
       );
     }
 
+    console.log("[create-activity] senderEmail received:", senderEmail);
+
     let repId: string | null = null;
     if (senderEmail) {
       const { data: profile } = await supabase
@@ -34,6 +36,16 @@ export async function POST(req: Request) {
         .ilike("email", senderEmail.trim())
         .maybeSingle();
       if (profile) repId = profile.id;
+    }
+
+    if (!repId) {
+      const { data: fallbackProfile } = await supabase
+        .from("profiles")
+        .select("id")
+        .in("role", ["admin", "rep"])
+        .limit(1)
+        .maybeSingle();
+      if (fallbackProfile) repId = fallbackProfile.id;
     }
 
     const { data, error } = await supabase
