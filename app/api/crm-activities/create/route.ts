@@ -19,7 +19,7 @@ export async function POST(req: Request) {
   try {
     const {
       retailerId,
-      brandId,
+      brandIds,
       activityTypeKey,
       summary,
       senderEmail,
@@ -29,9 +29,9 @@ export async function POST(req: Request) {
       source,
     } = await req.json();
 
-    if (!retailerId || !brandId || !activityTypeKey) {
+    if (!retailerId || !Array.isArray(brandIds) || brandIds.length === 0 || !activityTypeKey) {
       return Response.json(
-        { error: "Missing required fields: retailerId, brandId, activityTypeKey" },
+        { error: "Missing required fields: retailerId, brandIds, activityTypeKey" },
         { status: 400 }
       );
     }
@@ -58,34 +58,42 @@ export async function POST(req: Request) {
       if (fallbackProfile) repId = fallbackProfile.id;
     }
 
-    const { data, error } = await supabase
-      .from("crm_activities")
-      .insert({
-        rep_id: repId,
-        retailer_id: retailerId,
-        brand_id: brandId,
-        activity_type_key: activityTypeKey,
-        summary: summary || "",
-        sender_email: senderEmail || "",
-        email_subject: subject || "",
-        gmail_message_id: gmailMessageId || null,
-        gmail_thread_id: gmailThreadId || null,
-        source: source || "gmail_addon",
-        client_visible_message: buildClientMessage(activityTypeKey),
-        direction: "outbound",
-        activity_kind: "manual_log",
-        visibility: "client_visible",
-        approval_status: "not_needed",
-        sent_at: new Date().toISOString(),
-      })
-      .select("id")
-      .single();
+    const activityIds: string[] = [];
+    const clientMessage = buildClientMessage(activityTypeKey);
+    const sentAt = new Date().toISOString();
 
-    if (error) {
-      return Response.json({ error: error.message }, { status: 500 });
+    for (const brandId of brandIds) {
+      const { data, error } = await supabase
+        .from("crm_activities")
+        .insert({
+          rep_id: repId,
+          retailer_id: retailerId,
+          brand_id: brandId,
+          activity_type_key: activityTypeKey,
+          summary: summary || "",
+          sender_email: senderEmail || "",
+          email_subject: subject || "",
+          gmail_message_id: gmailMessageId || null,
+          gmail_thread_id: gmailThreadId || null,
+          source: source || "gmail_addon",
+          client_visible_message: clientMessage,
+          direction: "outbound",
+          activity_kind: "manual_log",
+          visibility: "client_visible",
+          approval_status: "not_needed",
+          sent_at: sentAt,
+        })
+        .select("id")
+        .single();
+
+      if (error) {
+        return Response.json({ error: error.message }, { status: 500 });
+      }
+
+      activityIds.push(data.id);
     }
 
-    return Response.json({ activityId: data.id });
+    return Response.json({ activityIds });
   } catch (err: any) {
     return Response.json(
       { error: err.message || "Unknown error" },

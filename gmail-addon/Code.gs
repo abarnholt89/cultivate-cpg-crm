@@ -112,11 +112,11 @@ function buildActivityCard_(from, subject, messageId, threadId, retailers, brand
   });
   formSection.addWidget(retailerSelect);
 
-  // Brand dropdown
+  // Brand checkboxes (multi-select)
   var brandSelect = CardService.newSelectionInput()
-    .setType(CardService.SelectionInputType.DROPDOWN)
-    .setTitle("Brand")
-    .setFieldName("brandId");
+    .setType(CardService.SelectionInputType.CHECK_BOX)
+    .setTitle("Brand(s)")
+    .setFieldName("brandIds");
 
   brands.forEach(function (b) {
     brandSelect.addItem(b.name, String(b.id), false);
@@ -209,7 +209,7 @@ function onSubmitActivity(e) {
     var params = e.commonEventObject.parameters || {};
 
     var retailerId = getSelectValue_(formInputs, "retailerId");
-    var brandId = getSelectValue_(formInputs, "brandId");
+    var brandIds = getMultiSelectValues_(formInputs, "brandIds");
     var activityTypeKey = getSelectValue_(formInputs, "activityTypeKey");
     var summary = getTextValue_(formInputs, "summary");
 
@@ -218,11 +218,11 @@ function onSubmitActivity(e) {
     var senderEmail = params.from || "";
     var subject = params.subject || "";
 
-    if (!retailerId || !brandId || !activityTypeKey) {
+    if (!retailerId || brandIds.length === 0 || !activityTypeKey) {
       return CardService.newActionResponseBuilder()
         .setNotification(
           CardService.newNotification()
-            .setText("Please select a retailer, brand, and activity type.")
+            .setText("Please select a retailer, at least one brand, and an activity type.")
             .setType(CardService.NotificationType.WARNING)
         )
         .build();
@@ -230,7 +230,7 @@ function onSubmitActivity(e) {
 
     var payload = {
       retailerId: retailerId,
-      brandId: brandId,
+      brandIds: brandIds,
       activityTypeKey: activityTypeKey,
       summary: summary || "",
       senderEmail: senderEmail,
@@ -368,6 +368,18 @@ function getSelectValue_(formInputs, fieldName) {
     return vals && vals.length > 0 ? vals[0] : null;
   } catch (_) {
     return null;
+  }
+}
+
+function getMultiSelectValues_(formInputs, fieldName) {
+  try {
+    var field = formInputs[fieldName];
+    if (!field) return [];
+    // CHECK_BOX returns { stringInputs: { value: [val1, val2, ...] } }
+    var vals = field.stringInputs && field.stringInputs.value;
+    return vals && vals.length > 0 ? vals : [];
+  } catch (_) {
+    return [];
   }
 }
 
