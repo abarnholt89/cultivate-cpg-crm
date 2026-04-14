@@ -26,9 +26,20 @@ export async function POST(req: Request) {
       );
     }
 
+    let repId: string | null = null;
+    if (senderEmail) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("id")
+        .ilike("email", senderEmail.trim())
+        .maybeSingle();
+      if (profile) repId = profile.id;
+    }
+
     const { data, error } = await supabase
       .from("crm_activities")
       .insert({
+        rep_id: repId,
         retailer_id: retailerId,
         brand_id: brandId,
         activity_type_key: activityTypeKey,
