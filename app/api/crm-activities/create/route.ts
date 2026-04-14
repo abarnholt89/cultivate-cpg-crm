@@ -7,11 +7,10 @@ const supabase = createClient(
 
 function buildClientMessage(activityTypeKey: string): string {
   switch (activityTypeKey) {
-    case "intro":       return "Your Cultivate rep made an introduction to this retailer.";
-    case "follow_up":   return "Your Cultivate rep followed up with this retailer.";
-    case "meeting":     return "Your Cultivate rep had a meeting with this retailer.";
-    case "email":       return "Your Cultivate rep sent an email to this retailer.";
-    default:            return "Your Cultivate rep took action on this account.";
+    case "intro":      return "Your Cultivate rep made an introduction to this retailer.";
+    case "follow_up":  return "Your Cultivate rep followed up with this retailer.";
+    case "submission": return "Your Cultivate rep submitted your brand to this retailer.";
+    default:           return "Your Cultivate rep took action on this account.";
   }
 }
 
