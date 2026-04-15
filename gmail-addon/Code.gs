@@ -208,6 +208,10 @@ function onSubmitActivity(e) {
     var formInputs = e.commonEventObject.formInputs;
     var params = e.commonEventObject.parameters || {};
 
+    // Diagnostic: log the raw formInputs so we can inspect the actual shape
+    // Gmail sends. Check Apps Script → Executions to view this output.
+    Logger.log("onSubmitActivity formInputs: " + JSON.stringify(formInputs));
+
     var retailerId = getSelectValue_(formInputs, "retailerId");
     var brandIds = getMultiSelectValues_(formInputs, "brandIds");
     var activityTypeKey = getSelectValue_(formInputs, "activityTypeKey");
@@ -219,10 +223,15 @@ function onSubmitActivity(e) {
     var subject = params.subject || "";
 
     if (!retailerId || brandIds.length === 0 || !activityTypeKey) {
+      var missing = [];
+      if (!retailerId) missing.push("retailerId");
+      if (brandIds.length === 0) missing.push("brandIds");
+      if (!activityTypeKey) missing.push("activityTypeKey");
+      Logger.log("onSubmitActivity missing fields: " + missing.join(", "));
       return CardService.newActionResponseBuilder()
         .setNotification(
           CardService.newNotification()
-            .setText("Please select a retailer, at least one brand, and an activity type.")
+            .setText("Missing required fields: " + missing.join(", ") + ". Check Apps Script logs for raw formInputs.")
             .setType(CardService.NotificationType.WARNING)
         )
         .build();
@@ -359,25 +368,71 @@ function detectRetailerByDomain_(domainKeyword, retailers) {
 
 // ─── CardService Form Utilities ───────────────────────────────────────────────
 
+/**
+ * Extracts a single value from a formInputs field, trying multiple shapes:
+ *   1. field.stringInputs.value[0]   — standard contextual trigger shape
+ *   2. field.listInputs.value[0]     — alternate shape seen in compose triggers
+ *   3. Object.values(field)[0][0]    — fallback: grab first array in whatever key exists
+ */
 function getSelectValue_(formInputs, fieldName) {
   try {
     var field = formInputs[fieldName];
     if (!field) return null;
-    // DROPDOWN returns { stringInputs: { value: [selectedValue] } }
-    var vals = field.stringInputs && field.stringInputs.value;
-    return vals && vals.length > 0 ? vals[0] : null;
+
+    // 1. Standard: { stringInputs: { value: [...] } }
+    if (field.stringInputs && field.stringInputs.value && field.stringInputs.value.length > 0) {
+      return field.stringInputs.value[0];
+    }
+
+    // 2. Alternate: { listInputs: { value: [...] } }
+    if (field.listInputs && field.listInputs.value && field.listInputs.value.length > 0) {
+      return field.listInputs.value[0];
+    }
+
+    // 3. Fallback: grab first array found in field under any key
+    var keys = Object.keys(field);
+    for (var i = 0; i < keys.length; i++) {
+      var inner = field[keys[i]];
+      if (inner && inner.value && inner.value.length > 0) {
+        return inner.value[0];
+      }
+    }
+
+    return null;
   } catch (_) {
     return null;
   }
 }
 
+/**
+ * Extracts multiple values from a formInputs field (e.g. CHECK_BOX), trying
+ * the same shapes as getSelectValue_.
+ */
 function getMultiSelectValues_(formInputs, fieldName) {
   try {
     var field = formInputs[fieldName];
     if (!field) return [];
-    // CHECK_BOX returns { stringInputs: { value: [val1, val2, ...] } }
-    var vals = field.stringInputs && field.stringInputs.value;
-    return vals && vals.length > 0 ? vals : [];
+
+    // 1. Standard: { stringInputs: { value: [...] } }
+    if (field.stringInputs && field.stringInputs.value && field.stringInputs.value.length > 0) {
+      return field.stringInputs.value;
+    }
+
+    // 2. Alternate: { listInputs: { value: [...] } }
+    if (field.listInputs && field.listInputs.value && field.listInputs.value.length > 0) {
+      return field.listInputs.value;
+    }
+
+    // 3. Fallback: grab first array found under any key
+    var keys = Object.keys(field);
+    for (var i = 0; i < keys.length; i++) {
+      var inner = field[keys[i]];
+      if (inner && inner.value && inner.value.length > 0) {
+        return inner.value;
+      }
+    }
+
+    return [];
   } catch (_) {
     return [];
   }
@@ -387,8 +442,24 @@ function getTextValue_(formInputs, fieldName) {
   try {
     var field = formInputs[fieldName];
     if (!field) return "";
-    var vals = field.stringInputs && field.stringInputs.value;
-    return vals && vals.length > 0 ? vals[0] : "";
+
+    if (field.stringInputs && field.stringInputs.value && field.stringInputs.value.length > 0) {
+      return field.stringInputs.value[0];
+    }
+
+    if (field.listInputs && field.listInputs.value && field.listInputs.value.length > 0) {
+      return field.listInputs.value[0];
+    }
+
+    var keys = Object.keys(field);
+    for (var i = 0; i < keys.length; i++) {
+      var inner = field[keys[i]];
+      if (inner && inner.value && inner.value.length > 0) {
+        return inner.value[0];
+      }
+    }
+
+    return "";
   } catch (_) {
     return "";
   }
