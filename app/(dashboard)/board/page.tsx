@@ -59,11 +59,11 @@ const MY_TEAM = "__my_team__";
 // Hardcoded manager→team map. Each key is a manager's user ID; the value is the
 // full set of user IDs (including the manager) whose retailers count as "My Team".
 const MANAGER_MAP: Record<string, string[]> = {
-  "623753df-291c-4aa5-85fd-5af37efd0297": [ // Keenan Smith
-    "623753df-291c-4aa5-85fd-5af37efd0297", // Keenan Smith
-    "e3fb436b-8ad0-4381-8f3f-e84db607bf10", // Torrey Schaefer
-    "ecd0e056-3f26-48f1-9556-026c7e909b8f", // Matt Beck
-    "16078d4d-90f4-4a9e-b9c3-3c27a48f35ec", // JJ Needham
+  "623753df-291c-4aa5-85fd-5af37efd0297": [
+    "623753df-291c-4aa5-85fd-5af37efd0297",
+    "16078d4d-90f4-4a9e-b9c3-3c27a48f35ec",
+    "ecd0e056-3f26-48f1-9556-026c7e909b8f",
+    "e3fb436b-8ad0-4381-8f3f-e84db607bf10",
   ],
 };
 
@@ -122,6 +122,19 @@ export default function AllBrandsBoardPage() {
   const prevSearchRef = useRef("");
 
   useEffect(() => { loadSummaries(); }, []);
+
+  // Set the default rep filter once userId and role are both committed to state.
+  // Running this inside loadSummaries() is too early — React hasn't flushed the
+  // setUserId/setRole updates yet, so userId state reads as null there.
+  useEffect(() => {
+    if (!userId || !role || repFilterInitialized.current) return;
+    repFilterInitialized.current = true;
+    if (MANAGER_MAP[userId]) {
+      setRepFilter(MY_TEAM);
+    } else if (role === "rep") {
+      setRepFilter(userId);
+    }
+  }, [userId, role]);
 
   // Auto-expand matching brands when search has text; collapse all when cleared
   useEffect(() => {
@@ -237,15 +250,6 @@ export default function AllBrandsBoardPage() {
         (r) => { if (r.rep_owner_user_id) map[r.id] = r.rep_owner_user_id; }
       );
       setRetailerRepMap(map);
-    }
-
-    if (!repFilterInitialized.current) {
-      repFilterInitialized.current = true;
-      if (uid && MANAGER_MAP[uid]) {
-        setRepFilter(MY_TEAM);
-      } else if (resolvedRole === "rep" && uid) {
-        setRepFilter(uid);
-      }
     }
 
     setLoading(false);
