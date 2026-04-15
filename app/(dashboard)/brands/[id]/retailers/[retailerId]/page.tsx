@@ -102,6 +102,71 @@ type ClientTimelineItem =
       activity_kind: string | null;
     };
 
+const IMAGE_TYPES = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+]);
+
+function isImageMime(mimeType: string | null): boolean {
+  if (!mimeType) return false;
+  return IMAGE_TYPES.has(mimeType.toLowerCase()) || mimeType.toLowerCase().startsWith("image/");
+}
+
+function InlineImageAttachment({
+  storagePath,
+  fileName,
+  mimeType,
+  fileSize,
+  onOpen,
+}: {
+  storagePath: string;
+  fileName: string;
+  mimeType: string | null;
+  fileSize: number | null;
+  onOpen: () => void;
+}) {
+  const [src, setSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    supabase.storage
+      .from("brand-message-attachments")
+      .createSignedUrl(storagePath, 300)
+      .then(({ data }) => {
+        if (data?.signedUrl) setSrc(data.signedUrl);
+      });
+  }, [storagePath]);
+
+  return (
+    <div className="mt-1">
+      {src ? (
+        <img
+          src={src}
+          alt={fileName}
+          onClick={onOpen}
+          style={{
+            maxWidth: "100%",
+            display: "block",
+            borderRadius: "0.5rem",
+            cursor: "pointer",
+          }}
+          title="Click to open full size"
+        />
+      ) : (
+        <div className="border rounded-lg px-3 py-2 text-sm text-gray-400">
+          Loading image…
+        </div>
+      )}
+      <div className="text-xs text-gray-500 mt-1">
+        {fileName}
+        {fileSize ? ` • ${Math.round(fileSize / 1024)} KB` : ""}
+      </div>
+    </div>
+  );
+}
+
 export default function BrandRetailerMessagesPage() {
   const params = useParams();
   const idParam = params?.id;
@@ -997,22 +1062,33 @@ const clientTimeline = useMemo<ClientTimelineItem[]>(() => {
 
               {item.attachments.length ? (
                 <div className="mt-3 space-y-2">
-                  {item.attachments.map((attachment) => (
-                    <button
-                      key={attachment.id}
-                      type="button"
-                      onClick={() => openAttachment(attachment.storage_path)}
-                      className="block text-left border rounded-lg px-3 py-2 hover:bg-gray-50 w-full"
-                    >
-                      <div className="font-medium">{attachment.file_name}</div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {attachment.mime_type ?? "File"}
-                        {attachment.file_size
-                          ? ` • ${Math.round(attachment.file_size / 1024)} KB`
-                          : ""}
-                      </div>
-                    </button>
-                  ))}
+                  {item.attachments.map((attachment) =>
+                    isImageMime(attachment.mime_type) ? (
+                      <InlineImageAttachment
+                        key={attachment.id}
+                        storagePath={attachment.storage_path}
+                        fileName={attachment.file_name}
+                        mimeType={attachment.mime_type}
+                        fileSize={attachment.file_size}
+                        onOpen={() => openAttachment(attachment.storage_path)}
+                      />
+                    ) : (
+                      <button
+                        key={attachment.id}
+                        type="button"
+                        onClick={() => openAttachment(attachment.storage_path)}
+                        className="block text-left border rounded-lg px-3 py-2 hover:bg-gray-50 w-full"
+                      >
+                        <div className="font-medium">{attachment.file_name}</div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {attachment.mime_type ?? "File"}
+                          {attachment.file_size
+                            ? ` • ${Math.round(attachment.file_size / 1024)} KB`
+                            : ""}
+                        </div>
+                      </button>
+                    )
+                  )}
                 </div>
               ) : null}
             </div>
@@ -1035,22 +1111,33 @@ const clientTimeline = useMemo<ClientTimelineItem[]>(() => {
 
           {attachmentsByMessageId[m.id]?.length ? (
             <div className="mt-3 space-y-2">
-              {attachmentsByMessageId[m.id].map((attachment) => (
-                <button
-                  key={attachment.id}
-                  type="button"
-                  onClick={() => openAttachment(attachment.storage_path)}
-                  className="block text-left border rounded-lg px-3 py-2 hover:bg-gray-50 w-full"
-                >
-                  <div className="font-medium">{attachment.file_name}</div>
-                  <div className="text-xs text-gray-500 mt-1">
-                    {attachment.mime_type ?? "File"}
-                    {attachment.file_size
-                      ? ` • ${Math.round(attachment.file_size / 1024)} KB`
-                      : ""}
-                  </div>
-                </button>
-              ))}
+              {attachmentsByMessageId[m.id].map((attachment) =>
+                isImageMime(attachment.mime_type) ? (
+                  <InlineImageAttachment
+                    key={attachment.id}
+                    storagePath={attachment.storage_path}
+                    fileName={attachment.file_name}
+                    mimeType={attachment.mime_type}
+                    fileSize={attachment.file_size}
+                    onOpen={() => openAttachment(attachment.storage_path)}
+                  />
+                ) : (
+                  <button
+                    key={attachment.id}
+                    type="button"
+                    onClick={() => openAttachment(attachment.storage_path)}
+                    className="block text-left border rounded-lg px-3 py-2 hover:bg-gray-50 w-full"
+                  >
+                    <div className="font-medium">{attachment.file_name}</div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      {attachment.mime_type ?? "File"}
+                      {attachment.file_size
+                        ? ` • ${Math.round(attachment.file_size / 1024)} KB`
+                        : ""}
+                    </div>
+                  </button>
+                )
+              )}
             </div>
           ) : null}
         </div>
