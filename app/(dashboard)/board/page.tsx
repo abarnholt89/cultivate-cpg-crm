@@ -53,6 +53,20 @@ type RepProfile = {
   full_name: string | null;
 };
 
+// Sentinel value used as repFilter when "My Team" is selected
+const MY_TEAM = "__my_team__";
+
+// Hardcoded manager→team map. Each key is a manager's user ID; the value is the
+// full set of user IDs (including the manager) whose retailers count as "My Team".
+const MANAGER_MAP: Record<string, string[]> = {
+  "623753df-291c-4aa5-85fd-5af37efd0297": [ // Keenan Smith
+    "623753df-291c-4aa5-85fd-5af37efd0297", // Keenan Smith
+    "e3fb436b-8ad0-4381-8f3f-e84db607bf10", // Torrey Schaefer
+    "ecd0e056-3f26-48f1-9556-026c7e909b8f", // Matt Beck
+    "16078d4d-90f4-4a9e-b9c3-3c27a48f35ec", // JJ Needham
+  ],
+};
+
 function prettyDate(value: string | null) {
   if (!value) return "—";
   const d = new Date(value);
@@ -227,7 +241,9 @@ export default function AllBrandsBoardPage() {
 
     if (!repFilterInitialized.current) {
       repFilterInitialized.current = true;
-      if (resolvedRole === "rep" && uid) {
+      if (uid && MANAGER_MAP[uid]) {
+        setRepFilter(MY_TEAM);
+      } else if (resolvedRole === "rep" && uid) {
         setRepFilter(uid);
       }
     }
@@ -362,14 +378,20 @@ export default function AllBrandsBoardPage() {
       const q = search.trim().toLowerCase();
       result = result.filter((b) => b.name.toLowerCase().includes(q));
     }
-    if (repFilter) {
+    if (repFilter === MY_TEAM) {
+      const teamIds = new Set(MANAGER_MAP[userId ?? ""] ?? []);
+      result = result.filter((b) => {
+        const brandTiming = timingByBrand[b.id] ?? [];
+        return brandTiming.some((t) => teamIds.has(retailerRepMap[t.retailer_id]));
+      });
+    } else if (repFilter) {
       result = result.filter((b) => {
         const brandTiming = timingByBrand[b.id] ?? [];
         return brandTiming.some((t) => retailerRepMap[t.retailer_id] === repFilter);
       });
     }
     return result;
-  }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand]);
+  }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand, userId]);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -402,6 +424,9 @@ export default function AllBrandsBoardPage() {
               style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
             >
               <option value="">All reps</option>
+              {userId && MANAGER_MAP[userId] && (
+                <option value={MY_TEAM}>My Team</option>
+              )}
               {reps.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.full_name ?? r.id}
@@ -434,9 +459,14 @@ export default function AllBrandsBoardPage() {
             const rawRows = brandRows[brand.id] ?? null;
             const rows = rawRows === null
               ? null
-              : repFilter
-                ? rawRows.filter((r) => retailerRepMap[r.retailerId] === repFilter)
-                : rawRows;
+              : repFilter === MY_TEAM
+                ? (() => {
+                    const teamIds = new Set(MANAGER_MAP[userId ?? ""] ?? []);
+                    return rawRows.filter((r) => teamIds.has(retailerRepMap[r.retailerId]));
+                  })()
+                : repFilter
+                  ? rawRows.filter((r) => retailerRepMap[r.retailerId] === repFilter)
+                  : rawRows;
             const isFetching = loadingBrand[brand.id] ?? false;
 
             return (
