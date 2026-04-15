@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 
-type Brand = { id: string; name: string };
+type Brand = { id: string; name: string; message_notifications_enabled: boolean };
 
 type Retailer = {
   id: string;
@@ -168,7 +168,7 @@ export default function BrandRetailerMessagesPage() {
 
       const { data: brandData, error: brandError } = await supabase
         .from("brands")
-        .select("id,name")
+        .select("id,name,message_notifications_enabled")
         .eq("id", brandId)
         .single();
 
@@ -702,7 +702,8 @@ export default function BrandRetailerMessagesPage() {
         isRepOrAdmin &&
         visibilityToSend === "client" &&
         brand?.name &&
-        retailer?.name
+        retailer?.name &&
+        brand?.message_notifications_enabled
       ) {
         const recipients = await getClientEmails();
         const retailerName = retailer.banner?.trim() ? retailer.banner : retailer.name;

@@ -161,7 +161,7 @@ export async function GET(req: Request) {
 
     supabase
       .from("brands")
-      .select("id, name")
+      .select("id, name, message_notifications_enabled")
       .in("id", brandIds),
   ]);
 
@@ -193,10 +193,14 @@ export async function GET(req: Request) {
   const repProfiles = (repProfilesResult.data ?? []) as { id: string; full_name: string | null }[];
   const adminProfiles = (adminProfilesResult.data ?? []) as { id: string; full_name: string | null }[];
   const alertsSent = (alertsSentResult.data ?? []) as AlertSentRow[];
-  const brands = (brandsResult.data ?? []) as { id: string; name: string }[];
+  const brands = (brandsResult.data ?? []) as {
+    id: string;
+    name: string;
+    message_notifications_enabled: boolean;
+  }[];
 
   const retailerById = new Map(retailers.map((r) => [r.id, r]));
-  const brandById = new Map(brands.map((b) => [b.id, b.name]));
+  const brandById = new Map(brands.map((b) => [b.id, b]));
   const timingByBrandRetailer = new Map(
     timings.map((t) => [`${t.brand_id}:${t.retailer_id}`, t])
   );
@@ -259,9 +263,13 @@ export async function GET(req: Request) {
 
     const retailer = retailerById.get(message.retailer_id);
     const timing = timingByBrandRetailer.get(`${message.brand_id}:${message.retailer_id}`);
-    const brandName = brandById.get(message.brand_id) ?? "Brand";
-    const retailerName =
-      retailer?.banner?.trim() || retailer?.name || "Retailer";
+    const brand = brandById.get(message.brand_id);
+    const brandName = brand?.name ?? "Brand";
+    const retailerName = retailer?.banner?.trim() || retailer?.name || "Retailer";
+
+    if (!brand?.message_notifications_enabled) {
+      continue;
+    }
 
     if (!retailer?.rep_owner_user_id || !timing?.id) {
       continue;
