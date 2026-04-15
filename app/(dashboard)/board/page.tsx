@@ -195,6 +195,11 @@ export default function AllBrandsBoardPage() {
 
     setBrandSummaries(summaries);
 
+    // Collect all retailer IDs from timing — use these to scope the retailers query
+    // so RLS doesn't block it (a bare unfiltered select on retailers returns 0 rows)
+    const allRetailerIds = [...new Set(timing.map((t) => t.retailer_id))];
+    console.log("[board] allRetailerIds count:", allRetailerIds.length);
+
     // Load reps list and retailer→rep map in parallel
     const [repsRes, retailerRepRes] = await Promise.all([
       supabase
@@ -202,10 +207,16 @@ export default function AllBrandsBoardPage() {
         .select("id, full_name")
         .in("role", ["rep", "admin"])
         .order("full_name"),
-      supabase
-        .from("retailers")
-        .select("id, rep_owner_user_id"),
+      allRetailerIds.length > 0
+        ? supabase
+            .from("retailers")
+            .select("id, rep_owner_user_id")
+            .in("id", allRetailerIds)
+        : Promise.resolve({ data: [] as { id: string; rep_owner_user_id: string | null }[], error: null }),
     ]);
+
+    console.log("[board] repsRes:", repsRes.data?.length, repsRes.error?.message);
+    console.log("[board] retailerRepRes:", retailerRepRes.data?.length, (retailerRepRes as any).error?.message);
 
     if (!repsRes.error) {
       setReps((repsRes.data ?? []) as RepProfile[]);
@@ -216,6 +227,7 @@ export default function AllBrandsBoardPage() {
       ((retailerRepRes.data ?? []) as { id: string; rep_owner_user_id: string | null }[]).forEach(
         (r) => { if (r.rep_owner_user_id) map[r.id] = r.rep_owner_user_id; }
       );
+      console.log("[board] retailerRepMap size:", Object.keys(map).length);
       setRetailerRepMap(map);
     }
 
@@ -357,10 +369,12 @@ export default function AllBrandsBoardPage() {
       result = result.filter((b) => b.name.toLowerCase().includes(q));
     }
     if (repFilter) {
+      console.log("[board] filtering by repFilter:", repFilter, "retailerRepMap size:", Object.keys(retailerRepMap).length);
       result = result.filter((b) => {
         const brandTiming = timingByBrand[b.id] ?? [];
         return brandTiming.some((t) => retailerRepMap[t.retailer_id] === repFilter);
       });
+      console.log("[board] brands after rep filter:", result.length);
     }
     return result;
   }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand]);
