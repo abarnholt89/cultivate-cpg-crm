@@ -65,6 +65,7 @@ type RecentMessage = {
   sender_name: string | null;
   body: string;
   created_at: string;
+  visibility: "client" | "internal";
 };
 
 function todayISO(): string {
@@ -215,6 +216,7 @@ export default function BrandRetailersPage() {
       }
 
       const userId = authData?.user?.id;
+      let resolvedRole: Role = "client";
       if (userId) {
         const { data: profileData, error: profileError } = await supabase
           .from("profiles")
@@ -227,7 +229,8 @@ export default function BrandRetailersPage() {
           return;
         }
 
-        setRole((profileData?.role as Role) ?? "client");
+        resolvedRole = (profileData?.role as Role) ?? "client";
+        setRole(resolvedRole);
       }
 
       const { data: brandData, error: brandError } = await supabase
@@ -327,13 +330,21 @@ export default function BrandRetailersPage() {
 
       setAuthorizedMap(nextAuthorizedMap);
 
-      // Load last 4 client-visible messages per retailer (4 so we know if >3 exist)
-      const { data: messagesData } = await supabase
+      // Load recent messages per retailer — admin/rep see both visibility types
+      const isAdminOrRep = resolvedRole === "admin" || resolvedRole === "rep";
+      let msgsQuery = supabase
         .from("brand_retailer_messages")
-        .select("id,retailer_id,sender_name,body,created_at")
+        .select("id,retailer_id,sender_name,body,created_at,visibility")
         .eq("brand_id", brandId)
-        .eq("visibility", "client")
         .order("created_at", { ascending: false });
+
+      if (!isAdminOrRep) {
+        msgsQuery = msgsQuery.eq("visibility", "client");
+      } else {
+        msgsQuery = msgsQuery.in("visibility", ["client", "internal"]);
+      }
+
+      const { data: messagesData } = await msgsQuery;
 
       const nextMessagesMap: Record<string, RecentMessage[]> = {};
       ((messagesData ?? []) as RecentMessage[]).forEach((m) => {
@@ -586,11 +597,11 @@ export default function BrandRetailersPage() {
                       />
                     ) : null}
                     <Link
-                      className="text-sm px-3 py-1.5 rounded-lg font-medium"
-                      style={{ background: "var(--foreground)", color: "var(--background)" }}
+                      className="text-xs underline"
+                      style={{ color: "var(--muted-foreground)" }}
                       href={`/brands/${brandId}/retailers/${r.id}`}
                     >
-                      {hasMoreMessages ? "View all messages →" : "Open →"}
+                      Open →
                     </Link>
                   </div>
                 </div>
@@ -608,7 +619,7 @@ export default function BrandRetailersPage() {
                   </div>
                 </div>
 
-                {/* Recent client messages — no empty state, just omit if none */}
+                {/* Recent messages — omit entirely if none */}
                 {displayMsgs.length > 0 && (
                   <div className="space-y-1">
                     {displayMsgs.map((m) => (
@@ -623,6 +634,18 @@ export default function BrandRetailersPage() {
                         >
                           {m.sender_name ?? "Cultivate"}
                         </span>
+                        {m.visibility === "internal" && (
+                          <span
+                            className="shrink-0 text-xs rounded px-1"
+                            style={{
+                              background: "var(--accent)",
+                              color: "var(--muted-foreground)",
+                              fontSize: "0.65rem",
+                            }}
+                          >
+                            internal
+                          </span>
+                        )}
                         <span
                           className="min-w-0 flex-1 truncate"
                           style={{ color: "var(--foreground)" }}
