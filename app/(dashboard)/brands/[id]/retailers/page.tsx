@@ -100,6 +100,18 @@ function prettyDate(value: string | null) {
   });
 }
 
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return prettyDate(iso);
+}
+
 function accountStatusLabel(status: AccountStatus | undefined) {
   switch (status) {
     case "active_account":
@@ -596,36 +608,42 @@ export default function BrandRetailersPage() {
                   </div>
                 </div>
 
-                {/* Recent client messages */}
+                {/* Recent client messages — no empty state, just omit if none */}
                 {displayMsgs.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="text-xs font-medium" style={{ color: "var(--muted-foreground)" }}>
-                      Recent Updates
-                    </div>
+                  <div className="space-y-1">
                     {displayMsgs.map((m) => (
                       <div
                         key={m.id}
-                        className="rounded-lg px-3 py-2 text-sm"
-                        style={{ border: "1px solid var(--border)", background: "var(--secondary)" }}
+                        className="flex items-baseline gap-2 rounded-md px-2 py-1.5 text-sm"
+                        style={{ background: "var(--muted)" }}
                       >
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <span className="text-xs font-medium" style={{ color: "var(--muted-foreground)" }}>
-                            {m.sender_name ?? "Cultivate"}
-                          </span>
-                          <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>
-                            {prettyDate(m.created_at)}
-                          </span>
-                        </div>
-                        <div style={{ color: "var(--foreground)" }}>{m.body}</div>
+                        <span
+                          className="shrink-0 text-xs font-medium"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          {m.sender_name ?? "Cultivate"}
+                        </span>
+                        <span
+                          className="min-w-0 flex-1 truncate"
+                          style={{ color: "var(--foreground)" }}
+                        >
+                          {m.body}
+                        </span>
+                        <span
+                          className="shrink-0 text-xs"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          {timeAgo(m.created_at)}
+                        </span>
                       </div>
                     ))}
                     {hasMoreMessages && (
                       <Link
                         href={`/brands/${brandId}/retailers/${r.id}`}
-                        className="text-sm underline"
+                        className="block text-xs pt-0.5 pl-2"
                         style={{ color: "var(--muted-foreground)" }}
                       >
-                        View all messages →
+                        View all →
                       </Link>
                     )}
                   </div>
