@@ -169,8 +169,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const linkClass = (href: string) =>
     `relative text-sm transition-colors ${
       isActive(href)
-        ? "font-semibold text-foreground"
-        : "text-muted-foreground hover:text-foreground"
+        ? "font-semibold text-white"
+        : "text-white/60 hover:text-white"
     }`;
 
   const promotionsHref = inBrandContext ? `/brands/${brandId}/promotions` : "/promotions";
@@ -186,7 +186,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <div className="border-b border-border bg-card">
+      <div className="border-b" style={{ background: "#123b52", borderColor: "rgba(255,255,255,0.08)" }}>
         <div className="flex items-center gap-4 px-6 py-4">
           <img
             src="/cultivate-icon.jpeg"
@@ -261,16 +261,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   </span>
 </Link>
 
-          <button
-            type="button"
-            onClick={async () => {
-              await supabase.auth.signOut();
-              router.replace("/login");
-            }}
-            className="ml-auto text-sm text-muted-foreground transition-colors hover:text-foreground"
-          >
-            Logout
-          </button>
+          <div className="ml-auto flex items-center gap-4">
+            <Link
+              href="/change-password"
+              className="text-sm text-white/50 transition-colors hover:text-white"
+            >
+              Change Password
+            </Link>
+            <button
+              type="button"
+              onClick={async () => {
+                await supabase.auth.signOut();
+                router.replace("/login");
+              }}
+              className="text-sm text-white/60 transition-colors hover:text-white"
+            >
+              Logout
+            </button>
+          </div>
         </div>
       </div>
 

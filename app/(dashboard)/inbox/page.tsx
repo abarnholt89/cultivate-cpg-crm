@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import StatusBadge from "@/components/StatusBadge";
 
 type Role = "admin" | "rep" | "client" | null;
 
@@ -761,8 +762,9 @@ if (clientMessagesResult.error) {
                     </div>
                   </div>
                   <div className="mt-1 text-sm text-muted-foreground">{item.brand_name}</div>
-                  <div className="mt-2 text-sm text-foreground/85">
-                    {item.milestone_type} • {statusLabel(item.account_status)}
+                  <div className="mt-2 flex items-center gap-2 flex-wrap">
+                    <span className="text-sm text-foreground/85">{item.milestone_type}</span>
+                    <StatusBadge status={item.account_status} />
                   </div>
                 </Link>
               ))}
@@ -798,8 +800,8 @@ if (clientMessagesResult.error) {
                       <AgingBadge aging={item.aging_bucket} />
                     </div>
                     <div className="mt-1 text-sm text-muted-foreground">{brandName}</div>
-                    <div className="mt-2 text-sm text-foreground/85">
-                      {statusLabel(item.account_status)}
+                    <div className="mt-2">
+                      <StatusBadge status={item.account_status} />
                     </div>
                     <div className="mt-2 text-xs text-muted-foreground">
                       Last activity: {prettyDate(item.last_activity_at)}

@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
+import StatusBadge from "@/components/StatusBadge";
 
 type Role = "admin" | "rep" | "client" | null;
 
@@ -47,20 +48,6 @@ type BrandSummary = {
   lastActivity: string | null;
 };
 
-function statusLabel(status: string) {
-  switch (status) {
-    case "active_account":                         return "Active Account";
-    case "open_review":                            return "In Progress";
-    case "under_review":                           return "Under Review";
-    case "upcoming_review":                        return "Upcoming Review";
-    case "waiting_for_retailer_to_publish_review": return "Awaiting Retailer Decision";
-    case "working_to_secure_anchor_account":       return "Distributor Required";
-    case "not_a_target_account":                   return "Not a Target";
-    case "cultivate_does_not_rep":                 return "Not Managed by Cultivate";
-    case "retailer_declined":                      return "Retailer Declined";
-    default:                                       return status;
-  }
-}
 
 function prettyDate(value: string | null) {
   if (!value) return "—";
@@ -457,8 +444,8 @@ export default function AllBrandsBoardPage() {
                                     {row.banner}
                                   </Link>
                                 </td>
-                                <td className="px-4 py-2.5" style={{ color: "var(--foreground)" }}>
-                                  {statusLabel(row.accountStatus)}
+                                <td className="px-4 py-2.5">
+                                  <StatusBadge status={row.accountStatus} />
                                 </td>
                                 <td className="px-4 py-2.5" style={{ color: "var(--muted-foreground)" }}>
                                   {prettyDate(row.submittedDate)}
