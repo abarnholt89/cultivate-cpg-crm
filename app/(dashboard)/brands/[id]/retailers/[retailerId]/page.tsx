@@ -848,31 +848,50 @@ const clientTimeline = useMemo<ClientTimelineItem[]>(() => {
 
         <h1 className="text-2xl font-bold mt-2">{title}</h1>
         {retailer?.banner ? <p className="text-gray-500">{retailer.name}</p> : null}
-        {status && <p className="mt-2 text-sm text-red-600">{status}</p>}
+        {status && (
+          <p
+            className="mt-2 text-sm"
+            style={{
+              color: status.includes("✅")
+                ? "var(--primary)"
+                : status.endsWith("…") || status.endsWith("...")
+                ? "var(--muted-foreground)"
+                : "rgb(220 38 38)",
+            }}
+          >
+            {status}
+          </p>
+        )}
       </div>
 
       {isRepOrAdmin ? (
         <div className="flex gap-2">
           <button
-            className={`px-4 py-2 rounded border ${
-              tab === "client" ? "bg-black text-white" : "hover:bg-gray-50"
-            }`}
+            className="px-4 py-2 rounded-lg border text-sm font-medium transition-colors"
+            style={
+              tab === "client"
+                ? { background: "var(--foreground)", color: "var(--background)", borderColor: "var(--foreground)" }
+                : { background: "transparent", color: "var(--muted-foreground)", borderColor: "var(--border)" }
+            }
             onClick={() => setTab("client")}
           >
             Client-visible
           </button>
 
           <button
-            className={`px-4 py-2 rounded border ${
-              tab === "internal" ? "bg-black text-white" : "hover:bg-gray-50"
-            }`}
+            className="px-4 py-2 rounded-lg border text-sm font-medium transition-colors"
+            style={
+              tab === "internal"
+                ? { background: "var(--foreground)", color: "var(--background)", borderColor: "var(--foreground)" }
+                : { background: "transparent", color: "var(--muted-foreground)", borderColor: "var(--border)" }
+            }
             onClick={() => setTab("internal")}
           >
             Internal-only
           </button>
         </div>
       ) : (
-        <div className="text-sm font-semibold">Messages</div>
+        <div className="text-sm font-semibold" style={{ color: "var(--foreground)" }}>Messages</div>
       )}
 
       {isRepOrAdmin && tab === "internal" && (
@@ -1206,7 +1225,11 @@ const clientTimeline = useMemo<ClientTimelineItem[]>(() => {
           ) : null}
         </div>
 
-        <button className="bg-black text-white px-4 py-2 rounded" onClick={send}>
+        <button
+          className="px-4 py-2 rounded-lg text-sm font-medium"
+          style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+          onClick={send}
+        >
           Send
         </button>
       </div>
