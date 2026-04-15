@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
+import StatusBadge from "@/components/StatusBadge";
 
 type Brand = { id: string; name: string };
 
@@ -56,6 +57,14 @@ type CategoryReviewRow = {
 type AuthorizedRow = {
   authorized_item_count: number;
   authorized_upc_count: number;
+};
+
+type RecentMessage = {
+  id: string;
+  retailer_id: string;
+  sender_name: string | null;
+  body: string;
+  created_at: string;
 };
 
 function todayISO(): string {
@@ -168,6 +177,7 @@ export default function BrandRetailersPage() {
   const [pipelineMap, setPipelineMap] = useState<Record<string, PipelineRow>>({});
   const [calendarMap, setCalendarMap] = useState<Record<string, CategoryReviewRow[]>>({});
   const [authorizedMap, setAuthorizedMap] = useState<Record<string, AuthorizedRow>>({});
+  const [messagesMap, setMessagesMap] = useState<Record<string, RecentMessage[]>>({});
   const [role, setRole] = useState<Role>(null);
   const [status, setStatus] = useState("");
   const [query, setQuery] = useState("");
@@ -304,6 +314,23 @@ export default function BrandRetailersPage() {
       });
 
       setAuthorizedMap(nextAuthorizedMap);
+
+      // Load last 4 client-visible messages per retailer (4 so we know if >3 exist)
+      const { data: messagesData } = await supabase
+        .from("brand_retailer_messages")
+        .select("id,retailer_id,sender_name,body,created_at")
+        .eq("brand_id", brandId)
+        .eq("visibility", "client")
+        .order("created_at", { ascending: false });
+
+      const nextMessagesMap: Record<string, RecentMessage[]> = {};
+      ((messagesData ?? []) as RecentMessage[]).forEach((m) => {
+        if (!nextMessagesMap[m.retailer_id]) nextMessagesMap[m.retailer_id] = [];
+        if (nextMessagesMap[m.retailer_id].length < 4) {
+          nextMessagesMap[m.retailer_id].push(m);
+        }
+      });
+      setMessagesMap(nextMessagesMap);
     }
 
     load();
@@ -451,11 +478,11 @@ export default function BrandRetailersPage() {
   return (
     <div className="p-6 space-y-6">
       <div>
-        <Link className="underline text-sm" href={`/brands/${brandId}`}>
+        <Link className="underline text-sm" href={`/brands/${brandId}`} style={{ color: "var(--muted-foreground)" }}>
           ← Back to Brand
         </Link>
-        <h1 className="text-3xl font-bold mt-2">{brandName} — Retailers</h1>
-        <div className="text-sm text-gray-600 mt-1">
+        <h1 className="text-3xl font-bold mt-2" style={{ color: "var(--foreground)" }}>{brandName} — Retailers</h1>
+        <div className="text-sm mt-1" style={{ color: "var(--muted-foreground)" }}>
           Showing <span className="font-semibold">{filteredRetailers.length}</span> of{" "}
           <span className="font-semibold">{retailers.length}</span> retailers
         </div>
@@ -464,14 +491,16 @@ export default function BrandRetailersPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <input
-          className="border rounded px-3 py-2 w-full"
+          className="rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2"
+          style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
           placeholder="Search banner, parent company, channel, region, rep…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
 
         <select
-          className="border rounded px-3 py-2 w-full"
+          className="rounded-lg px-3 py-2 w-full text-sm"
+          style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
           value={selectedFilter}
           onChange={(e) => setSelectedFilter(e.target.value)}
         >
@@ -483,7 +512,8 @@ export default function BrandRetailersPage() {
         </select>
 
         <select
-          className="border rounded px-3 py-2 w-full"
+          className="rounded-lg px-3 py-2 w-full text-sm"
+          style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
           value={selectedRep}
           onChange={(e) => setSelectedRep(e.target.value)}
         >
@@ -497,7 +527,7 @@ export default function BrandRetailersPage() {
       </div>
 
       {filteredRetailers.length === 0 ? (
-        <p className="text-sm text-gray-600">No retailers match your search or filter.</p>
+        <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>No retailers match your search or filter.</p>
       ) : (
         <div className="space-y-4">
           {filteredRetailers.map((r) => {
@@ -506,114 +536,181 @@ export default function BrandRetailersPage() {
             const reviewRows = calendarMap[r.id] ?? [];
             const authorized = authorizedMap[r.id];
             const hasLegacyNotes = !!row.notes?.trim();
+            const recentMsgs = messagesMap[r.id] ?? [];
+            const hasMoreMessages = recentMsgs.length === 4;
+            const displayMsgs = recentMsgs.slice(0, 3).reverse();
 
             return (
-              <div key={r.id} className="border rounded-xl p-5 space-y-4">
+              <div
+                key={r.id}
+                className="rounded-xl p-5 space-y-4"
+                style={{ border: "1px solid var(--border)", background: "var(--card)" }}
+              >
+                {/* Header */}
                 <div className="flex items-start justify-between gap-4">
-                  <div className="space-y-1">
+                  <div className="space-y-1 min-w-0">
                     <div className="flex items-center gap-3 flex-wrap">
-                      <div className="font-semibold text-2xl">{headline}</div>
-                      <Link
-                        className="inline-flex items-center bg-black text-white text-sm px-3 py-2 rounded"
-                        href={`/brands/${brandId}/retailers/${r.id}`}
-                      >
-                        Open Messages
-                      </Link>
+                      <span className="font-bold text-xl" style={{ color: "var(--foreground)" }}>
+                        {headline}
+                      </span>
+                      <StatusBadge status={row.account_status} />
                     </div>
-
-                    {r.banner ? <div className="text-sm text-gray-500">{r.name}</div> : null}
-
-                    <div className="text-sm text-gray-500 flex flex-wrap gap-2">
+                    {r.banner ? (
+                      <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>{r.name}</div>
+                    ) : null}
+                    <div className="text-sm flex flex-wrap gap-x-3 gap-y-1" style={{ color: "var(--muted-foreground)" }}>
                       {r.channel ? <span>{r.channel}</span> : null}
-                      {r.hq_region ? <span>• {r.hq_region}</span> : null}
-                      {typeof r.store_count === "number" ? <span>• {r.store_count} stores</span> : null}
-                      <span>• Review Type: {reviewTypeLabel(row.schedule_mode)}</span>
+                      {r.hq_region ? <span>{r.hq_region}</span> : null}
+                      {typeof r.store_count === "number" ? <span>{r.store_count} stores</span> : null}
+                      <span>{reviewTypeLabel(row.schedule_mode)}</span>
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap gap-2 justify-end">
+                  <div className="flex flex-col items-end gap-2 shrink-0">
                     {authorized ? (
                       <Badge
                         label={`Authorized • ${authorized.authorized_item_count} items`}
                         tone="good"
                       />
                     ) : null}
+                    <Link
+                      className="text-sm px-3 py-1.5 rounded-lg font-medium"
+                      style={{ background: "var(--foreground)", color: "var(--background)" }}
+                      href={`/brands/${brandId}/retailers/${r.id}`}
+                    >
+                      {hasMoreMessages ? "View all messages →" : "Open →"}
+                    </Link>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-                  <div className="border rounded p-3 bg-gray-50">
-                    <div className="text-xs text-gray-500 mb-1">Rep Owner</div>
-                    <div className="font-medium">{r.team_owner || "Unassigned"}</div>
+                {/* Meta grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-lg p-3" style={{ border: "1px solid var(--border)", background: "var(--muted)" }}>
+                    <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Rep Owner</div>
+                    <div className="font-medium" style={{ color: "var(--foreground)" }}>{r.team_owner || "Unassigned"}</div>
                   </div>
 
-                  <div className="border rounded p-3 bg-gray-50">
-                    <div className="text-xs text-gray-500 mb-1">Account Status</div>
-                    <div className="font-medium">{accountStatusLabel(row.account_status)}</div>
-                  </div>
-
-                  <div className="border rounded p-3 bg-gray-50">
-                    <div className="text-xs text-gray-500 mb-1">Authorized</div>
-                    <div className="font-medium">{authorizedSummary(authorized)}</div>
+                  <div className="rounded-lg p-3" style={{ border: "1px solid var(--border)", background: "var(--muted)" }}>
+                    <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Authorized Items</div>
+                    <div className="font-medium" style={{ color: "var(--foreground)" }}>{authorizedSummary(authorized)}</div>
                   </div>
                 </div>
 
-                <div>
-                  <div className="text-xs text-gray-500 mb-1">Account Status</div>
-                  <select
-                    className="border rounded px-3 py-2 w-full"
-                    value={row.account_status}
-                    onChange={(e) =>
-                      updateLocal(r.id, {
-                        account_status: e.target.value as AccountStatus,
-                      })
-                    }
-                  >
-                    <option value="active_account">Active Account</option>
-                    <option value="open_review">In Progress</option>
-                    <option value="under_review">Under Review</option>
-                    <option value="working_to_secure_anchor_account">Distributor Required</option>
-                    <option value="waiting_for_retailer_to_publish_review">Awaiting Retailer Decision</option>
-                    <option value="upcoming_review">Upcoming Review</option>
-                    <option value="cultivate_does_not_rep">Not Managed by Cultivate</option>
-                    <option value="not_a_target_account">Not a Target</option>
-                    <option value="retailer_declined">Retailer Declined</option>
-                  </select>
-                </div>
+                {/* Recent client messages */}
+                {displayMsgs.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium" style={{ color: "var(--muted-foreground)" }}>
+                      Recent Updates
+                    </div>
+                    {displayMsgs.map((m) => (
+                      <div
+                        key={m.id}
+                        className="rounded-lg px-3 py-2 text-sm"
+                        style={{ border: "1px solid var(--border)", background: "var(--secondary)" }}
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <span className="text-xs font-medium" style={{ color: "var(--muted-foreground)" }}>
+                            {m.sender_name ?? "Cultivate"}
+                          </span>
+                          <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+                            {prettyDate(m.created_at)}
+                          </span>
+                        </div>
+                        <div style={{ color: "var(--foreground)" }}>{m.body}</div>
+                      </div>
+                    ))}
+                    {hasMoreMessages && (
+                      <Link
+                        href={`/brands/${brandId}/retailers/${r.id}`}
+                        className="text-sm underline"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        View all messages →
+                      </Link>
+                    )}
+                  </div>
+                )}
 
-                <div className="border rounded p-3 space-y-3">
-                  <div className="text-sm font-medium">Category Review Timing</div>
+                {/* Account status dropdown (rep/admin only) */}
+                {isRepOrAdmin && (
+                  <div>
+                    <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Change Account Status</div>
+                    <select
+                      className="border rounded-lg px-3 py-2 w-full text-sm"
+                      style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                      value={row.account_status}
+                      onChange={(e) =>
+                        updateLocal(r.id, {
+                          account_status: e.target.value as AccountStatus,
+                        })
+                      }
+                    >
+                      <option value="active_account">Active Account</option>
+                      <option value="open_review">In Progress</option>
+                      <option value="under_review">Under Review</option>
+                      <option value="working_to_secure_anchor_account">Distributor Required</option>
+                      <option value="waiting_for_retailer_to_publish_review">Awaiting Retailer Decision</option>
+                      <option value="upcoming_review">Upcoming Review</option>
+                      <option value="cultivate_does_not_rep">Not Managed by Cultivate</option>
+                      <option value="not_a_target_account">Not a Target</option>
+                      <option value="retailer_declined">Retailer Declined</option>
+                    </select>
+                  </div>
+                )}
+
+                {/* Category Review Timing */}
+                <div
+                  className="rounded-lg p-3 space-y-3"
+                  style={{ border: "1px solid var(--border)" }}
+                >
+                  <div className="text-sm font-medium" style={{ color: "var(--foreground)" }}>
+                    Category Review Timing
+                  </div>
 
                   {reviewRows.length === 0 ? (
-                    <div className="text-sm text-gray-600">No scheduled category reviews.</div>
+                    <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>
+                      No scheduled category reviews.
+                    </div>
                   ) : (
-                    <div className="space-y-3">
+                    <div className="space-y-2">
                       {reviewRows.map((review, idx) => (
                         <div
                           key={`${review.retailer_name}-${review.universal_category}-${review.retailer_category_review_name ?? "none"}-${idx}`}
-                          className="border rounded p-3 bg-gray-50"
+                          className="rounded-lg p-3"
+                          style={{ border: "1px solid var(--border)", background: "var(--muted)" }}
                         >
-                          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                             <div>
-                              <div className="text-xs text-gray-500 mb-1">Retailer Review Name</div>
-                              <div className="font-medium">
+                              <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>
+                                Retailer Review Name
+                              </div>
+                              <div className="font-medium" style={{ color: "var(--foreground)" }}>
                                 {review.retailer_category_review_name || "—"}
                               </div>
                             </div>
-
                             <div>
-                              <div className="text-xs text-gray-500 mb-1">Universal Category</div>
-                              <div className="font-medium">{review.universal_category}</div>
+                              <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>
+                                Universal Category
+                              </div>
+                              <div className="font-medium" style={{ color: "var(--foreground)" }}>
+                                {review.universal_category}
+                              </div>
                             </div>
-
                             <div>
-                              <div className="text-xs text-gray-500 mb-1">Review Date</div>
-                              <div className="font-medium">{prettyDate(review.review_date)}</div>
+                              <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>
+                                Review Date
+                              </div>
+                              <div className="font-medium" style={{ color: "var(--foreground)" }}>
+                                {prettyDate(review.review_date)}
+                              </div>
                             </div>
-
                             <div>
-                              <div className="text-xs text-gray-500 mb-1">Reset Date</div>
-                              <div className="font-medium">{prettyDate(review.reset_date)}</div>
+                              <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>
+                                Reset Date
+                              </div>
+                              <div className="font-medium" style={{ color: "var(--foreground)" }}>
+                                {prettyDate(review.reset_date)}
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -622,59 +719,65 @@ export default function BrandRetailersPage() {
                   )}
                 </div>
 
-                <div className="border rounded p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <label className="text-sm font-medium">
-                      <input
-                        type="checkbox"
-                        className="mr-2"
-                        checked={!!row.submitted_date}
-                        onChange={(e) =>
-                          updateLocal(r.id, {
-                            submitted_date: e.target.checked ? todayISO() : null,
-                          })
-                        }
-                      />
-                      Submitted to retailer
-                    </label>
+                {/* Submission tracking (rep/admin only) */}
+                {isRepOrAdmin && (
+                  <div
+                    className="rounded-lg p-3"
+                    style={{ border: "1px solid var(--border)" }}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <label className="text-sm font-medium flex items-center gap-2" style={{ color: "var(--foreground)" }}>
+                        <input
+                          type="checkbox"
+                          checked={!!row.submitted_date}
+                          onChange={(e) =>
+                            updateLocal(r.id, {
+                              submitted_date: e.target.checked ? todayISO() : null,
+                            })
+                          }
+                        />
+                        Submitted to retailer
+                      </label>
+                      <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>
+                        {row.submitted_date ? `Date: ${prettyDate(row.submitted_date)}` : "Not submitted"}
+                      </div>
+                    </div>
 
-                    <div className="text-sm text-gray-600">
-                      {row.submitted_date ? `Date: ${prettyDate(row.submitted_date)}` : "Not submitted"}
+                    <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Submitted Date</div>
+                        <input
+                          type="date"
+                          className="border rounded-lg px-3 py-2 w-full text-sm"
+                          style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                          value={row.submitted_date ?? ""}
+                          onChange={(e) =>
+                            updateLocal(r.id, { submitted_date: e.target.value || null })
+                          }
+                        />
+                      </div>
+                      <div>
+                        <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Submitted Notes</div>
+                        <input
+                          className="border rounded-lg px-3 py-2 w-full text-sm"
+                          style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                          value={row.submitted_notes ?? ""}
+                          onChange={(e) =>
+                            updateLocal(r.id, { submitted_notes: e.target.value || null })
+                          }
+                          placeholder="Optional"
+                        />
+                      </div>
                     </div>
                   </div>
-
-                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <div className="text-xs text-gray-500 mb-1">Submitted Date</div>
-                      <input
-                        type="date"
-                        className="border rounded px-3 py-2 w-full"
-                        value={row.submitted_date ?? ""}
-                        onChange={(e) =>
-                          updateLocal(r.id, { submitted_date: e.target.value || null })
-                        }
-                      />
-                    </div>
-
-                    <div>
-                      <div className="text-xs text-gray-500 mb-1">Submitted Notes</div>
-                      <input
-                        className="border rounded px-3 py-2 w-full"
-                        value={row.submitted_notes ?? ""}
-                        onChange={(e) =>
-                          updateLocal(r.id, { submitted_notes: e.target.value || null })
-                        }
-                        placeholder="Optional"
-                      />
-                    </div>
-                  </div>
-                </div>
+                )}
 
                 {hasLegacyNotes ? (
                   <div>
-                    <div className="text-xs text-gray-500 mb-1">Legacy Notes</div>
+                    <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Legacy Notes</div>
                     <textarea
-                      className="border rounded px-3 py-2 w-full"
+                      className="border rounded-lg px-3 py-2 w-full text-sm"
+                      style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
                       rows={3}
                       value={row.notes ?? ""}
                       onChange={(e) => updateLocal(r.id, { notes: e.target.value || null })}
@@ -684,10 +787,11 @@ export default function BrandRetailersPage() {
 
                 {isRepOrAdmin ? (
                   <button
-                    className="bg-black text-white px-4 py-2 rounded"
+                    className="px-4 py-2 rounded-lg text-sm font-medium"
+                    style={{ background: "var(--foreground)", color: "var(--background)" }}
                     onClick={() => save(r.id)}
                   >
-                    Save
+                    Save Changes
                   </button>
                 ) : null}
               </div>
