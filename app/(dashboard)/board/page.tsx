@@ -48,6 +48,10 @@ type BrandSummary = {
   lastActivity: string | null;
 };
 
+type RepProfile = {
+  id: string;
+  full_name: string | null;
+};
 
 function prettyDate(value: string | null) {
   if (!value) return "—";
@@ -74,9 +78,14 @@ async function fetchAll<T>(buildQuery: () => any): Promise<{ data: T[]; error: s
 export default function AllBrandsBoardPage() {
   const router = useRouter();
 
+  const [role, setRole] = useState<Role>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [reps, setReps] = useState<RepProfile[]>([]);
+  const [repFilter, setRepFilter] = useState<string>("");
+  const [retailerRepMap, setRetailerRepMap] = useState<Record<string, string>>({});
+  const repFilterInitialized = useRef(false);
 
   // Summary data — loaded once upfront
   const [brandSummaries, setBrandSummaries] = useState<BrandSummary[]>([]);
@@ -143,8 +152,9 @@ export default function AllBrandsBoardPage() {
     const { data: profileData } = await supabase
       .from("profiles").select("role").eq("id", uid).maybeSingle();
 
-    const role = (profileData?.role as Role) ?? "client";
-    if (role === "client") { router.replace("/brands"); return; }
+    const resolvedRole = (profileData?.role as Role) ?? "client";
+    setRole(resolvedRole);
+    if (resolvedRole === "client") { router.replace("/brands"); return; }
 
     // Load brands
     const { data: brandsData, error: brandsError } = await supabase
@@ -184,6 +194,38 @@ export default function AllBrandsBoardPage() {
       .filter((b) => b.retailerCount > 0);
 
     setBrandSummaries(summaries);
+
+    // Load reps list and retailer→rep map in parallel
+    const [repsRes, retailerRepRes] = await Promise.all([
+      supabase
+        .from("profiles")
+        .select("id, full_name")
+        .in("role", ["rep", "admin"])
+        .order("full_name"),
+      supabase
+        .from("retailers")
+        .select("id, rep_owner_user_id"),
+    ]);
+
+    if (!repsRes.error) {
+      setReps((repsRes.data ?? []) as RepProfile[]);
+    }
+
+    if (!retailerRepRes.error) {
+      const map: Record<string, string> = {};
+      ((retailerRepRes.data ?? []) as { id: string; rep_owner_user_id: string | null }[]).forEach(
+        (r) => { if (r.rep_owner_user_id) map[r.id] = r.rep_owner_user_id; }
+      );
+      setRetailerRepMap(map);
+    }
+
+    if (!repFilterInitialized.current) {
+      repFilterInitialized.current = true;
+      if (resolvedRole === "rep" && uid) {
+        setRepFilter(uid);
+      }
+    }
+
     setLoading(false);
   }
 
@@ -309,10 +351,19 @@ export default function AllBrandsBoardPage() {
   // ── Filter ────────────────────────────────────────────────────────────────
 
   const filteredSummaries = useMemo(() => {
-    if (!search.trim()) return brandSummaries;
-    const q = search.trim().toLowerCase();
-    return brandSummaries.filter((b) => b.name.toLowerCase().includes(q));
-  }, [brandSummaries, search]);
+    let result = brandSummaries;
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      result = result.filter((b) => b.name.toLowerCase().includes(q));
+    }
+    if (repFilter) {
+      result = result.filter((b) => {
+        const brandTiming = timingByBrand[b.id] ?? [];
+        return brandTiming.some((t) => retailerRepMap[t.retailer_id] === repFilter);
+      });
+    }
+    return result;
+  }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand]);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -327,14 +378,31 @@ export default function AllBrandsBoardPage() {
         </p>
       </div>
 
-      <input
-        type="text"
-        placeholder="Filter by brand name…"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        className="w-full max-w-sm rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2"
-        style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
-      />
+      <div className="flex flex-wrap items-center gap-3">
+        <input
+          type="text"
+          placeholder="Filter by brand name…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full max-w-sm rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2"
+          style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+        />
+        {reps.length > 0 && (
+          <select
+            value={repFilter}
+            onChange={(e) => setRepFilter(e.target.value)}
+            className="rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
+            style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+          >
+            <option value="">All reps</option>
+            {reps.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.full_name ?? r.id}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 
@@ -348,7 +416,12 @@ export default function AllBrandsBoardPage() {
         <div className="space-y-2">
           {filteredSummaries.map((brand) => {
             const isOpen = expandedBrandIds.has(brand.id);
-            const rows = brandRows[brand.id] ?? null;
+            const rawRows = brandRows[brand.id] ?? null;
+            const rows = rawRows === null
+              ? null
+              : repFilter
+                ? rawRows.filter((r) => retailerRepMap[r.retailerId] === repFilter)
+                : rawRows;
             const isFetching = loadingBrand[brand.id] ?? false;
 
             return (

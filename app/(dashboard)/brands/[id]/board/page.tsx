@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
@@ -19,6 +19,12 @@ type RetailerRow = {
   id: string;
   name: string;
   banner: string | null;
+  rep_owner_user_id: string | null;
+};
+
+type RepProfile = {
+  id: string;
+  full_name: string | null;
 };
 
 type MessageRow = {
@@ -37,6 +43,7 @@ type BoardRow = {
   submittedDate: string | null;
   latestNote: string | null;
   latestNoteDate: string | null;
+  repOwnerId: string | null;
 };
 
 
@@ -56,6 +63,8 @@ export default function BrandBoardPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [brandName, setBrandName] = useState("");
   const [boardRows, setBoardRows] = useState<BoardRow[]>([]);
+  const [reps, setReps] = useState<RepProfile[]>([]);
+  const [repFilter, setRepFilter] = useState<string>("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -64,6 +73,8 @@ export default function BrandBoardPage() {
   const [noteText, setNoteText] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<Record<string, string>>({});
+
+  const repFilterInitialized = useRef(false);
 
   const isRepOrAdmin = role === "admin" || role === "rep";
 
@@ -129,11 +140,18 @@ export default function BrandBoardPage() {
 
     const retailerIds = [...new Set(timing.map((t) => t.retailer_id))];
 
-    // 4. Retailer names
-    const { data: retailerData, error: retailerError } = await supabase
-      .from("retailers")
-      .select("id, name, banner")
-      .in("id", retailerIds);
+    // 4. Retailer names + reps list in parallel
+    const [retailerRes, repsRes] = await Promise.all([
+      supabase.from("retailers").select("id, name, banner, rep_owner_user_id").in("id", retailerIds),
+      supabase.from("profiles").select("id, full_name").in("role", ["rep", "admin"]).order("full_name"),
+    ]);
+
+    const retailerData = retailerRes.data;
+    const retailerError = retailerRes.error;
+
+    if (!repsRes.error) {
+      setReps((repsRes.data ?? []) as RepProfile[]);
+    }
 
     if (retailerError) {
       setError(retailerError.message);
@@ -187,11 +205,20 @@ export default function BrandBoardPage() {
         submittedDate: t.submitted_date,
         latestNote: latest?.body ?? null,
         latestNoteDate: latest?.created_at ?? null,
+        repOwnerId: retailer?.rep_owner_user_id ?? null,
       };
     });
 
     rows.sort((a, b) => a.banner.localeCompare(b.banner));
     setBoardRows(rows);
+
+    if (!repFilterInitialized.current) {
+      repFilterInitialized.current = true;
+      if (resolvedRole === "rep" && uid) {
+        setRepFilter(uid);
+      }
+    }
+
     setLoading(false);
   }
 
@@ -275,13 +302,35 @@ export default function BrandBoardPage() {
         </div>
       </div>
 
+      {reps.length > 0 && (
+        <select
+          value={repFilter}
+          onChange={(e) => setRepFilter(e.target.value)}
+          className="rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
+          style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+        >
+          <option value="">All reps</option>
+          {reps.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.full_name ?? r.id}
+            </option>
+          ))}
+        </select>
+      )}
+
       {error && <p className="text-sm text-red-600">{error}</p>}
 
       {loading ? (
         <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>Loading…</p>
-      ) : boardRows.length === 0 ? (
-        <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>No retailer data found for this brand.</p>
-      ) : (
+      ) : (() => {
+        const displayRows = repFilter
+          ? boardRows.filter((r) => r.repOwnerId === repFilter)
+          : boardRows;
+        return displayRows.length === 0 ? (
+          <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
+            {repFilter ? "No retailers assigned to this rep." : "No retailer data found for this brand."}
+          </p>
+        ) : (
         <div
           className="rounded-xl overflow-hidden"
           style={{ border: "1px solid var(--border)" }}
@@ -297,7 +346,7 @@ export default function BrandBoardPage() {
               </tr>
             </thead>
             <tbody>
-              {boardRows.map((row, idx) => {
+              {displayRows.map((row, idx) => {
                 const isExpanded = expandedId === row.retailerId;
                 const isEven = idx % 2 === 0;
                 return (
@@ -433,7 +482,8 @@ export default function BrandBoardPage() {
             </tbody>
           </table>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
