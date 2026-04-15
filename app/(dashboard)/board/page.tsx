@@ -198,8 +198,6 @@ export default function AllBrandsBoardPage() {
     // Collect all retailer IDs from timing — use these to scope the retailers query
     // so RLS doesn't block it (a bare unfiltered select on retailers returns 0 rows)
     const allRetailerIds = [...new Set(timing.map((t) => t.retailer_id))];
-    console.log("[board] allRetailerIds count:", allRetailerIds.length);
-
     // Load reps list and retailer→rep map in parallel
     const [repsRes, retailerRepRes] = await Promise.all([
       supabase
@@ -215,9 +213,6 @@ export default function AllBrandsBoardPage() {
         : Promise.resolve({ data: [] as { id: string; rep_owner_user_id: string | null }[], error: null }),
     ]);
 
-    console.log("[board] repsRes:", repsRes.data?.length, repsRes.error?.message);
-    console.log("[board] retailerRepRes:", retailerRepRes.data?.length, (retailerRepRes as any).error?.message);
-
     if (!repsRes.error) {
       setReps((repsRes.data ?? []) as RepProfile[]);
     }
@@ -227,7 +222,6 @@ export default function AllBrandsBoardPage() {
       ((retailerRepRes.data ?? []) as { id: string; rep_owner_user_id: string | null }[]).forEach(
         (r) => { if (r.rep_owner_user_id) map[r.id] = r.rep_owner_user_id; }
       );
-      console.log("[board] retailerRepMap size:", Object.keys(map).length);
       setRetailerRepMap(map);
     }
 
@@ -369,12 +363,10 @@ export default function AllBrandsBoardPage() {
       result = result.filter((b) => b.name.toLowerCase().includes(q));
     }
     if (repFilter) {
-      console.log("[board] filtering by repFilter:", repFilter, "retailerRepMap size:", Object.keys(retailerRepMap).length);
       result = result.filter((b) => {
         const brandTiming = timingByBrand[b.id] ?? [];
         return brandTiming.some((t) => retailerRepMap[t.retailer_id] === repFilter);
       });
-      console.log("[board] brands after rep filter:", result.length);
     }
     return result;
   }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand]);
@@ -401,21 +393,30 @@ export default function AllBrandsBoardPage() {
           className="w-full max-w-sm rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2"
           style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
         />
-        {reps.length > 0 && (
-          <select
-            value={repFilter}
-            onChange={(e) => setRepFilter(e.target.value)}
-            className="rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
-            style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+        {role === "admin" ? (
+          reps.length > 0 && (
+            <select
+              value={repFilter}
+              onChange={(e) => setRepFilter(e.target.value)}
+              className="rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
+              style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+            >
+              <option value="">All reps</option>
+              {reps.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.full_name ?? r.id}
+                </option>
+              ))}
+            </select>
+          )
+        ) : role === "rep" ? (
+          <div
+            className="rounded-lg px-3 py-2 text-sm"
+            style={{ border: "1px solid var(--border)", background: "var(--muted)", color: "var(--muted-foreground)" }}
           >
-            <option value="">All reps</option>
-            {reps.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.full_name ?? r.id}
-              </option>
-            ))}
-          </select>
-        )}
+            {reps.find((r) => r.id === repFilter)?.full_name ?? "My accounts"}
+          </div>
+        ) : null}
       </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
