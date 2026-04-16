@@ -174,35 +174,22 @@ export default function BrandsPage() {
         )}
       </div>
 
-      {/* Stats row */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <div className="rounded-xl border border-primary/30 bg-primary/10 p-4">
+      {/* Stats + search row */}
+      <div className="flex flex-wrap items-center gap-4">
+        <div className="rounded-xl border border-primary/30 bg-primary/10 px-5 py-3">
           <div className="text-2xl font-bold text-foreground">{brands.length}</div>
-          <div className="mt-1 text-sm text-muted-foreground">Total Brands</div>
+          <div className="mt-0.5 text-sm text-muted-foreground">Total Brands</div>
         </div>
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="text-2xl font-bold text-foreground">
-            {Object.values(timingByBrand).reduce((sum, s) => sum + s.retailerCount, 0) || "—"}
-          </div>
-          <div className="mt-1 text-sm text-muted-foreground">Total Retailer Records</div>
-        </div>
-        <div className="rounded-xl border border-border bg-card p-4 col-span-2 md:col-span-1">
-          <div className="text-2xl font-bold text-foreground">
-            {Object.values(timingByBrand).filter((s) => s.topStatus === "active_account").length || "—"}
-          </div>
-          <div className="mt-1 text-sm text-muted-foreground">Brands with Active Accounts</div>
-        </div>
-      </div>
 
-      {/* Search */}
-      <input
-        type="text"
-        placeholder="Search brands…"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        className="w-full max-w-sm rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2"
-        style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
-      />
+        <input
+          type="text"
+          placeholder="Search brands…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full max-w-sm rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2"
+          style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+        />
+      </div>
 
       {loading && <p className="text-sm text-muted-foreground">Loading brands...</p>}
       {error && <p className="text-sm text-red-600">Error: {error}</p>}
