@@ -241,25 +241,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </span>
           </Link>
 
-<Link
-  href={brandId ? `/brands/${brandId}/category-review` : "/category-review"}
-  className={
-    brandId
-      ? linkClass(`/brands/${brandId}/category-review`)
-      : linkClass("/category-review")
-  }
->
-  <span className="relative inline-block pb-1">
-    Category Review
-    {brandId
-      ? isActive(`/brands/${brandId}/category-review`) && (
-          <span className="absolute -bottom-[17px] left-0 h-[3px] w-full rounded-full bg-primary" />
-        )
-      : isActive("/category-review") && (
-          <span className="absolute -bottom-[17px] left-0 h-[3px] w-full rounded-full bg-primary" />
-        )}
-  </span>
-</Link>
+          {role !== "client" ? (
+            <Link href="/category-review" className={linkClass("/category-review")}>
+              <span className="relative inline-block pb-1">
+                Reviews Universe
+                {isActive("/category-review") && (
+                  <span className="absolute -bottom-[17px] left-0 h-[3px] w-full rounded-full bg-primary" />
+                )}
+              </span>
+            </Link>
+          ) : inBrandContext && brandId ? (
+            <Link href={`/brands/${brandId}/category-review`} className={linkClass(`/brands/${brandId}/category-review`)}>
+              <span className="relative inline-block pb-1">
+                Category Review
+                {isActive(`/brands/${brandId}/category-review`) && (
+                  <span className="absolute -bottom-[17px] left-0 h-[3px] w-full rounded-full bg-primary" />
+                )}
+              </span>
+            </Link>
+          ) : null}
 
           <div className="ml-auto flex items-center gap-4">
             <Link
