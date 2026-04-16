@@ -135,6 +135,7 @@ export default function BrandRetailerMessagesPage() {
   const [nudgesLoading, setNudgesLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [reactions, setReactions] = useState<Record<string, { count: number; liked: boolean }>>({});
 
   const isRepOrAdmin = role === "rep" || role === "admin";
 
@@ -241,7 +242,7 @@ export default function BrandRetailerMessagesPage() {
         .eq("brand_id", brandId)
         .eq("retailer_id", retailerId)
         .eq("visibility", visibilityToLoad)
-        .order("created_at", { ascending: true });
+        .order("created_at", { ascending: false });
 
       if (error) {
         setStatus(error.message);
@@ -249,7 +250,9 @@ export default function BrandRetailerMessagesPage() {
         return;
       }
 
-      setMessages((data as MessageRow[]) ?? []);
+      const loadedMessages = (data as MessageRow[]) ?? [];
+      setMessages(loadedMessages);
+      if (loadedMessages.length) loadReactions(loadedMessages.map((m) => m.id));
 
       if (visibilityToLoad === "client") {
         const { data: authData } = await supabase.auth.getUser();
@@ -479,7 +482,7 @@ export default function BrandRetailerMessagesPage() {
       .eq("brand_id", brandId)
       .eq("retailer_id", retailerId)
       .eq("visibility", "client_visible")
-      .order("created_at", { ascending: true });
+      .order("created_at", { ascending: false });
 
     if (error) {
       setStatus(error.message);
@@ -583,14 +586,16 @@ export default function BrandRetailerMessagesPage() {
       .eq("brand_id", brandId)
       .eq("retailer_id", retailerId)
       .eq("visibility", visibilityToSend)
-      .order("created_at", { ascending: true });
+      .order("created_at", { ascending: false });
 
     if (reloadErr) {
       setStatus(reloadErr.message);
       return;
     }
 
-    setMessages((refreshed as MessageRow[]) ?? []);
+    const reloadedMessages = (refreshed as MessageRow[]) ?? [];
+    setMessages(reloadedMessages);
+    if (reloadedMessages.length) loadReactions(reloadedMessages.map((m) => m.id));
 
     const { data: refreshedAttachments, error: attachmentReloadErr } = await supabase
       .from("brand_retailer_attachments")
@@ -598,7 +603,7 @@ export default function BrandRetailerMessagesPage() {
       .eq("brand_id", brandId)
       .eq("retailer_id", retailerId)
       .eq("visibility", visibilityToSend)
-      .order("created_at", { ascending: true });
+      .order("created_at", { ascending: false });
 
     if (attachmentReloadErr) {
       setStatus(attachmentReloadErr.message);
@@ -646,6 +651,56 @@ export default function BrandRetailerMessagesPage() {
       setStatus(err.message || "Failed to approve summary");
     } finally {
       setApprovingId(null);
+    }
+  }
+
+  async function loadReactions(messageIds: string[]) {
+    if (!messageIds.length) return;
+    const { data: authData } = await supabase.auth.getUser();
+    const userId = authData?.user?.id ?? null;
+
+    const { data } = await supabase
+      .from("message_reactions")
+      .select("message_id, user_id")
+      .in("message_id", messageIds);
+
+    const next: Record<string, { count: number; liked: boolean }> = {};
+    messageIds.forEach((id) => { next[id] = { count: 0, liked: false }; });
+    ((data as { message_id: string; user_id: string }[]) ?? []).forEach((r) => {
+      if (!next[r.message_id]) next[r.message_id] = { count: 0, liked: false };
+      next[r.message_id].count += 1;
+      if (r.user_id === userId) next[r.message_id].liked = true;
+    });
+    setReactions((prev) => ({ ...prev, ...next }));
+  }
+
+  async function toggleReaction(messageId: string) {
+    const { data: authData } = await supabase.auth.getUser();
+    const userId = authData?.user?.id ?? null;
+    if (!userId) return;
+
+    const current = reactions[messageId];
+    if (current?.liked) {
+      await supabase
+        .from("message_reactions")
+        .delete()
+        .eq("message_id", messageId)
+        .eq("user_id", userId)
+        .eq("reaction", "thumbs_up");
+      setReactions((prev) => ({
+        ...prev,
+        [messageId]: { count: Math.max(0, (prev[messageId]?.count ?? 1) - 1), liked: false },
+      }));
+    } else {
+      await supabase.from("message_reactions").insert({
+        message_id: messageId,
+        user_id: userId,
+        reaction: "thumbs_up",
+      });
+      setReactions((prev) => ({
+        ...prev,
+        [messageId]: { count: (prev[messageId]?.count ?? 0) + 1, liked: true },
+      }));
     }
   }
 
@@ -721,6 +776,8 @@ export default function BrandRetailerMessagesPage() {
               recipients,
               actor_name: sender_name,
               event_type: "message",
+              brand_id: brandId,
+              retailer_id: retailerId,
             }),
           });
 
@@ -793,7 +850,7 @@ const clientTimeline = useMemo<ClientTimelineItem[]>(() => {
 
   return [...messageItems, ...approvedActivityItems].sort(
     (a, b) =>
-      new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   );
 }, [tab, messages, attachmentsByMessageId, approvedActivities]);
   function handleDrop(e: React.DragEvent<HTMLDivElement>) {
@@ -1043,6 +1100,20 @@ const clientTimeline = useMemo<ClientTimelineItem[]>(() => {
 
               <div className="mt-2 text-sm whitespace-pre-wrap">{item.body}</div>
 
+              <div className="mt-2">
+                <button
+                  type="button"
+                  onClick={() => toggleReaction(item.id)}
+                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full transition-colors"
+                  style={{
+                    background: reactions[item.id]?.liked ? "var(--primary)" : "var(--muted)",
+                    color: reactions[item.id]?.liked ? "var(--primary-foreground)" : "var(--muted-foreground)",
+                  }}
+                >
+                  👍{reactions[item.id]?.count ? ` ${reactions[item.id].count}` : ""}
+                </button>
+              </div>
+
               {item.attachments.length ? (
                 <div className="mt-3 space-y-2">
                   {item.attachments.map((attachment) => {
@@ -1105,6 +1176,20 @@ const clientTimeline = useMemo<ClientTimelineItem[]>(() => {
           </div>
 
           <div className="mt-2 text-sm whitespace-pre-wrap">{m.body}</div>
+
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={() => toggleReaction(m.id)}
+              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full transition-colors"
+              style={{
+                background: reactions[m.id]?.liked ? "var(--primary)" : "var(--muted)",
+                color: reactions[m.id]?.liked ? "var(--primary-foreground)" : "var(--muted-foreground)",
+              }}
+            >
+              👍{reactions[m.id]?.count ? ` ${reactions[m.id].count}` : ""}
+            </button>
+          </div>
 
           {attachmentsByMessageId[m.id]?.length ? (
             <div className="mt-3 space-y-2">
