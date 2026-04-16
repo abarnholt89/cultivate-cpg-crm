@@ -233,11 +233,21 @@ export default function BrandBoardPage() {
     setSaving(true);
     setSaveStatus((s) => ({ ...s, [retailerId]: "" }));
 
+    const { data: profileData } = await supabase
+      .from("profiles")
+      .select("full_name")
+      .eq("id", userId)
+      .single();
+    const senderName = profileData?.full_name ?? null;
+
+    console.log("[saveNote] inserting:", { brand_id: brandId, retailer_id: retailerId, visibility: "internal", sender_id: userId, sender_name: senderName, body: text });
+
     const { error } = await supabase.from("brand_retailer_messages").insert({
       brand_id: brandId,
       retailer_id: retailerId,
       visibility: "internal",
       sender_id: userId,
+      sender_name: senderName,
       body: text,
     });
 
