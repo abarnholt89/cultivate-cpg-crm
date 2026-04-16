@@ -681,22 +681,23 @@ export default function BrandRetailerMessagesPage() {
 
     const current = reactions[messageId];
     if (current?.liked) {
-      await supabase
+      const { error } = await supabase
         .from("message_reactions")
         .delete()
         .eq("message_id", messageId)
         .eq("user_id", userId)
         .eq("reaction", "thumbs_up");
+      if (error) { console.error("[toggleReaction] delete failed:", error); return; }
       setReactions((prev) => ({
         ...prev,
         [messageId]: { count: Math.max(0, (prev[messageId]?.count ?? 1) - 1), liked: false },
       }));
     } else {
-      await supabase.from("message_reactions").insert({
-        message_id: messageId,
-        user_id: userId,
-        reaction: "thumbs_up",
-      });
+      const { error } = await supabase.from("message_reactions").upsert(
+        { message_id: messageId, user_id: userId, reaction: "thumbs_up" },
+        { onConflict: "message_id,user_id,reaction", ignoreDuplicates: true }
+      );
+      if (error) { console.error("[toggleReaction] upsert failed:", error); return; }
       setReactions((prev) => ({
         ...prev,
         [messageId]: { count: (prev[messageId]?.count ?? 0) + 1, liked: true },
@@ -1103,7 +1104,7 @@ const clientTimeline = useMemo<ClientTimelineItem[]>(() => {
               <div className="mt-2">
                 <button
                   type="button"
-                  onClick={() => toggleReaction(item.id)}
+                  onClick={(e) => { e.stopPropagation(); toggleReaction(item.id); }}
                   className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full transition-colors"
                   style={{
                     background: reactions[item.id]?.liked ? "var(--primary)" : "var(--muted)",
@@ -1180,7 +1181,7 @@ const clientTimeline = useMemo<ClientTimelineItem[]>(() => {
           <div className="mt-2">
             <button
               type="button"
-              onClick={() => toggleReaction(m.id)}
+              onClick={(e) => { e.stopPropagation(); toggleReaction(m.id); }}
               className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full transition-colors"
               style={{
                 background: reactions[m.id]?.liked ? "var(--primary)" : "var(--muted)",

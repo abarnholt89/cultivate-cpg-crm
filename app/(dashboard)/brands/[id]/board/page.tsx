@@ -245,7 +245,7 @@ export default function BrandBoardPage() {
     const { error } = await supabase.from("brand_retailer_messages").insert({
       brand_id: brandId,
       retailer_id: retailerId,
-      visibility: "internal",
+      visibility: "client",
       sender_id: userId,
       sender_name: senderName,
       body: text,
