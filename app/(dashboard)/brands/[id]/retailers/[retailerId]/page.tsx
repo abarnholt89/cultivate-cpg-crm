@@ -1104,7 +1104,7 @@ const clientTimeline = useMemo<ClientTimelineItem[]>(() => {
               <div className="mt-2">
                 <button
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); toggleReaction(item.id); }}
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleReaction(item.id); }}
                   className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full transition-colors"
                   style={{
                     background: reactions[item.id]?.liked ? "var(--primary)" : "var(--muted)",
@@ -1181,7 +1181,7 @@ const clientTimeline = useMemo<ClientTimelineItem[]>(() => {
           <div className="mt-2">
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); toggleReaction(m.id); }}
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleReaction(m.id); }}
               className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full transition-colors"
               style={{
                 background: reactions[m.id]?.liked ? "var(--primary)" : "var(--muted)",
