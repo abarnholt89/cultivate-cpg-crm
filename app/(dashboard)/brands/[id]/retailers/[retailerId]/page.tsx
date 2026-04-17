@@ -135,7 +135,6 @@ export default function BrandRetailerMessagesPage() {
   const [nudgesLoading, setNudgesLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
-  const [reactions, setReactions] = useState<Record<string, { count: number; liked: boolean }>>({});
 
   const isRepOrAdmin = role === "rep" || role === "admin";
 
@@ -252,7 +251,6 @@ export default function BrandRetailerMessagesPage() {
 
       const loadedMessages = (data as MessageRow[]) ?? [];
       setMessages(loadedMessages);
-      if (loadedMessages.length) loadReactions(loadedMessages.map((m) => m.id));
 
       if (visibilityToLoad === "client") {
         const { data: authData } = await supabase.auth.getUser();
@@ -595,7 +593,6 @@ export default function BrandRetailerMessagesPage() {
 
     const reloadedMessages = (refreshed as MessageRow[]) ?? [];
     setMessages(reloadedMessages);
-    if (reloadedMessages.length) loadReactions(reloadedMessages.map((m) => m.id));
 
     const { data: refreshedAttachments, error: attachmentReloadErr } = await supabase
       .from("brand_retailer_attachments")
@@ -651,57 +648,6 @@ export default function BrandRetailerMessagesPage() {
       setStatus(err.message || "Failed to approve summary");
     } finally {
       setApprovingId(null);
-    }
-  }
-
-  async function loadReactions(messageIds: string[]) {
-    if (!messageIds.length) return;
-    const { data: authData } = await supabase.auth.getUser();
-    const userId = authData?.user?.id ?? null;
-
-    const { data } = await supabase
-      .from("message_reactions")
-      .select("message_id, user_id")
-      .in("message_id", messageIds);
-
-    const next: Record<string, { count: number; liked: boolean }> = {};
-    messageIds.forEach((id) => { next[id] = { count: 0, liked: false }; });
-    ((data as { message_id: string; user_id: string }[]) ?? []).forEach((r) => {
-      if (!next[r.message_id]) next[r.message_id] = { count: 0, liked: false };
-      next[r.message_id].count += 1;
-      if (r.user_id === userId) next[r.message_id].liked = true;
-    });
-    setReactions((prev) => ({ ...prev, ...next }));
-  }
-
-  async function toggleReaction(messageId: string) {
-    const { data: authData } = await supabase.auth.getUser();
-    const userId = authData?.user?.id ?? null;
-    if (!userId) return;
-
-    const current = reactions[messageId];
-    if (current?.liked) {
-      const { error } = await supabase
-        .from("message_reactions")
-        .delete()
-        .eq("message_id", messageId)
-        .eq("user_id", userId)
-        .eq("reaction", "thumbs_up");
-      if (error) { console.error("[toggleReaction] delete failed:", error); return; }
-      setReactions((prev) => ({
-        ...prev,
-        [messageId]: { count: Math.max(0, (prev[messageId]?.count ?? 1) - 1), liked: false },
-      }));
-    } else {
-      const { error } = await supabase.from("message_reactions").upsert(
-        { message_id: messageId, user_id: userId, reaction: "thumbs_up" },
-        { onConflict: "message_id,user_id,reaction", ignoreDuplicates: true }
-      );
-      if (error) { console.error("[toggleReaction] upsert failed:", error); return; }
-      setReactions((prev) => ({
-        ...prev,
-        [messageId]: { count: (prev[messageId]?.count ?? 0) + 1, liked: true },
-      }));
     }
   }
 
@@ -1101,19 +1047,6 @@ const clientTimeline = useMemo<ClientTimelineItem[]>(() => {
 
               <div className="mt-2 text-sm whitespace-pre-wrap">{item.body}</div>
 
-              <div className="mt-2">
-                <button
-                  type="button"
-                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleReaction(item.id); }}
-                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full transition-colors"
-                  style={{
-                    background: reactions[item.id]?.liked ? "var(--primary)" : "var(--muted)",
-                    color: reactions[item.id]?.liked ? "var(--primary-foreground)" : "var(--muted-foreground)",
-                  }}
-                >
-                  👍{reactions[item.id]?.count ? ` ${reactions[item.id].count}` : ""}
-                </button>
-              </div>
 
               {item.attachments.length ? (
                 <div className="mt-3 space-y-2">
@@ -1178,19 +1111,6 @@ const clientTimeline = useMemo<ClientTimelineItem[]>(() => {
 
           <div className="mt-2 text-sm whitespace-pre-wrap">{m.body}</div>
 
-          <div className="mt-2">
-            <button
-              type="button"
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleReaction(m.id); }}
-              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full transition-colors"
-              style={{
-                background: reactions[m.id]?.liked ? "var(--primary)" : "var(--muted)",
-                color: reactions[m.id]?.liked ? "var(--primary-foreground)" : "var(--muted-foreground)",
-              }}
-            >
-              👍{reactions[m.id]?.count ? ` ${reactions[m.id].count}` : ""}
-            </button>
-          </div>
 
           {attachmentsByMessageId[m.id]?.length ? (
             <div className="mt-3 space-y-2">
