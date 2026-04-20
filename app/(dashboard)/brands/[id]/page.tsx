@@ -285,9 +285,16 @@ export default function BrandDashboardPage() {
       if (isInMotion(r.account_status)) inMotion++;
       if (r.account_status === "active_account") activeAccounts++;
     });
-    const recentUpdates = pipelineRows.filter((r) => r.submitted_date || r.notes).length;
-    return { upcomingReviews, inMotion, activeAccounts, recentUpdates };
+    return { upcomingReviews, inMotion, activeAccounts };
   }, [pipelineRows, calendarRows]);
+
+  // Distinct retailers with at least one client-visible message in the last 7 days
+  const recentRetailerCount = useMemo(() => {
+    const sevenDaysAgo = nDaysAgoISO(7);
+    return Object.values(messagesByRetailer).filter(
+      (v) => v.latest_at && v.latest_at >= sevenDaysAgo
+    ).length;
+  }, [messagesByRetailer]);
 
   const upcomingList = useMemo(() => {
     const today = todayISO();
@@ -327,9 +334,10 @@ export default function BrandDashboardPage() {
   const displayWorkflow = useMemo(() => {
     if (!recentOnlyFilter) return recentWorkflow;
     const sevenDaysAgo = nDaysAgoISO(7);
+    // Filter by message date only — must match what recentRetailerCount counts
     return recentWorkflow.filter((row) => {
-      const latest = messagesByRetailer[row.retailer_id]?.latest_at || row.submitted_date || "";
-      return latest >= sevenDaysAgo;
+      const msgLatest = messagesByRetailer[row.retailer_id]?.latest_at ?? "";
+      return msgLatest >= sevenDaysAgo;
     });
   }, [recentWorkflow, recentOnlyFilter, messagesByRetailer]);
 
@@ -400,6 +408,7 @@ export default function BrandDashboardPage() {
           </div>
           <button
             onClick={() => {
+              setRecentOnlyFilter(true);
               happeningRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
             }}
             className="text-xs font-medium whitespace-nowrap hover:underline"
@@ -429,9 +438,9 @@ export default function BrandDashboardPage() {
         />
         <SummaryCard
           label="Recent Updates"
-          value={summary.recentUpdates}
+          value={recentRetailerCount}
           href={`/brands/${brandId}/retailers`}
-          highlight={summary.recentUpdates > 0}
+          highlight={recentRetailerCount > 0}
           onHighlightClick={() => {
             setRecentOnlyFilter(true);
             happeningRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -446,13 +455,13 @@ export default function BrandDashboardPage() {
             <h2 className="text-lg font-semibold">What's Happening Now</h2>
             {recentOnlyFilter && (
               <span className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-medium" style={{ background: "#E1F5EE", color: "#085041" }}>
-                Recent only
+                Showing recent updates only
                 <button
                   onClick={() => setRecentOnlyFilter(false)}
-                  className="ml-1 hover:opacity-70"
-                  aria-label="Clear filter"
+                  className="ml-1.5 underline hover:opacity-70 font-normal"
+                  aria-label="Show all"
                 >
-                  ×
+                  Show all
                 </button>
               </span>
             )}
@@ -463,9 +472,23 @@ export default function BrandDashboardPage() {
         </div>
 
         {displayWorkflow.length === 0 ? (
-          <p className="text-sm text-gray-600 mt-4">
-            {recentOnlyFilter ? "No retailers updated in the last 7 days." : "No recent workflow notes yet."}
-          </p>
+          <div className="mt-4">
+            {recentOnlyFilter ? (
+              <div className="rounded-lg p-4 text-sm" style={{ background: "#F8FFFE", border: "1px solid #C6EDE0" }}>
+                <div className="font-medium" style={{ color: "#085041" }}>No retailer activity in the last 7 days.</div>
+                <div className="text-gray-500 mt-0.5">Check back soon or view all retailers below.</div>
+                <button
+                  onClick={() => setRecentOnlyFilter(false)}
+                  className="mt-3 text-xs font-medium underline"
+                  style={{ color: "#0F6E56" }}
+                >
+                  Show all retailers →
+                </button>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-600">No recent workflow notes yet.</p>
+            )}
+          </div>
         ) : (
           <div className="space-y-3 mt-4">
             {displayWorkflow.map((row, index) => {
