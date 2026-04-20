@@ -53,11 +53,8 @@ type RepProfile = {
   full_name: string | null;
 };
 
-// Sentinel value used as repFilter when "My Team" is selected
 const MY_TEAM = "__my_team__";
 
-// Hardcoded manager→team map. Each key is a manager's user ID; the value is the
-// full set of user IDs (including the manager) whose retailers count as "My Team".
 const MANAGER_MAP: Record<string, string[]> = {
   "623753df-291c-4aa5-85fd-5af37efd0297": [
     "623753df-291c-4aa5-85fd-5af37efd0297",
@@ -67,6 +64,17 @@ const MANAGER_MAP: Record<string, string[]> = {
   ],
 };
 
+const STATUS_OPTIONS = [
+  { value: "upcoming_review", label: "Upcoming Review" },
+  { value: "waiting_for_retailer_to_publish_review", label: "Awaiting Retailer Decision" },
+  { value: "under_review", label: "Under Review" },
+  { value: "active_account", label: "Active Account" },
+  { value: "working_to_secure_anchor_account", label: "Distributor Required" },
+  { value: "not_a_target_account", label: "Not a Target" },
+  { value: "cultivate_does_not_rep", label: "Not Managed by Cultivate" },
+  { value: "retailer_declined", label: "Retailer Declined" },
+];
+
 function prettyDate(value: string | null) {
   if (!value) return "—";
   const d = new Date(value);
@@ -74,7 +82,18 @@ function prettyDate(value: string | null) {
   return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-/** Fetches all rows from a query using range pagination to bypass the 1000-row default cap. */
+function relativeTime(ts: string | null) {
+  if (!ts) return "—";
+  const mins = Math.floor((Date.now() - new Date(ts).getTime()) / 60000);
+  if (mins < 2) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  if (mins < 1440) return `${Math.floor(mins / 60)}h ago`;
+  const days = Math.floor(mins / 1440);
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  return `${Math.floor(days / 30)}mo ago`;
+}
+
 async function fetchAll<T>(buildQuery: () => any): Promise<{ data: T[]; error: string | null }> {
   const PAGE = 1000;
   let from = 0;
@@ -101,31 +120,30 @@ export default function AllBrandsBoardPage() {
   const [retailerRepMap, setRetailerRepMap] = useState<Record<string, string>>({});
   const repFilterInitialized = useRef(false);
 
-  // Summary data — loaded once upfront
   const [brandSummaries, setBrandSummaries] = useState<BrandSummary[]>([]);
-  // Full timing rows by brand_id — used when expanding to fetch detail data
   const [timingByBrand, setTimingByBrand] = useState<Record<string, TimingRow[]>>({});
 
-  // On-demand retailer rows per brand (null = not yet loaded)
   const [brandRows, setBrandRows] = useState<Record<string, BoardRetailerRow[]>>({});
   const [loadingBrand, setLoadingBrand] = useState<Record<string, boolean>>({});
 
   const [search, setSearch] = useState("");
   const [expandedBrandIds, setExpandedBrandIds] = useState<Set<string>>(new Set());
 
-  // Retailer-level note editor: key = `${brandId}__${retailerId}`
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<Record<string, string>>({});
 
+  // Inline status editing
+  const [editingStatus, setEditingStatus] = useState<string | null>(null);
+  const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
+  const [errorToast, setErrorToast] = useState<string | null>(null);
+  const errorToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const prevSearchRef = useRef("");
 
   useEffect(() => { loadSummaries(); }, []);
 
-  // Set the default rep filter once userId and role are both committed to state.
-  // Running this inside loadSummaries() is too early — React hasn't flushed the
-  // setUserId/setRole updates yet, so userId state reads as null there.
   useEffect(() => {
     if (!userId || !role || repFilterInitialized.current) return;
     repFilterInitialized.current = true;
@@ -136,7 +154,6 @@ export default function AllBrandsBoardPage() {
     }
   }, [userId, role]);
 
-  // Auto-expand matching brands when search has text; collapse all when cleared
   useEffect(() => {
     const q = search.trim().toLowerCase();
     const prev = prevSearchRef.current.trim().toLowerCase();
@@ -153,7 +170,6 @@ export default function AllBrandsBoardPage() {
         return next;
       });
 
-      // Trigger on-demand load for newly matched brands not yet loaded
       matchIds.forEach((id) => {
         if (!brandRows[id]) loadBrandRows(id);
       });
@@ -183,14 +199,12 @@ export default function AllBrandsBoardPage() {
     setRole(resolvedRole);
     if (resolvedRole === "client") { router.replace("/brands"); return; }
 
-    // Load brands
     const { data: brandsData, error: brandsError } = await supabase
       .from("brands").select("id, name").order("name", { ascending: true });
 
     if (brandsError) { setError(brandsError.message); setLoading(false); return; }
     const brands = (brandsData as Brand[]) ?? [];
 
-    // Load ALL timing rows (paginated to bypass 1000-row cap)
     const { data: timing, error: timingErr } = await fetchAll<TimingRow>(() =>
       supabase
         .from("brand_retailer_timing")
@@ -199,7 +213,6 @@ export default function AllBrandsBoardPage() {
 
     if (timingErr) { setError(timingErr); setLoading(false); return; }
 
-    // Group timing by brand
     const byBrand: Record<string, TimingRow[]> = {};
     timing.forEach((t) => {
       if (!byBrand[t.brand_id]) byBrand[t.brand_id] = [];
@@ -207,26 +220,10 @@ export default function AllBrandsBoardPage() {
     });
     setTimingByBrand(byBrand);
 
-    // Build summaries
-    const summaries: BrandSummary[] = brands
-      .map((brand) => {
-        const rows = byBrand[brand.id] ?? [];
-        const lastActivity = rows.reduce<string | null>((best, r) => {
-          if (!r.submitted_date) return best;
-          if (!best) return r.submitted_date;
-          return r.submitted_date > best ? r.submitted_date : best;
-        }, null);
-        return { id: brand.id, name: brand.name, retailerCount: rows.length, lastActivity };
-      })
-      .filter((b) => b.retailerCount > 0);
-
-    setBrandSummaries(summaries);
-
-    // Collect all retailer IDs from timing — use these to scope the retailers query
-    // so RLS doesn't block it (a bare unfiltered select on retailers returns 0 rows)
     const allRetailerIds = [...new Set(timing.map((t) => t.retailer_id))];
-    // Load reps list and retailer→rep map in parallel
-    const [repsRes, retailerRepRes] = await Promise.all([
+
+    // Fetch reps, retailer→rep map, and brand-level message activity in parallel
+    const [repsRes, retailerRepRes, msgActivityRes] = await Promise.all([
       supabase
         .from("profiles")
         .select("id, full_name")
@@ -238,7 +235,35 @@ export default function AllBrandsBoardPage() {
             .select("id, rep_owner_user_id")
             .in("id", allRetailerIds)
         : Promise.resolve({ data: [] as { id: string; rep_owner_user_id: string | null }[], error: null }),
+      fetchAll<{ brand_id: string; created_at: string }>(() =>
+        supabase
+          .from("brand_retailer_messages")
+          .select("brand_id, created_at")
+          .eq("visibility", "client")
+      ),
     ]);
+
+    // Brand-level last activity: most recent client-visible message per brand
+    const msgLastActivity: Record<string, string> = {};
+    (msgActivityRes.data ?? []).forEach((m) => {
+      if (!msgLastActivity[m.brand_id] || m.created_at > msgLastActivity[m.brand_id]) {
+        msgLastActivity[m.brand_id] = m.created_at;
+      }
+    });
+
+    const summaries: BrandSummary[] = brands
+      .map((brand) => {
+        const rows = byBrand[brand.id] ?? [];
+        return {
+          id: brand.id,
+          name: brand.name,
+          retailerCount: rows.length,
+          lastActivity: msgLastActivity[brand.id] ?? null,
+        };
+      })
+      .filter((b) => b.retailerCount > 0);
+
+    setBrandSummaries(summaries);
 
     if (!repsRes.error) {
       setReps((repsRes.data ?? []) as RepProfile[]);
@@ -276,7 +301,7 @@ export default function AllBrandsBoardPage() {
         .from("brand_retailer_messages")
         .select("id, retailer_id, body, created_at")
         .eq("brand_id", brandId)
-        .eq("visibility", "internal")
+        .eq("visibility", "client")
         .order("created_at", { ascending: false }),
     ]);
 
@@ -361,7 +386,7 @@ export default function AllBrandsBoardPage() {
       .single();
     const senderName = profileData?.full_name ?? null;
 
-    console.log("[saveNote] inserting:", { brand_id: brandId, retailer_id: retailerId, visibility: "internal", sender_id: userId, sender_name: senderName, body: text });
+    console.log("[saveNote] inserting:", { brand_id: brandId, retailer_id: retailerId, visibility: "client", sender_id: userId, sender_name: senderName, body: text });
 
     const { error } = await supabase.from("brand_retailer_messages").insert({
       brand_id: brandId,
@@ -379,9 +404,31 @@ export default function AllBrandsBoardPage() {
     setSaveStatus((s) => ({ ...s, [key]: "Saved." }));
     setExpandedKey(null);
     setNoteText("");
-    // Invalidate and reload just this brand's rows
     setBrandRows((s) => { const next = { ...s }; delete next[brandId]; return next; });
     loadBrandRows(brandId);
+  }
+
+  // ── Inline status update ──────────────────────────────────────────────────
+
+  async function updateStatus(timingId: string, prevStatus: string, newStatus: string) {
+    if (newStatus === prevStatus) return;
+
+    // Optimistic update
+    setStatusOverrides((s) => ({ ...s, [timingId]: newStatus }));
+    setEditingStatus(null);
+
+    const { error } = await supabase
+      .from("brand_retailer_timing")
+      .update({ account_status: newStatus })
+      .eq("id", timingId);
+
+    if (error) {
+      // Revert
+      setStatusOverrides((s) => ({ ...s, [timingId]: prevStatus }));
+      if (errorToastTimer.current) clearTimeout(errorToastTimer.current);
+      setErrorToast("Failed to update status. You may not have permission.");
+      errorToastTimer.current = setTimeout(() => setErrorToast(null), 4000);
+    }
   }
 
   // ── Filter ────────────────────────────────────────────────────────────────
@@ -411,12 +458,22 @@ export default function AllBrandsBoardPage() {
 
   return (
     <div className="p-6 space-y-5">
+      {/* Error toast */}
+      {errorToast && (
+        <div
+          className="fixed bottom-5 right-5 z-50 rounded-lg px-4 py-3 text-sm font-medium shadow-lg"
+          style={{ background: "#fee2e2", color: "#991b1b", border: "1px solid #fca5a5" }}
+        >
+          {errorToast}
+        </div>
+      )}
+
       <div>
         <h1 className="text-3xl font-bold" style={{ color: "var(--foreground)" }}>
           All Brands Board
         </h1>
         <p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>
-          Click a brand to expand — click a retailer row to add an internal note
+          Click a brand to expand — click a retailer row to add a client-facing note. Notes here appear on the client's dashboard for that retailer.
         </p>
       </div>
 
@@ -504,18 +561,18 @@ export default function AllBrandsBoardPage() {
                       {brand.retailerCount} retailer{brand.retailerCount !== 1 ? "s" : ""}
                     </span>
                     <span className="text-xs shrink-0" style={{ color: "var(--muted-foreground)" }}>
-                      Last activity: {prettyDate(brand.lastActivity)}
+                      Last activity: {relativeTime(brand.lastActivity)}
                     </span>
                   </div>
 
                   <div className="flex items-center gap-3 shrink-0 ml-4">
                     <Link
-                      href={`/brands/${brand.id}/board`}
+                      href={`/brands/${brand.id}`}
                       className="text-xs underline"
                       style={{ color: "var(--muted-foreground)" }}
                       onClick={(e) => e.stopPropagation()}
                     >
-                      Open brand board
+                      Open brand dashboard →
                     </Link>
                     <span style={{ color: "var(--muted-foreground)", fontSize: "0.65rem" }}>
                       {isOpen ? "▲" : "▼"}
@@ -546,7 +603,7 @@ export default function AllBrandsBoardPage() {
                           <th className="text-left px-4 py-2 font-medium">Retailer</th>
                           <th className="text-left px-4 py-2 font-medium">Account Status</th>
                           <th className="text-left px-4 py-2 font-medium">Last Activity</th>
-                          <th className="text-left px-4 py-2 font-medium">Latest Internal Note</th>
+                          <th className="text-left px-4 py-2 font-medium">Latest Note</th>
                           <th className="w-8" />
                         </tr>
                       </thead>
@@ -555,6 +612,7 @@ export default function AllBrandsBoardPage() {
                           const key = `${brand.id}__${row.retailerId}`;
                           const isNoteOpen = expandedKey === key;
                           const isEven = idx % 2 === 0;
+                          const currentStatus = statusOverrides[row.timingId] ?? row.accountStatus;
                           return (
                             <>
                               <tr
@@ -576,28 +634,53 @@ export default function AllBrandsBoardPage() {
                                     {row.banner}
                                   </Link>
                                 </td>
-                                <td className="px-4 py-2.5">
-                                  <StatusBadge status={row.accountStatus} />
+
+                                {/* Inline status edit */}
+                                <td className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
+                                  {editingStatus === row.timingId ? (
+                                    <select
+                                      value={currentStatus}
+                                      autoFocus
+                                      onChange={(e) => updateStatus(row.timingId, currentStatus, e.target.value)}
+                                      onBlur={() => setEditingStatus(null)}
+                                      className="text-xs rounded px-2 py-1 focus:outline-none focus:ring-1"
+                                      style={{
+                                        border: "1px solid var(--border)",
+                                        background: "var(--card)",
+                                        color: "var(--foreground)",
+                                      }}
+                                    >
+                                      {STATUS_OPTIONS.map((opt) => (
+                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <button
+                                      title="Click to change status"
+                                      onClick={() => setEditingStatus(row.timingId)}
+                                      className="cursor-pointer"
+                                    >
+                                      <StatusBadge status={currentStatus} />
+                                    </button>
+                                  )}
                                 </td>
+
+                                {/* Last Activity — from most recent client-visible message */}
                                 <td className="px-4 py-2.5" style={{ color: "var(--muted-foreground)" }}>
-                                  {prettyDate(row.submittedDate)}
+                                  {relativeTime(row.latestNoteDate)}
                                 </td>
+
+                                {/* Latest Note */}
                                 <td className="px-4 py-2.5 max-w-xs" style={{ color: row.latestNote ? "var(--foreground)" : "var(--muted-foreground)" }}>
                                   {row.latestNote ? (
-                                    <>
-                                      <span className="line-clamp-1">
-                                        {row.latestNote.length > 80 ? row.latestNote.slice(0, 80) + "…" : row.latestNote}
-                                      </span>
-                                      {row.latestNoteDate && (
-                                        <span className="text-xs block" style={{ color: "var(--muted-foreground)" }}>
-                                          {prettyDate(row.latestNoteDate)}
-                                        </span>
-                                      )}
-                                    </>
+                                    <span className="line-clamp-1">
+                                      {row.latestNote.length > 80 ? row.latestNote.slice(0, 80) + "…" : row.latestNote}
+                                    </span>
                                   ) : (
                                     <span className="italic text-xs">No notes yet</span>
                                   )}
                                 </td>
+
                                 <td className="px-2 py-2.5 text-right" style={{ color: "var(--muted-foreground)", fontSize: "0.7rem" }}>
                                   {isNoteOpen ? "▲" : "▼"}
                                 </td>
@@ -611,7 +694,7 @@ export default function AllBrandsBoardPage() {
                                   <td colSpan={5} className="px-4 pb-4 pt-2">
                                     <div className="space-y-2">
                                       <p className="text-xs font-medium" style={{ color: "var(--muted-foreground)" }}>
-                                        Add internal note for {row.banner}
+                                        Add client-facing note for {row.banner}
                                       </p>
                                       <textarea
                                         className="w-full rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2"
@@ -621,7 +704,7 @@ export default function AllBrandsBoardPage() {
                                           color: "var(--foreground)",
                                           minHeight: "72px",
                                         }}
-                                        placeholder="Write an internal note…"
+                                        placeholder="Write a client-facing note…"
                                         value={noteText}
                                         onChange={(e) => setNoteText(e.target.value)}
                                         onClick={(e) => e.stopPropagation()}
