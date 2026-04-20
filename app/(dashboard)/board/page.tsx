@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabaseClient";
 import StatusBadge from "@/components/StatusBadge";
 
 type Role = "admin" | "rep" | "client" | null;
+type NoteMode = "client" | "internal";
 
 type Brand = { id: string; name: string };
 
@@ -75,13 +76,6 @@ const STATUS_OPTIONS = [
   { value: "retailer_declined", label: "Retailer Declined" },
 ];
 
-function prettyDate(value: string | null) {
-  if (!value) return "—";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
-}
-
 function relativeTime(ts: string | null) {
   if (!ts) return "—";
   const mins = Math.floor((Date.now() - new Date(ts).getTime()) / 60000);
@@ -120,6 +114,9 @@ export default function AllBrandsBoardPage() {
   const [retailerRepMap, setRetailerRepMap] = useState<Record<string, string>>({});
   const repFilterInitialized = useRef(false);
 
+  // Board-wide note mode — defaults to client-facing (safety default)
+  const [mode, setMode] = useState<NoteMode>("client");
+
   const [brandSummaries, setBrandSummaries] = useState<BrandSummary[]>([]);
   const [timingByBrand, setTimingByBrand] = useState<Record<string, TimingRow[]>>({});
 
@@ -141,6 +138,9 @@ export default function AllBrandsBoardPage() {
   const errorToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const prevSearchRef = useRef("");
+  // Keep a ref of expanded brand IDs so mode-change effect can read without stale closure
+  const expandedBrandIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => { expandedBrandIdsRef.current = expandedBrandIds; }, [expandedBrandIds]);
 
   useEffect(() => { loadSummaries(); }, []);
 
@@ -154,6 +154,19 @@ export default function AllBrandsBoardPage() {
     }
   }, [userId, role]);
 
+  // When mode changes: discard cached rows, close any open note editor,
+  // and reload all currently expanded brands with the new visibility.
+  useEffect(() => {
+    if (loading) return; // skip during initial page load
+    setBrandRows({});
+    setLoadingBrand({});
+    setExpandedKey(null);
+    setNoteText("");
+    expandedBrandIdsRef.current.forEach((id) => loadBrandRows(id, mode));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
+  // Auto-expand matching brands when search has text; collapse all when cleared
   useEffect(() => {
     const q = search.trim().toLowerCase();
     const prev = prevSearchRef.current.trim().toLowerCase();
@@ -171,7 +184,7 @@ export default function AllBrandsBoardPage() {
       });
 
       matchIds.forEach((id) => {
-        if (!brandRows[id]) loadBrandRows(id);
+        if (!brandRows[id]) loadBrandRows(id, mode);
       });
     } else if (prev && !q) {
       setExpandedBrandIds(new Set());
@@ -222,7 +235,7 @@ export default function AllBrandsBoardPage() {
 
     const allRetailerIds = [...new Set(timing.map((t) => t.retailer_id))];
 
-    // Fetch reps, retailer→rep map, and brand-level message activity in parallel
+    // Brand-level last activity always reflects client-visible messages
     const [repsRes, retailerRepRes, msgActivityRes] = await Promise.all([
       supabase
         .from("profiles")
@@ -243,7 +256,6 @@ export default function AllBrandsBoardPage() {
       ),
     ]);
 
-    // Brand-level last activity: most recent client-visible message per brand
     const msgLastActivity: Record<string, string> = {};
     (msgActivityRes.data ?? []).forEach((m) => {
       if (!msgLastActivity[m.brand_id] || m.created_at > msgLastActivity[m.brand_id]) {
@@ -265,9 +277,7 @@ export default function AllBrandsBoardPage() {
 
     setBrandSummaries(summaries);
 
-    if (!repsRes.error) {
-      setReps((repsRes.data ?? []) as RepProfile[]);
-    }
+    if (!repsRes.error) setReps((repsRes.data ?? []) as RepProfile[]);
 
     if (!retailerRepRes.error) {
       const map: Record<string, string> = {};
@@ -282,7 +292,7 @@ export default function AllBrandsBoardPage() {
 
   // ── On-demand brand detail load ───────────────────────────────────────────
 
-  async function loadBrandRows(brandId: string) {
+  async function loadBrandRows(brandId: string, visibility: NoteMode) {
     if (loadingBrand[brandId]) return;
     setLoadingBrand((s) => ({ ...s, [brandId]: true }));
 
@@ -301,7 +311,7 @@ export default function AllBrandsBoardPage() {
         .from("brand_retailer_messages")
         .select("id, retailer_id, body, created_at")
         .eq("brand_id", brandId)
-        .eq("visibility", "client")
+        .eq("visibility", visibility)
         .order("created_at", { ascending: false }),
     ]);
 
@@ -352,7 +362,7 @@ export default function AllBrandsBoardPage() {
         }
       } else {
         next.add(brandId);
-        if (!brandRows[brandId]) loadBrandRows(brandId);
+        if (!brandRows[brandId]) loadBrandRows(brandId, mode);
       }
       return next;
     });
@@ -386,12 +396,12 @@ export default function AllBrandsBoardPage() {
       .single();
     const senderName = profileData?.full_name ?? null;
 
-    console.log("[saveNote] inserting:", { brand_id: brandId, retailer_id: retailerId, visibility: "client", sender_id: userId, sender_name: senderName, body: text });
+    console.log("[saveNote] inserting:", { brand_id: brandId, retailer_id: retailerId, visibility: mode, sender_id: userId, sender_name: senderName, body: text });
 
     const { error } = await supabase.from("brand_retailer_messages").insert({
       brand_id: brandId,
       retailer_id: retailerId,
-      visibility: "client",
+      visibility: mode,
       sender_id: userId,
       sender_name: senderName,
       body: text,
@@ -405,7 +415,7 @@ export default function AllBrandsBoardPage() {
     setExpandedKey(null);
     setNoteText("");
     setBrandRows((s) => { const next = { ...s }; delete next[brandId]; return next; });
-    loadBrandRows(brandId);
+    loadBrandRows(brandId, mode);
   }
 
   // ── Inline status update ──────────────────────────────────────────────────
@@ -413,7 +423,6 @@ export default function AllBrandsBoardPage() {
   async function updateStatus(timingId: string, prevStatus: string, newStatus: string) {
     if (newStatus === prevStatus) return;
 
-    // Optimistic update
     setStatusOverrides((s) => ({ ...s, [timingId]: newStatus }));
     setEditingStatus(null);
 
@@ -423,7 +432,6 @@ export default function AllBrandsBoardPage() {
       .eq("id", timingId);
 
     if (error) {
-      // Revert
       setStatusOverrides((s) => ({ ...s, [timingId]: prevStatus }));
       if (errorToastTimer.current) clearTimeout(errorToastTimer.current);
       setErrorToast("Failed to update status. You may not have permission.");
@@ -454,10 +462,15 @@ export default function AllBrandsBoardPage() {
     return result;
   }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand, userId]);
 
+  const isInternal = mode === "internal";
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-6 space-y-5">
+    <div
+      className="p-6 space-y-5 min-h-screen transition-colors"
+      style={{ background: isInternal ? "#f1f5f9" : undefined }}
+    >
       {/* Error toast */}
       {errorToast && (
         <div
@@ -468,16 +481,66 @@ export default function AllBrandsBoardPage() {
         </div>
       )}
 
+      {/* Internal mode banner */}
+      {isInternal && (
+        <div
+          className="flex items-center justify-between rounded-lg px-4 py-2.5 text-sm"
+          style={{ background: "#e2e8f0", color: "#334155", border: "1px solid #cbd5e1" }}
+        >
+          <span className="font-medium">
+            Internal-only mode active · notes written here are team-only and NOT sent to clients
+          </span>
+          <button
+            onClick={() => setMode("client")}
+            className="ml-4 text-xs underline shrink-0"
+            style={{ color: "#475569" }}
+          >
+            Switch to client-facing
+          </button>
+        </div>
+      )}
+
       <div>
         <h1 className="text-3xl font-bold" style={{ color: "var(--foreground)" }}>
           All Brands Board
         </h1>
-        <p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>
-          Click a brand to expand — click a retailer row to add a client-facing note. Notes here appear on the client's dashboard for that retailer.
+        <p className="mt-1 text-sm" style={{ color: isInternal ? "#64748b" : "var(--muted-foreground)" }}>
+          {isInternal
+            ? "Internal-only mode · notes written here are team-only and NOT sent to clients."
+            : "Click a brand to expand — click a retailer row to add a client-facing note. Notes here appear on the client's dashboard."}
         </p>
       </div>
 
+      {/* Filter row + mode toggle */}
       <div className="flex flex-wrap items-center gap-3">
+        {/* Mode toggle */}
+        <div
+          className="flex rounded-lg overflow-hidden text-sm"
+          style={{ border: "1px solid var(--border)" }}
+        >
+          <button
+            onClick={() => setMode("client")}
+            className="px-3 py-2 font-medium transition-colors"
+            style={{
+              background: !isInternal ? "var(--foreground)" : "var(--card)",
+              color: !isInternal ? "var(--background)" : "var(--muted-foreground)",
+            }}
+          >
+            Client-facing
+          </button>
+          <button
+            onClick={() => setMode("internal")}
+            className="px-3 py-2 font-medium transition-colors"
+            style={{
+              background: isInternal ? "#334155" : "var(--card)",
+              color: isInternal ? "#f8fafc" : "var(--muted-foreground)",
+              borderLeft: "1px solid var(--border)",
+            }}
+          >
+            Internal only
+          </button>
+        </div>
+
         <input
           type="text"
           placeholder="Filter by brand name…"
@@ -486,6 +549,7 @@ export default function AllBrandsBoardPage() {
           className="w-full max-w-sm rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2"
           style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
         />
+
         {role === "admin" ? (
           reps.length > 0 && (
             <select
@@ -544,13 +608,18 @@ export default function AllBrandsBoardPage() {
               <div
                 key={brand.id}
                 className="rounded-xl overflow-hidden"
-                style={{ border: "1px solid var(--border)" }}
+                style={{ border: `1px solid ${isInternal ? "#cbd5e1" : "var(--border)"}` }}
               >
                 {/* ── Collapsed summary row ── */}
                 <button
                   type="button"
                   className="w-full flex items-center justify-between px-4 py-3 text-left"
-                  style={{ background: isOpen ? "var(--accent)" : "var(--muted)", cursor: "pointer" }}
+                  style={{
+                    background: isOpen
+                      ? (isInternal ? "#e2e8f0" : "var(--accent)")
+                      : (isInternal ? "#e8edf2" : "var(--muted)"),
+                    cursor: "pointer",
+                  }}
                   onClick={() => toggleBrand(brand.id)}
                 >
                   <div className="flex items-center gap-4 min-w-0">
@@ -585,21 +654,25 @@ export default function AllBrandsBoardPage() {
                   isFetching || rows === null ? (
                     <div
                       className="px-4 py-3 text-sm"
-                      style={{ borderTop: "1px solid var(--border)", color: "var(--muted-foreground)" }}
+                      style={{ borderTop: `1px solid ${isInternal ? "#cbd5e1" : "var(--border)"}`, color: "var(--muted-foreground)" }}
                     >
                       Loading retailers…
                     </div>
                   ) : rows.length === 0 ? (
                     <div
                       className="px-4 py-3 text-sm italic"
-                      style={{ borderTop: "1px solid var(--border)", color: "var(--muted-foreground)" }}
+                      style={{ borderTop: `1px solid ${isInternal ? "#cbd5e1" : "var(--border)"}`, color: "var(--muted-foreground)" }}
                     >
                       No retailers found.
                     </div>
                   ) : (
                     <table className="w-full text-sm">
                       <thead>
-                        <tr style={{ background: "var(--secondary)", color: "var(--muted-foreground)", borderTop: "1px solid var(--border)" }}>
+                        <tr style={{
+                          background: isInternal ? "#e2e8f0" : "var(--secondary)",
+                          color: "var(--muted-foreground)",
+                          borderTop: `1px solid ${isInternal ? "#cbd5e1" : "var(--border)"}`,
+                        }}>
                           <th className="text-left px-4 py-2 font-medium">Retailer</th>
                           <th className="text-left px-4 py-2 font-medium">Account Status</th>
                           <th className="text-left px-4 py-2 font-medium">Last Activity</th>
@@ -618,8 +691,12 @@ export default function AllBrandsBoardPage() {
                               <tr
                                 key={key}
                                 style={{
-                                  background: isNoteOpen ? "var(--accent)" : isEven ? "var(--card)" : "var(--secondary)",
-                                  borderTop: "1px solid var(--border)",
+                                  background: isNoteOpen
+                                    ? (isInternal ? "#e2e8f0" : "var(--accent)")
+                                    : isEven
+                                      ? (isInternal ? "#f8fafc" : "var(--card)")
+                                      : (isInternal ? "#f1f5f9" : "var(--secondary)"),
+                                  borderTop: `1px solid ${isInternal ? "#cbd5e1" : "var(--border)"}`,
                                   cursor: "pointer",
                                 }}
                                 onClick={() => toggleNoteEditor(brand.id, row.retailerId)}
@@ -665,12 +742,10 @@ export default function AllBrandsBoardPage() {
                                   )}
                                 </td>
 
-                                {/* Last Activity — from most recent client-visible message */}
                                 <td className="px-4 py-2.5" style={{ color: "var(--muted-foreground)" }}>
                                   {relativeTime(row.latestNoteDate)}
                                 </td>
 
-                                {/* Latest Note */}
                                 <td className="px-4 py-2.5 max-w-xs" style={{ color: row.latestNote ? "var(--foreground)" : "var(--muted-foreground)" }}>
                                   {row.latestNote ? (
                                     <span className="line-clamp-1">
@@ -689,22 +764,27 @@ export default function AllBrandsBoardPage() {
                               {isNoteOpen && (
                                 <tr
                                   key={`${key}-editor`}
-                                  style={{ background: "var(--accent)", borderTop: "1px solid var(--border)" }}
+                                  style={{
+                                    background: isInternal ? "#e2e8f0" : "var(--accent)",
+                                    borderTop: `1px solid ${isInternal ? "#cbd5e1" : "var(--border)"}`,
+                                  }}
                                 >
                                   <td colSpan={5} className="px-4 pb-4 pt-2">
                                     <div className="space-y-2">
-                                      <p className="text-xs font-medium" style={{ color: "var(--muted-foreground)" }}>
-                                        Add client-facing note for {row.banner}
+                                      <p className="text-xs font-medium" style={{ color: isInternal ? "#475569" : "var(--muted-foreground)" }}>
+                                        {isInternal
+                                          ? `Add internal-only note for ${row.banner}`
+                                          : `Add client-facing note for ${row.banner}`}
                                       </p>
                                       <textarea
                                         className="w-full rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2"
                                         style={{
-                                          border: "1px solid var(--border)",
-                                          background: "var(--card)",
+                                          border: `1px solid ${isInternal ? "#94a3b8" : "var(--border)"}`,
+                                          background: isInternal ? "#f8fafc" : "var(--card)",
                                           color: "var(--foreground)",
                                           minHeight: "72px",
                                         }}
-                                        placeholder="Write a client-facing note…"
+                                        placeholder={isInternal ? "Write an internal-only note…" : "Write a client-facing note…"}
                                         value={noteText}
                                         onChange={(e) => setNoteText(e.target.value)}
                                         onClick={(e) => e.stopPropagation()}
@@ -714,8 +794,8 @@ export default function AllBrandsBoardPage() {
                                         <button
                                           className="px-4 py-1.5 rounded-lg text-sm font-medium"
                                           style={{
-                                            background: "var(--foreground)",
-                                            color: "var(--background)",
+                                            background: isInternal ? "#334155" : "var(--foreground)",
+                                            color: isInternal ? "#f8fafc" : "var(--background)",
                                             opacity: saving || !noteText.trim() ? 0.5 : 1,
                                             cursor: saving || !noteText.trim() ? "not-allowed" : "pointer",
                                           }}
