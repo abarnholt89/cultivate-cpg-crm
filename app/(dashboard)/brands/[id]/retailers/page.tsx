@@ -68,6 +68,14 @@ type RecentMessage = {
   visibility: "client" | "internal";
 };
 
+function rowKey(
+  retailerName: string,
+  universalCategory: string,
+  reviewName: string | null
+) {
+  return `${retailerName}||${universalCategory}||${reviewName ?? ""}`;
+}
+
 function todayISO(): string {
   const d = new Date();
   const yyyy = d.getFullYear();
@@ -192,6 +200,9 @@ export default function BrandRetailersPage() {
   const [authorizedMap, setAuthorizedMap] = useState<Record<string, AuthorizedRow>>({});
   const [messagesMap, setMessagesMap] = useState<Record<string, RecentMessage[]>>({});
   const [role, setRole] = useState<Role>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [dateOverrides, setDateOverrides] = useState<Record<string, { review_date: string | null; reset_date: string | null }>>({});
+  const [pendingDateEdits, setPendingDateEdits] = useState<Record<string, { review_date?: string | null; reset_date?: string | null }>>({});
   const [status, setStatus] = useState("");
   const [query, setQuery] = useState("");
   const [selectedFilter, setSelectedFilter] = useState(filterFromUrl);
@@ -216,6 +227,7 @@ export default function BrandRetailersPage() {
       }
 
       const userId = authData?.user?.id;
+      setUserId(userId ?? null);
       let resolvedRole: Role = "client";
       if (userId) {
         const { data: profileData, error: profileError } = await supabase
@@ -310,6 +322,23 @@ export default function BrandRetailersPage() {
 
       setCalendarMap(nextCalendarMap);
 
+      const { data: overrideData } = await supabase
+        .from("brand_category_review_date_overrides")
+        .select(
+          "retailer_name,universal_category,retailer_category_review_name,review_date,reset_date"
+        )
+        .eq("brand_id", brandId);
+
+      const overrideMap: Record<string, { review_date: string | null; reset_date: string | null }> = {};
+      ((overrideData ?? []) as any[]).forEach((o) => {
+        overrideMap[rowKey(o.retailer_name, o.universal_category, o.retailer_category_review_name)] = {
+          review_date: o.review_date ?? null,
+          reset_date: o.reset_date ?? null,
+        };
+      });
+      setDateOverrides(overrideMap);
+      setPendingDateEdits({});
+
       const { data: authorizedData, error: authorizedError } = await supabase
         .from("authorized_accounts_with_brand_id")
         .select("retailer_id,authorized_item_count,authorized_upc_count")
@@ -384,6 +413,13 @@ export default function BrandRetailersPage() {
     });
   }
 
+  function updateDateEdit(key: string, field: "review_date" | "reset_date", value: string | null) {
+    setPendingDateEdits((prev) => ({
+      ...prev,
+      [key]: { ...prev[key], [field]: value },
+    }));
+  }
+
   async function save(retailerId: string) {
     const row = pipelineMap[retailerId] ?? defaultPipelineRow(retailerId);
     setStatus("Saving…");
@@ -405,6 +441,58 @@ export default function BrandRetailersPage() {
     if (error) {
       setStatus(error.message);
       return;
+    }
+
+    // Save any pending date overrides for this retailer's category review rows
+    const reviewRows = calendarMap[retailerId] ?? [];
+    const savedKeys: string[] = [];
+
+    for (const review of reviewRows) {
+      const key = rowKey(review.retailer_name, review.universal_category, review.retailer_category_review_name);
+      const pending = pendingDateEdits[key];
+      if (!pending) continue;
+
+      const existing = dateOverrides[key];
+      const patch = {
+        brand_id: brandId,
+        retailer_name: review.retailer_name,
+        retailer_id: review.retailer_id ?? null,
+        universal_category: review.universal_category,
+        retailer_category_review_name: review.retailer_category_review_name ?? "",
+        updated_by_user_id: userId,
+        updated_at: new Date().toISOString(),
+        review_date: "review_date" in pending
+          ? pending.review_date ?? null
+          : (existing?.review_date ?? review.review_date ?? null),
+        reset_date: "reset_date" in pending
+          ? pending.reset_date ?? null
+          : (existing?.reset_date ?? review.reset_date ?? null),
+      };
+
+      const { error: overrideError } = await supabase
+        .from("brand_category_review_date_overrides")
+        .upsert(patch, {
+          onConflict: "brand_id,retailer_name,universal_category,retailer_category_review_name",
+        });
+
+      if (overrideError) {
+        setStatus(overrideError.message);
+        return;
+      }
+
+      savedKeys.push(key);
+      setDateOverrides((prev) => ({
+        ...prev,
+        [key]: { review_date: patch.review_date, reset_date: patch.reset_date },
+      }));
+    }
+
+    if (savedKeys.length > 0) {
+      setPendingDateEdits((prev) => {
+        const next = { ...prev };
+        savedKeys.forEach((k) => delete next[k]);
+        return next;
+      });
     }
 
     setStatus("Saved ✅");
@@ -714,7 +802,18 @@ export default function BrandRetailersPage() {
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      {reviewRows.map((review, idx) => (
+                      {reviewRows.map((review, idx) => {
+                        const rk = rowKey(review.retailer_name, review.universal_category, review.retailer_category_review_name);
+                        const pending = pendingDateEdits[rk];
+                        const effectiveReviewDate =
+                          pending && "review_date" in pending
+                            ? (pending.review_date ?? "")
+                            : (dateOverrides[rk]?.review_date ?? review.review_date ?? "");
+                        const effectiveResetDate =
+                          pending && "reset_date" in pending
+                            ? (pending.reset_date ?? "")
+                            : (dateOverrides[rk]?.reset_date ?? review.reset_date ?? "");
+                        return (
                         <div
                           key={`${review.retailer_name}-${review.universal_category}-${review.retailer_category_review_name ?? "none"}-${idx}`}
                           className="rounded-lg p-3"
@@ -741,21 +840,42 @@ export default function BrandRetailersPage() {
                               <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>
                                 Review Date
                               </div>
-                              <div className="font-medium" style={{ color: "var(--foreground)" }}>
-                                {prettyDate(review.review_date)}
-                              </div>
+                              {isRepOrAdmin ? (
+                                <input
+                                  type="date"
+                                  className="border rounded-lg px-3 py-2 w-full text-sm"
+                                  style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                                  value={effectiveReviewDate}
+                                  onChange={(e) => updateDateEdit(rk, "review_date", e.target.value || null)}
+                                />
+                              ) : (
+                                <div className="font-medium" style={{ color: "var(--foreground)" }}>
+                                  {prettyDate(effectiveReviewDate || null)}
+                                </div>
+                              )}
                             </div>
                             <div>
                               <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>
                                 Reset Date
                               </div>
-                              <div className="font-medium" style={{ color: "var(--foreground)" }}>
-                                {prettyDate(review.reset_date)}
-                              </div>
+                              {isRepOrAdmin ? (
+                                <input
+                                  type="date"
+                                  className="border rounded-lg px-3 py-2 w-full text-sm"
+                                  style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                                  value={effectiveResetDate}
+                                  onChange={(e) => updateDateEdit(rk, "reset_date", e.target.value || null)}
+                                />
+                              ) : (
+                                <div className="font-medium" style={{ color: "var(--foreground)" }}>
+                                  {prettyDate(effectiveResetDate || null)}
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
