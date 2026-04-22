@@ -24,17 +24,6 @@ type RepTaskRow = {
   created_by_name: string | null;
 };
 
-type AttentionRow = {
-  brand_retailer_timing_id: string;
-  brand_id: string;
-  retailer_id: string;
-  retailer_name: string;
-  next_follow_up_at: string | null;
-  last_activity_at: string | null;
-  last_status_change_at: string | null;
-  attention_reasons: string[] | null;
-};
-
 type AgingRow = {
   brand_retailer_timing_id: string;
   brand_id: string;
@@ -144,7 +133,7 @@ function statusLabel(status: TimingRow["account_status"] | string) {
     case "working_to_secure_anchor_account":
       return "Distributor Required";
     case "waiting_for_retailer_to_publish_review":
-      return "Awaiting Retailer Decision";
+      return "Waiting for Retailer to Publish Next Category Review";
     case "upcoming_review":
       return "Upcoming Review";
     case "not_a_target_account":
@@ -155,21 +144,6 @@ function statusLabel(status: TimingRow["account_status"] | string) {
       return "Retailer Declined";
     default:
       return status;
-  }
-}
-
-function attentionReasonLabel(reason: string) {
-  switch (reason) {
-    case "follow_up_overdue":
-      return "Follow-up overdue";
-    case "no_activity_logged":
-      return "No activity logged";
-    case "inactive_1_month":
-      return "Inactive 1 month";
-    case "stage_stalled":
-      return "Stage stalled";
-    default:
-      return reason;
   }
 }
 
@@ -193,7 +167,6 @@ export default function RepInboxPage() {
   const [role, setRole] = useState<Role>(null);
   const [authorized, setAuthorized] = useState(false);
   const [tasks, setTasks] = useState<RepTaskRow[]>([]);
-  const [attention, setAttention] = useState<AttentionRow[]>([]);
   const [agingAccounts, setAgingAccounts] = useState<AgingRow[]>([]);
   const [upcoming, setUpcoming] = useState<UpcomingItem[]>([]);
   const [clientMessages, setClientMessages] = useState<ClientMessageInboxRow[]>([]);
@@ -320,7 +293,6 @@ const clientMessagesPromise =
       const [
         followUpCountResult,
         tasksResult,
-        attentionResult,
         timingResult,
         clientMessagesResult,
         agingResult,
@@ -329,11 +301,6 @@ const clientMessagesPromise =
         followUpCountPromise,
         supabase.rpc("get_my_rep_tasks", {
           p_status: "open",
-          p_limit: 50,
-          p_offset: 0,
-        }),
-        supabase.rpc("get_rep_attention_queue", {
-          p_brand_id: null,
           p_limit: 50,
           p_offset: 0,
         }),
@@ -350,7 +317,6 @@ const clientMessagesPromise =
       ]);
 
       const taskRows = (tasksResult.data as RepTaskRow[]) ?? [];
-      const attentionRows = (attentionResult.data as AttentionRow[]) ?? [];
       const clientMessageRows =
         (clientMessagesResult.data as ClientMessageInboxRow[]) ?? [];
       const agingRows = (agingResult.data as AgingRow[]) ?? [];
@@ -361,12 +327,6 @@ const clientMessagesPromise =
         setStatus(tasksResult.error.message);
       } else {
         setTasks(taskRows);
-      }
-
-      if (attentionResult.error) {
-        setStatus((prev) => prev || attentionResult.error.message);
-      } else {
-        setAttention(attentionRows);
       }
 
 if (clientMessagesResult.error) {
@@ -423,7 +383,6 @@ if (clientMessagesResult.error) {
           ...timingRows.map((r) => r.brand_id),
           ...clientMessageRows.map((m) => m.brand_id),
           ...taskRows.map((t) => t.brand_id),
-          ...attentionRows.map((a) => a.brand_id),
           ...agingRows.map((a) => a.brand_id),
         ]),
       ];
@@ -433,7 +392,6 @@ if (clientMessagesResult.error) {
           ...timingRows.map((r) => r.retailer_id),
           ...clientMessageRows.map((m) => m.retailer_id),
           ...taskRows.map((t) => t.retailer_id),
-          ...attentionRows.map((a) => a.retailer_id),
           ...agingRows.map((a) => a.retailer_id),
         ]),
       ];
@@ -615,9 +573,8 @@ if (clientMessagesResult.error) {
       nudges: tasks.length,
       upcoming: upcoming.length,
       aging: agingAccounts.length,
-      attention: attention.length,
     }),
-    [clientMessages, tasks, upcoming, agingAccounts, attention]
+    [clientMessages, tasks, upcoming, agingAccounts]
   );
 
   if (loading) {
@@ -656,12 +613,11 @@ if (clientMessagesResult.error) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <SummaryCard label="Client Messages" value={counts.messages} highlight />
         <SummaryCard label="MacGruber Reminders" value={counts.nudges} />
         <SummaryCard label="Upcoming 30 Days" value={counts.upcoming} />
         <SummaryCard label="Aging Accounts" value={counts.aging} />
-        <SummaryCard label="Needs Attention" value={counts.attention} />
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">

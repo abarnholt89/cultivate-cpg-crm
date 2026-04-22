@@ -10,7 +10,7 @@ const STATUS_MAP: Record<string, Config> = {
   open_review:                            { label: "In Progress",                 colors: "bg-amber-100 text-amber-800 border-amber-200" },
   under_review:                           { label: "Under Review",                colors: "bg-amber-100 text-amber-800 border-amber-200" },
   upcoming_review:                        { label: "Upcoming Review",             colors: "bg-amber-100 text-amber-800 border-amber-200" },
-  waiting_for_retailer_to_publish_review: { label: "Awaiting Retailer Decision",  colors: "bg-blue-100 text-blue-800 border-blue-200" },
+  waiting_for_retailer_to_publish_review: { label: "Waiting for Retailer to Publish Next Category Review", colors: "bg-blue-100 text-blue-800 border-blue-200" },
   retailer_declined:                      { label: "Retailer Declined",           colors: "bg-red-100 text-red-800 border-red-200" },
   not_a_target_account:                   { label: "Not a Target",               colors: "bg-gray-100 text-gray-600 border-gray-200" },
   cultivate_does_not_rep:                 { label: "Not Managed by Cultivate",    colors: "bg-gray-100 text-gray-600 border-gray-200" },

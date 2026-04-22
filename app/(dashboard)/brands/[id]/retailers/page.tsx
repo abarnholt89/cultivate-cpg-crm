@@ -163,7 +163,7 @@ function accountStatusLabel(status: AccountStatus | undefined) {
     case "upcoming_review":
       return "Upcoming Review";
     case "waiting_for_retailer_to_publish_review":
-      return "Awaiting Retailer Decision";
+      return "Waiting for Retailer to Publish Next Category Review";
     case "working_to_secure_anchor_account":
       return "Distributor Required";
     case "not_a_target_account":
@@ -237,7 +237,7 @@ const STATUS_FILTERS: Array<{ value: string; label: string }> = [
   { value: "open_review", label: "In Progress" },
   { value: "under_review", label: "Under Review" },
   { value: "upcoming_review", label: "Upcoming Review" },
-  { value: "waiting_for_retailer_to_publish_review", label: "Awaiting Retailer Decision" },
+  { value: "waiting_for_retailer_to_publish_review", label: "Waiting for Retailer to Publish Next Category Review" },
   { value: "working_to_secure_anchor_account", label: "Distributor Required" },
   { value: "not_a_target_account", label: "Not a Target" },
   { value: "cultivate_does_not_rep", label: "Not Managed by Cultivate" },
@@ -1054,7 +1054,7 @@ export default function BrandRetailersPage() {
                       <option value="open_review">In Progress</option>
                       <option value="under_review">Under Review</option>
                       <option value="working_to_secure_anchor_account">Distributor Required</option>
-                      <option value="waiting_for_retailer_to_publish_review">Awaiting Retailer Decision</option>
+                      <option value="waiting_for_retailer_to_publish_review">Waiting for Retailer to Publish Next Category Review</option>
                       <option value="upcoming_review">Upcoming Review</option>
                       <option value="cultivate_does_not_rep">Not Managed by Cultivate</option>
                       <option value="not_a_target_account">Not a Target</option>
