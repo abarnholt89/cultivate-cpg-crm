@@ -70,6 +70,17 @@ type MessageRow = {
   visibility: "client" | "internal";
 };
 
+type AttachmentRow = {
+  id: string;
+  retailer_id: string;
+  message_id: string | null;
+  bucket_name: string;
+  storage_path: string;
+  file_name: string;
+  mime_type: string | null;
+  file_size: number | null;
+};
+
 function rowKey(
   retailerName: string,
   universalCategory: string,
@@ -152,6 +163,36 @@ function reviewTypeLabel(mode: "scheduled" | "open") {
   return mode === "open" ? "Open Review" : "Scheduled Category Review";
 }
 
+function isImageMime(mime: string | null): boolean {
+  return !!mime && mime.toLowerCase().startsWith("image/");
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`;
+  return `${Math.round(bytes / 1024)} KB`;
+}
+
+function statusLeftBorderColor(status: string | undefined): string {
+  switch (status) {
+    case "active_account":
+      return "#14b8a6"; // teal
+    case "upcoming_review":
+    case "open_review":
+      return "#f59e0b"; // amber
+    case "under_review":
+    case "waiting_for_retailer_to_publish_review":
+    case "working_to_secure_anchor_account":
+      return "#3b82f6"; // blue
+    case "retailer_declined":
+      return "#f43f5e"; // rose
+    case "not_a_target_account":
+    case "cultivate_does_not_rep":
+      return "#94a3b8"; // slate
+    default:
+      return "#e2e8f0"; // light gray
+  }
+}
+
 function Badge({
   label,
   tone,
@@ -217,6 +258,9 @@ export default function BrandRetailersPage() {
   const [cardCompose, setCardCompose] = useState<Record<string, string>>({});
   const [cardFile, setCardFile] = useState<Record<string, File | null>>({});
   const [cardSending, setCardSending] = useState<Record<string, boolean>>({});
+  // Attachments: retailer_id → message_id → AttachmentRow[]
+  const [cardAttachments, setCardAttachments] = useState<Record<string, Record<string, AttachmentRow[]>>>({});
+  const [signedImageUrls, setSignedImageUrls] = useState<Record<string, string>>({});
 
   const isRepOrAdmin = role === "admin" || role === "rep";
 
@@ -395,10 +439,47 @@ export default function BrandRetailersPage() {
         nextInlineMessages[m.retailer_id][stream].push(m);
       });
       setInlineMessages(nextInlineMessages);
+
+      // Load all attachments for this brand in a single query
+      const { data: attachmentsData } = await supabase
+        .from("brand_retailer_attachments")
+        .select("id,retailer_id,message_id,bucket_name,storage_path,file_name,mime_type,file_size")
+        .eq("brand_id", brandId);
+
+      const nextCardAttachments: Record<string, Record<string, AttachmentRow[]>> = {};
+      ((attachmentsData ?? []) as AttachmentRow[]).forEach((a) => {
+        if (!a.message_id) return;
+        if (!nextCardAttachments[a.retailer_id]) nextCardAttachments[a.retailer_id] = {};
+        if (!nextCardAttachments[a.retailer_id][a.message_id]) nextCardAttachments[a.retailer_id][a.message_id] = [];
+        nextCardAttachments[a.retailer_id][a.message_id].push(a);
+      });
+      setCardAttachments(nextCardAttachments);
     }
 
     load();
   }, [brandId]);
+
+  // Generate signed URLs for all image attachments whenever cardAttachments loads
+  useEffect(() => {
+    const allAttachments = Object.values(cardAttachments).flatMap((byMsg) =>
+      Object.values(byMsg).flat()
+    );
+    const imageAttachments = allAttachments.filter((a) => isImageMime(a.mime_type));
+    if (!imageAttachments.length) return;
+
+    Promise.all(
+      imageAttachments.map(async (a) => {
+        const { data } = await supabase.storage
+          .from(a.bucket_name)
+          .createSignedUrl(a.storage_path, 3600);
+        return { id: a.id, url: data?.signedUrl ?? null };
+      })
+    ).then((results) => {
+      const next: Record<string, string> = {};
+      results.forEach(({ id, url }) => { if (url) next[id] = url; });
+      setSignedImageUrls((prev) => ({ ...prev, ...next }));
+    });
+  }, [cardAttachments]);
 
   const repOptions = useMemo(() => {
     return Array.from(
@@ -508,6 +589,17 @@ export default function BrandRetailersPage() {
     }
 
     setStatus("Saved ✅");
+  }
+
+  async function openAttachment(storagePath: string) {
+    const { data, error } = await supabase.storage
+      .from("brand-message-attachments")
+      .createSignedUrl(storagePath, 60);
+    if (error || !data?.signedUrl) {
+      setStatus(error?.message || "Unable to open attachment.");
+      return;
+    }
+    window.open(data.signedUrl, "_blank");
   }
 
   async function getClientEmails(): Promise<string[]> {
@@ -780,7 +872,14 @@ export default function BrandRetailersPage() {
               <div
                 key={r.id}
                 className="rounded-xl p-5 space-y-4"
-                style={{ border: "1px solid var(--border)", background: "var(--card)" }}
+                style={{
+                  border: "1px solid var(--border)",
+                  background: "var(--card)",
+                  ...(isRepOrAdmin && {
+                    borderLeft: `4px solid ${statusLeftBorderColor(row.account_status)}`,
+                    boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+                  }),
+                }}
               >
                 {/* Header */}
                 <div className="flex items-start justify-between gap-4">
@@ -964,20 +1063,20 @@ export default function BrandRetailersPage() {
                 >
                   <div className="text-sm font-medium" style={{ color: "var(--foreground)" }}>Messages</div>
 
-                  {/* Tab bar */}
-                  <div className="flex gap-2">
-                    <button
-                      className="px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors"
-                      style={
-                        activeTab === "client"
-                          ? { background: "var(--foreground)", color: "var(--background)", borderColor: "var(--foreground)" }
-                          : { background: "transparent", color: "var(--muted-foreground)", borderColor: "var(--border)" }
-                      }
-                      onClick={() => setCardTab((prev) => ({ ...prev, [r.id]: "client" }))}
-                    >
-                      Client-visible ({clientMsgs.length})
-                    </button>
-                    {isRepOrAdmin && (
+                  {/* Tab bar — team only; clients see client-visible stream with no tab chrome */}
+                  {isRepOrAdmin && (
+                    <div className="flex gap-2">
+                      <button
+                        className="px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors"
+                        style={
+                          activeTab === "client"
+                            ? { background: "var(--foreground)", color: "var(--background)", borderColor: "var(--foreground)" }
+                            : { background: "transparent", color: "var(--muted-foreground)", borderColor: "var(--border)" }
+                        }
+                        onClick={() => setCardTab((prev) => ({ ...prev, [r.id]: "client" }))}
+                      >
+                        Client-visible ({clientMsgs.length})
+                      </button>
                       <button
                         className="px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors"
                         style={
@@ -989,8 +1088,8 @@ export default function BrandRetailersPage() {
                       >
                         Internal-only ({internalMsgs.length})
                       </button>
-                    )}
-                  </div>
+                    </div>
+                  )}
 
                   {/* Message list */}
                   <div className="space-y-2">
@@ -1000,23 +1099,79 @@ export default function BrandRetailersPage() {
                       </div>
                     ) : (
                       <>
-                        {visibleMsgs.map((m) => (
-                          <div
-                            key={m.id}
-                            className="rounded-md px-3 py-2 text-sm space-y-0.5"
-                            style={{ background: "var(--muted)" }}
-                          >
-                            <div className="flex items-baseline justify-between gap-2">
-                              <span className="text-xs font-medium" style={{ color: "var(--foreground)" }}>
-                                {m.sender_name ?? "Cultivate"}
-                              </span>
-                              <span className="text-xs shrink-0" style={{ color: "var(--muted-foreground)" }}>
-                                {timeAgo(m.created_at)}
-                              </span>
+                        {visibleMsgs.map((m) => {
+                          const attachments = cardAttachments[r.id]?.[m.id] ?? [];
+                          const hideBody = m.body === "[Attachment]" && attachments.length > 0;
+                          return (
+                            <div
+                              key={m.id}
+                              className="rounded-md px-3 py-2 text-sm space-y-1.5"
+                              style={{ background: "var(--muted)" }}
+                            >
+                              <div className="flex items-baseline justify-between gap-2">
+                                <span className="text-xs font-medium" style={{ color: "var(--foreground)" }}>
+                                  {m.sender_name ?? "Cultivate"}
+                                </span>
+                                <span className="text-xs shrink-0" style={{ color: "var(--muted-foreground)" }}>
+                                  {timeAgo(m.created_at)}
+                                </span>
+                              </div>
+                              {!hideBody && (
+                                <div style={{ color: "var(--foreground)" }}>{m.body}</div>
+                              )}
+                              {attachments.length > 0 && (
+                                <div className="space-y-1.5 pt-0.5">
+                                  {attachments.map((a) => {
+                                    if (isImageMime(a.mime_type)) {
+                                      const url = signedImageUrls[a.id];
+                                      return url ? (
+                                        <img
+                                          key={a.id}
+                                          src={url}
+                                          alt={a.file_name}
+                                          title="Click to open full size"
+                                          onClick={() => openAttachment(a.storage_path)}
+                                          style={{
+                                            maxWidth: 200,
+                                            maxHeight: 160,
+                                            borderRadius: 6,
+                                            objectFit: "cover",
+                                            display: "block",
+                                            cursor: "pointer",
+                                          }}
+                                          onError={(e) => {
+                                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                                            e.currentTarget.insertAdjacentText("afterend", "File unavailable");
+                                          }}
+                                        />
+                                      ) : (
+                                        <div key={a.id} className="text-xs italic" style={{ color: "var(--muted-foreground)" }}>
+                                          Loading image…
+                                        </div>
+                                      );
+                                    }
+                                    return (
+                                      <button
+                                        key={a.id}
+                                        type="button"
+                                        onClick={() => openAttachment(a.storage_path)}
+                                        className="flex items-center gap-1.5 text-xs rounded-md px-2 py-1.5 hover:opacity-80 transition-opacity"
+                                        style={{
+                                          background: "var(--secondary)",
+                                          border: "1px solid var(--border)",
+                                          color: "var(--foreground)",
+                                        }}
+                                      >
+                                        📄 {a.file_name}
+                                        {a.file_size ? <span style={{ color: "var(--muted-foreground)" }}>· {formatFileSize(a.file_size)}</span> : null}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
                             </div>
-                            <div style={{ color: "var(--foreground)" }}>{m.body}</div>
-                          </div>
-                        ))}
+                          );
+                        })}
                         {currentMsgs.length > 1 && (
                           <button
                             className="text-xs pt-0.5"

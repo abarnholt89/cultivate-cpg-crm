@@ -76,6 +76,21 @@ const STATUS_OPTIONS = [
   { value: "retailer_declined", label: "Retailer Declined" },
 ];
 
+function statusLeftBorderColor(status: string | undefined): string {
+  switch (status) {
+    case "active_account":       return "#14b8a6"; // teal
+    case "upcoming_review":
+    case "open_review":          return "#f59e0b"; // amber
+    case "under_review":
+    case "waiting_for_retailer_to_publish_review":
+    case "working_to_secure_anchor_account": return "#3b82f6"; // blue
+    case "retailer_declined":    return "#f43f5e"; // rose
+    case "not_a_target_account":
+    case "cultivate_does_not_rep": return "#94a3b8"; // slate
+    default:                     return "#e2e8f0"; // light gray
+  }
+}
+
 function relativeTime(ts: string | null) {
   if (!ts) return "—";
   const mins = Math.floor((Date.now() - new Date(ts).getTime()) / 60000);
@@ -131,9 +146,9 @@ export default function AllBrandsBoardPage() {
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<Record<string, string>>({});
 
-  // Inline status editing
-  const [editingStatus, setEditingStatus] = useState<string | null>(null);
+  // Inline status editing — no intermediate edit-mode; select is always visible
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
+  const [statusSaving, setStatusSaving] = useState<Record<string, boolean>>({});
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const errorToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -424,12 +439,14 @@ export default function AllBrandsBoardPage() {
     if (newStatus === prevStatus) return;
 
     setStatusOverrides((s) => ({ ...s, [timingId]: newStatus }));
-    setEditingStatus(null);
+    setStatusSaving((s) => ({ ...s, [timingId]: true }));
 
     const { error } = await supabase
       .from("brand_retailer_timing")
       .update({ account_status: newStatus })
       .eq("id", timingId);
+
+    setStatusSaving((s) => ({ ...s, [timingId]: false }));
 
     if (error) {
       setStatusOverrides((s) => ({ ...s, [timingId]: prevStatus }));
@@ -666,7 +683,7 @@ export default function AllBrandsBoardPage() {
                       No retailers found.
                     </div>
                   ) : (
-                    <table className="w-full text-sm">
+                    <table className="w-full text-sm" style={{ boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
                       <thead>
                         <tr style={{
                           background: isInternal ? "#e2e8f0" : "var(--secondary)",
@@ -701,7 +718,13 @@ export default function AllBrandsBoardPage() {
                                 }}
                                 onClick={() => toggleNoteEditor(brand.id, row.retailerId)}
                               >
-                                <td className="px-4 py-2.5 font-medium" style={{ color: "var(--foreground)" }}>
+                                <td
+                                  className="px-4 py-2.5 font-medium"
+                                  style={{
+                                    color: "var(--foreground)",
+                                    borderLeft: `4px solid ${statusLeftBorderColor(currentStatus)}`,
+                                  }}
+                                >
                                   <Link
                                     href={`/brands/${brand.id}/retailers/${row.retailerId}`}
                                     className="underline"
@@ -712,34 +735,28 @@ export default function AllBrandsBoardPage() {
                                   </Link>
                                 </td>
 
-                                {/* Inline status edit */}
+                                {/* Inline status edit — always-visible select, no intermediate edit mode */}
                                 <td className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
-                                  {editingStatus === row.timingId ? (
-                                    <select
-                                      value={currentStatus}
-                                      autoFocus
-                                      onChange={(e) => updateStatus(row.timingId, currentStatus, e.target.value)}
-                                      onBlur={() => setEditingStatus(null)}
-                                      className="text-xs rounded px-2 py-1 focus:outline-none focus:ring-1"
-                                      style={{
-                                        border: "1px solid var(--border)",
-                                        background: "var(--card)",
-                                        color: "var(--foreground)",
-                                      }}
-                                    >
-                                      {STATUS_OPTIONS.map((opt) => (
-                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                      ))}
-                                    </select>
-                                  ) : (
-                                    <button
-                                      title="Click to change status"
-                                      onClick={() => setEditingStatus(row.timingId)}
-                                      className="cursor-pointer"
-                                    >
-                                      <StatusBadge status={currentStatus} />
-                                    </button>
-                                  )}
+                                  <select
+                                    value={currentStatus}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      updateStatus(row.timingId, currentStatus, e.target.value);
+                                    }}
+                                    disabled={statusSaving[row.timingId]}
+                                    className="text-xs rounded px-2 py-1 focus:outline-none focus:ring-1"
+                                    style={{
+                                      border: "1px solid var(--border)",
+                                      background: "var(--card)",
+                                      color: "var(--foreground)",
+                                      maxWidth: "180px",
+                                      opacity: statusSaving[row.timingId] ? 0.6 : 1,
+                                    }}
+                                  >
+                                    {STATUS_OPTIONS.map((opt) => (
+                                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                    ))}
+                                  </select>
                                 </td>
 
                                 <td className="px-4 py-2.5" style={{ color: "var(--muted-foreground)" }}>
