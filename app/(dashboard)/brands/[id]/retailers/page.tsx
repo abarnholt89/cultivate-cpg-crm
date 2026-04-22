@@ -4,9 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
+import { logActivity } from "@/lib/logActivity";
 import StatusBadge from "@/components/StatusBadge";
 
-type Brand = { id: string; name: string };
+type Brand = { id: string; name: string; message_notifications_enabled: boolean };
 
 type Retailer = {
   id: string;
@@ -59,9 +60,10 @@ type AuthorizedRow = {
   authorized_upc_count: number;
 };
 
-type RecentMessage = {
+type MessageRow = {
   id: string;
   retailer_id: string;
+  brand_id: string;
   sender_name: string | null;
   body: string;
   created_at: string;
@@ -198,15 +200,23 @@ export default function BrandRetailersPage() {
   const [pipelineMap, setPipelineMap] = useState<Record<string, PipelineRow>>({});
   const [calendarMap, setCalendarMap] = useState<Record<string, CategoryReviewRow[]>>({});
   const [authorizedMap, setAuthorizedMap] = useState<Record<string, AuthorizedRow>>({});
-  const [messagesMap, setMessagesMap] = useState<Record<string, RecentMessage[]>>({});
+  const [inlineMessages, setInlineMessages] = useState<Record<string, { client: MessageRow[]; internal: MessageRow[] }>>({});
   const [role, setRole] = useState<Role>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [userFullName, setUserFullName] = useState<string>("");
   const [dateOverrides, setDateOverrides] = useState<Record<string, { review_date: string | null; reset_date: string | null }>>({});
   const [pendingDateEdits, setPendingDateEdits] = useState<Record<string, { review_date?: string | null; reset_date?: string | null }>>({});
   const [status, setStatus] = useState("");
   const [query, setQuery] = useState("");
   const [selectedFilter, setSelectedFilter] = useState(filterFromUrl);
   const [selectedRep, setSelectedRep] = useState("all");
+
+  // Per-retailer card state
+  const [cardTab, setCardTab] = useState<Record<string, "client" | "internal">>({});
+  const [cardExpanded, setCardExpanded] = useState<Record<string, { client: boolean; internal: boolean }>>({});
+  const [cardCompose, setCardCompose] = useState<Record<string, string>>({});
+  const [cardFile, setCardFile] = useState<Record<string, File | null>>({});
+  const [cardSending, setCardSending] = useState<Record<string, boolean>>({});
 
   const isRepOrAdmin = role === "admin" || role === "rep";
 
@@ -232,7 +242,7 @@ export default function BrandRetailersPage() {
       if (userId) {
         const { data: profileData, error: profileError } = await supabase
           .from("profiles")
-          .select("role")
+          .select("role,full_name")
           .eq("id", userId)
           .maybeSingle();
 
@@ -243,11 +253,12 @@ export default function BrandRetailersPage() {
 
         resolvedRole = (profileData?.role as Role) ?? "client";
         setRole(resolvedRole);
+        setUserFullName(profileData?.full_name ?? "");
       }
 
       const { data: brandData, error: brandError } = await supabase
         .from("brands")
-        .select("id,name")
+        .select("id,name,message_notifications_enabled")
         .eq("id", brandId)
         .single();
 
@@ -359,11 +370,11 @@ export default function BrandRetailersPage() {
 
       setAuthorizedMap(nextAuthorizedMap);
 
-      // Load recent messages per retailer — admin/rep see both visibility types
+      // Load all messages per retailer for inline display
       const isAdminOrRep = resolvedRole === "admin" || resolvedRole === "rep";
       let msgsQuery = supabase
         .from("brand_retailer_messages")
-        .select("id,retailer_id,sender_name,body,created_at,visibility")
+        .select("id,brand_id,retailer_id,sender_name,body,created_at,visibility")
         .eq("brand_id", brandId)
         .order("created_at", { ascending: false });
 
@@ -375,14 +386,15 @@ export default function BrandRetailersPage() {
 
       const { data: messagesData } = await msgsQuery;
 
-      const nextMessagesMap: Record<string, RecentMessage[]> = {};
-      ((messagesData ?? []) as RecentMessage[]).forEach((m) => {
-        if (!nextMessagesMap[m.retailer_id]) nextMessagesMap[m.retailer_id] = [];
-        if (nextMessagesMap[m.retailer_id].length < 4) {
-          nextMessagesMap[m.retailer_id].push(m);
+      const nextInlineMessages: Record<string, { client: MessageRow[]; internal: MessageRow[] }> = {};
+      ((messagesData ?? []) as MessageRow[]).forEach((m) => {
+        if (!nextInlineMessages[m.retailer_id]) {
+          nextInlineMessages[m.retailer_id] = { client: [], internal: [] };
         }
+        const stream = m.visibility === "internal" ? "internal" : "client";
+        nextInlineMessages[m.retailer_id][stream].push(m);
       });
-      setMessagesMap(nextMessagesMap);
+      setInlineMessages(nextInlineMessages);
     }
 
     load();
@@ -496,6 +508,116 @@ export default function BrandRetailersPage() {
     }
 
     setStatus("Saved ✅");
+  }
+
+  async function getClientEmails(): Promise<string[]> {
+    if (!brandId) return [];
+    const { data, error } = await supabase.rpc("get_brand_client_emails", { p_brand_id: brandId });
+    if (error) return [];
+    return ((data as Array<{ email: string }>) ?? []).map((r) => r.email).filter(Boolean);
+  }
+
+  async function uploadCardFile(retailerId: string, visibility: "client" | "internal", messageId: string, file: File) {
+    const fileExt = file.name.split(".").pop() || "file";
+    const filePath = `${brandId}/${retailerId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${fileExt}`;
+    const { error: storageError } = await supabase.storage
+      .from("brand-message-attachments")
+      .upload(filePath, file);
+    if (storageError) { console.error("Upload failed:", storageError.message); return; }
+    await supabase.from("brand_retailer_attachments").insert({
+      brand_id: brandId,
+      retailer_id: retailerId,
+      message_id: messageId,
+      visibility,
+      bucket_name: "brand-message-attachments",
+      storage_path: filePath,
+      file_name: file.name,
+      mime_type: file.type || null,
+      file_size: file.size,
+      uploaded_by_user_id: userId,
+    });
+  }
+
+  async function sendMessage(retailerId: string) {
+    const activeTab: "client" | "internal" = cardTab[retailerId] ?? "client";
+    const text = (cardCompose[retailerId] ?? "").trim();
+    const file = cardFile[retailerId] ?? null;
+    if (!text && !file) return;
+
+    setCardSending((prev) => ({ ...prev, [retailerId]: true }));
+
+    const senderName = userFullName || "Cultivate";
+    const { data: insertedMsg, error: msgError } = await supabase
+      .from("brand_retailer_messages")
+      .insert({
+        brand_id: brandId,
+        retailer_id: retailerId,
+        visibility: activeTab,
+        sender_id: userId,
+        sender_name: senderName,
+        body: text || "[Attachment]",
+      })
+      .select("id,brand_id,retailer_id,sender_name,body,created_at,visibility")
+      .single();
+
+    if (msgError || !insertedMsg) {
+      setStatus(msgError?.message || "Unable to send message.");
+      setCardSending((prev) => ({ ...prev, [retailerId]: false }));
+      return;
+    }
+
+    // Optimistic update
+    const newMsg: MessageRow = insertedMsg as MessageRow;
+    setInlineMessages((prev) => {
+      const current = prev[retailerId] ?? { client: [], internal: [] };
+      return {
+        ...prev,
+        [retailerId]: {
+          ...current,
+          [activeTab]: [newMsg, ...current[activeTab]],
+        },
+      };
+    });
+
+    setCardCompose((prev) => ({ ...prev, [retailerId]: "" }));
+    setCardFile((prev) => ({ ...prev, [retailerId]: null }));
+
+    if (file) {
+      await uploadCardFile(retailerId, activeTab, insertedMsg.id, file);
+    }
+
+    try {
+      await logActivity({ userId, brandId, retailerId, type: "note", description: activeTab === "client" ? "Client message" : "Internal note" });
+    } catch { /* non-fatal */ }
+
+    if (isRepOrAdmin && activeTab === "client" && brand?.message_notifications_enabled) {
+      try {
+        const r = retailers.find((ret) => ret.id === retailerId);
+        const retailerName = r?.banner?.trim() ? r.banner : r?.name ?? "Retailer";
+        const recipients = await getClientEmails();
+        if (recipients.length > 0) {
+          await fetch("/api/send-client-email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              brand_name: brand!.name,
+              retailer_name: retailerName,
+              message_body: text || "New attachment added.",
+              recipients,
+              actor_name: senderName,
+              event_type: "message",
+              brand_id: brandId,
+              retailer_id: retailerId,
+            }),
+          });
+        }
+      } catch (emailErr) {
+        console.error("Email notification failed", emailErr);
+      }
+    }
+
+    setCardSending((prev) => ({ ...prev, [retailerId]: false }));
+    setStatus("Sent ✅");
   }
 
   function authorizedSummary(authorized?: AuthorizedRow) {
@@ -647,9 +769,12 @@ export default function BrandRetailersPage() {
             const reviewRows = calendarMap[r.id] ?? [];
             const authorized = authorizedMap[r.id];
             const hasLegacyNotes = !!row.notes?.trim();
-            const recentMsgs = messagesMap[r.id] ?? [];
-            const hasMoreMessages = recentMsgs.length === 4;
-            const displayMsgs = recentMsgs.slice(0, 3).reverse();
+            const activeTab: "client" | "internal" = cardTab[r.id] ?? "client";
+            const clientMsgs = inlineMessages[r.id]?.client ?? [];
+            const internalMsgs = inlineMessages[r.id]?.internal ?? [];
+            const currentMsgs = activeTab === "client" ? clientMsgs : internalMsgs;
+            const isExpanded = cardExpanded[r.id]?.[activeTab] ?? false;
+            const visibleMsgs = isExpanded ? currentMsgs : currentMsgs.slice(0, 1);
 
             return (
               <div
@@ -684,13 +809,17 @@ export default function BrandRetailersPage() {
                         tone="good"
                       />
                     ) : null}
-                    <Link
-                      className="text-xs underline"
+                    <a
+                      className="text-xs underline cursor-pointer"
                       style={{ color: "var(--muted-foreground)" }}
-                      href={`/brands/${brandId}/retailers/${r.id}`}
+                      href={`#messages-${r.id}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        document.getElementById(`messages-${r.id}`)?.scrollIntoView({ behavior: "smooth" });
+                      }}
                     >
                       Open →
-                    </Link>
+                    </a>
                   </div>
                 </div>
 
@@ -706,59 +835,6 @@ export default function BrandRetailersPage() {
                     <div className="font-medium" style={{ color: "var(--foreground)" }}>{authorizedSummary(authorized)}</div>
                   </div>
                 </div>
-
-                {/* Recent messages — omit entirely if none */}
-                {displayMsgs.length > 0 && (
-                  <div className="space-y-1">
-                    {displayMsgs.map((m) => (
-                      <div
-                        key={m.id}
-                        className="flex items-baseline gap-2 rounded-md px-2 py-1.5 text-sm"
-                        style={{ background: "var(--muted)" }}
-                      >
-                        <span
-                          className="shrink-0 text-xs font-medium"
-                          style={{ color: "var(--muted-foreground)" }}
-                        >
-                          {m.sender_name ?? "Cultivate"}
-                        </span>
-                        {m.visibility === "internal" && (
-                          <span
-                            className="shrink-0 text-xs rounded px-1"
-                            style={{
-                              background: "var(--accent)",
-                              color: "var(--muted-foreground)",
-                              fontSize: "0.65rem",
-                            }}
-                          >
-                            internal
-                          </span>
-                        )}
-                        <span
-                          className="min-w-0 flex-1 truncate"
-                          style={{ color: "var(--foreground)" }}
-                        >
-                          {m.body}
-                        </span>
-                        <span
-                          className="shrink-0 text-xs"
-                          style={{ color: "var(--muted-foreground)" }}
-                        >
-                          {timeAgo(m.created_at)}
-                        </span>
-                      </div>
-                    ))}
-                    {hasMoreMessages && (
-                      <Link
-                        href={`/brands/${brandId}/retailers/${r.id}`}
-                        className="block text-xs pt-0.5 pl-2"
-                        style={{ color: "var(--muted-foreground)" }}
-                      >
-                        View all →
-                      </Link>
-                    )}
-                  </div>
-                )}
 
                 {/* Account status dropdown (rep/admin only) */}
                 {isRepOrAdmin && (
@@ -878,6 +954,153 @@ export default function BrandRetailersPage() {
                       })}
                     </div>
                   )}
+                </div>
+
+                {/* ── Inline Messages ──────────────────────────────── */}
+                <div
+                  id={`messages-${r.id}`}
+                  className="rounded-lg p-3 space-y-3"
+                  style={{ border: "1px solid var(--border)" }}
+                >
+                  <div className="text-sm font-medium" style={{ color: "var(--foreground)" }}>Messages</div>
+
+                  {/* Tab bar */}
+                  <div className="flex gap-2">
+                    <button
+                      className="px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors"
+                      style={
+                        activeTab === "client"
+                          ? { background: "var(--foreground)", color: "var(--background)", borderColor: "var(--foreground)" }
+                          : { background: "transparent", color: "var(--muted-foreground)", borderColor: "var(--border)" }
+                      }
+                      onClick={() => setCardTab((prev) => ({ ...prev, [r.id]: "client" }))}
+                    >
+                      Client-visible ({clientMsgs.length})
+                    </button>
+                    {isRepOrAdmin && (
+                      <button
+                        className="px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors"
+                        style={
+                          activeTab === "internal"
+                            ? { background: "var(--foreground)", color: "var(--background)", borderColor: "var(--foreground)" }
+                            : { background: "transparent", color: "var(--muted-foreground)", borderColor: "var(--border)" }
+                        }
+                        onClick={() => setCardTab((prev) => ({ ...prev, [r.id]: "internal" }))}
+                      >
+                        Internal-only ({internalMsgs.length})
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Message list */}
+                  <div className="space-y-2">
+                    {currentMsgs.length === 0 ? (
+                      <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>
+                        No messages yet in this thread.
+                      </div>
+                    ) : (
+                      <>
+                        {visibleMsgs.map((m) => (
+                          <div
+                            key={m.id}
+                            className="rounded-md px-3 py-2 text-sm space-y-0.5"
+                            style={{ background: "var(--muted)" }}
+                          >
+                            <div className="flex items-baseline justify-between gap-2">
+                              <span className="text-xs font-medium" style={{ color: "var(--foreground)" }}>
+                                {m.sender_name ?? "Cultivate"}
+                              </span>
+                              <span className="text-xs shrink-0" style={{ color: "var(--muted-foreground)" }}>
+                                {timeAgo(m.created_at)}
+                              </span>
+                            </div>
+                            <div style={{ color: "var(--foreground)" }}>{m.body}</div>
+                          </div>
+                        ))}
+                        {currentMsgs.length > 1 && (
+                          <button
+                            className="text-xs pt-0.5"
+                            style={{ color: "var(--muted-foreground)" }}
+                            onClick={() =>
+                              setCardExpanded((prev) => ({
+                                ...prev,
+                                [r.id]: { ...(prev[r.id] ?? { client: false, internal: false }), [activeTab]: !isExpanded },
+                              }))
+                            }
+                          >
+                            {isExpanded ? "Show less" : `Show all messages (${currentMsgs.length})`}
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  {/* Compose box */}
+                  <div
+                    className="rounded-lg p-3 space-y-2"
+                    style={
+                      activeTab === "internal"
+                        ? { background: "rgba(100,116,139,0.08)", border: "1px solid var(--border)" }
+                        : { border: "1px solid var(--border)" }
+                    }
+                  >
+                    {activeTab === "internal" && (
+                      <div className="text-xs font-medium" style={{ color: "var(--muted-foreground)" }}>
+                        Not visible to client
+                      </div>
+                    )}
+                    <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>
+                      {activeTab === "client" ? "New client-visible message" : "New internal-only note"}
+                    </div>
+                    <textarea
+                      className="border rounded-lg px-3 py-2 w-full text-sm"
+                      style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                      rows={3}
+                      placeholder={
+                        activeTab === "client"
+                          ? "Write a message the client can see…"
+                          : "Write an internal-only note…"
+                      }
+                      value={cardCompose[r.id] ?? ""}
+                      onChange={(e) => setCardCompose((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                    />
+                    <div className="flex items-center justify-between gap-2">
+                      <label
+                        className="text-xs cursor-pointer flex items-center gap-1"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        <input
+                          type="file"
+                          className="hidden"
+                          onChange={(e) =>
+                            setCardFile((prev) => ({ ...prev, [r.id]: e.target.files?.[0] ?? null }))
+                          }
+                        />
+                        📎 {cardFile[r.id] ? cardFile[r.id]!.name : "Attach file"}
+                      </label>
+                      {cardFile[r.id] && (
+                        <button
+                          className="text-xs"
+                          style={{ color: "var(--muted-foreground)" }}
+                          onClick={() => setCardFile((prev) => ({ ...prev, [r.id]: null }))}
+                        >
+                          ✕ Remove
+                        </button>
+                      )}
+                      <button
+                        className="ml-auto px-4 py-1.5 rounded-lg text-sm font-medium"
+                        style={{
+                          background: "var(--primary, #14b8a6)",
+                          color: "var(--primary-foreground, #fff)",
+                          opacity: cardSending[r.id] ? 0.6 : 1,
+                        }}
+                        disabled={!!cardSending[r.id]}
+                        onClick={() => sendMessage(r.id)}
+                      >
+                        {cardSending[r.id] ? "Sending…" : "Send"}
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Submission tracking (rep/admin only) */}
