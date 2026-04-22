@@ -133,7 +133,7 @@ function statusLabel(status: TimingRow["account_status"] | string) {
     case "working_to_secure_anchor_account":
       return "Distributor Required";
     case "waiting_for_retailer_to_publish_review":
-      return "Waiting for Retailer to Publish Next Category Review";
+      return "Waiting for Retailer to Publish Review";
     case "upcoming_review":
       return "Upcoming Review";
     case "not_a_target_account":

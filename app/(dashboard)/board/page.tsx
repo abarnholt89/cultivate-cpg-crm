@@ -67,7 +67,7 @@ const MANAGER_MAP: Record<string, string[]> = {
 
 const STATUS_OPTIONS = [
   { value: "upcoming_review", label: "Upcoming Review" },
-  { value: "waiting_for_retailer_to_publish_review", label: "Waiting for Retailer to Publish Next Category Review" },
+  { value: "waiting_for_retailer_to_publish_review", label: "Waiting for Retailer to Publish Review" },
   { value: "under_review", label: "Under Review" },
   { value: "active_account", label: "Active Account" },
   { value: "working_to_secure_anchor_account", label: "Distributor Required" },
@@ -80,9 +80,9 @@ function statusLeftBorderColor(status: string | undefined): string {
   switch (status) {
     case "active_account":       return "#14b8a6"; // teal
     case "upcoming_review":
-    case "open_review":          return "#f59e0b"; // amber
+    case "open_review":
+    case "waiting_for_retailer_to_publish_review": return "#f59e0b"; // amber
     case "under_review":
-    case "waiting_for_retailer_to_publish_review":
     case "working_to_secure_anchor_account": return "#3b82f6"; // blue
     case "retailer_declined":    return "#f43f5e"; // rose
     case "not_a_target_account":
