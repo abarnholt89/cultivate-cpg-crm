@@ -81,6 +81,24 @@ type AttachmentRow = {
   file_size: number | null;
 };
 
+type ManualReviewDraft = {
+  localId: string;
+  category: string;
+  category_review_date: string;
+  reset_date: string;
+  notes: string;
+};
+
+type ManualReviewRow = {
+  id: string;
+  brand_id: string;
+  retailer_id: string;
+  category: string;
+  category_review_date: string | null;
+  reset_date: string | null;
+  notes: string | null;
+};
+
 function rowKey(
   retailerName: string,
   universalCategory: string,
@@ -261,6 +279,12 @@ export default function BrandRetailersPage() {
   // Attachments: retailer_id → message_id → AttachmentRow[]
   const [cardAttachments, setCardAttachments] = useState<Record<string, Record<string, AttachmentRow[]>>>({});
   const [signedImageUrls, setSignedImageUrls] = useState<Record<string, string>>({});
+  // Manual category review entries
+  const [pendingManualReviews, setPendingManualReviews] = useState<Record<string, ManualReviewDraft[]>>({});
+  const [savedManualReviews, setSavedManualReviews] = useState<Record<string, ManualReviewRow[]>>({});
+  const [manualMenuOpen, setManualMenuOpen] = useState<string | null>(null);
+  const [manualEditingId, setManualEditingId] = useState<string | null>(null);
+  const [manualEditDraft, setManualEditDraft] = useState<ManualReviewRow | null>(null);
 
   const isRepOrAdmin = role === "admin" || role === "rep";
 
@@ -393,6 +417,19 @@ export default function BrandRetailersPage() {
       });
       setDateOverrides(overrideMap);
       setPendingDateEdits({});
+
+      const { data: manualData } = await supabase
+        .from("brand_retailer_category_timing")
+        .select("id,brand_id,retailer_id,category,category_review_date,reset_date,notes")
+        .eq("brand_id", brandId);
+
+      const nextSavedManual: Record<string, ManualReviewRow[]> = {};
+      ((manualData ?? []) as ManualReviewRow[]).forEach((row) => {
+        if (!nextSavedManual[row.retailer_id]) nextSavedManual[row.retailer_id] = [];
+        nextSavedManual[row.retailer_id].push(row);
+      });
+      setSavedManualReviews(nextSavedManual);
+      setPendingManualReviews({});
 
       const { data: authorizedData, error: authorizedError } = await supabase
         .from("authorized_accounts_with_brand_id")
@@ -588,6 +625,36 @@ export default function BrandRetailersPage() {
       });
     }
 
+    // Insert pending manual review rows (non-empty category only)
+    const drafts = (pendingManualReviews[retailerId] ?? []).filter((d) => d.category.trim());
+    for (const draft of drafts) {
+      const { data: inserted, error: manualError } = await supabase
+        .from("brand_retailer_category_timing")
+        .insert({
+          brand_id: brandId,
+          retailer_id: retailerId,
+          category: draft.category.trim(),
+          category_review_date: draft.category_review_date || null,
+          reset_date: draft.reset_date || null,
+          notes: draft.notes || null,
+        })
+        .select("id,brand_id,retailer_id,category,category_review_date,reset_date,notes")
+        .single();
+
+      if (manualError) {
+        setStatus(manualError.message);
+        return;
+      }
+
+      if (inserted) {
+        setSavedManualReviews((prev) => ({
+          ...prev,
+          [retailerId]: [...(prev[retailerId] ?? []), inserted as ManualReviewRow],
+        }));
+      }
+    }
+    setPendingManualReviews((prev) => ({ ...prev, [retailerId]: [] }));
+
     setStatus("Saved ✅");
   }
 
@@ -600,6 +667,40 @@ export default function BrandRetailersPage() {
       return;
     }
     window.open(data.signedUrl, "_blank");
+  }
+
+  async function deleteManualReview(retailerId: string, rowId: string) {
+    const { error } = await supabase
+      .from("brand_retailer_category_timing")
+      .delete()
+      .eq("id", rowId);
+    if (error) { setStatus(error.message); return; }
+    setSavedManualReviews((prev) => ({
+      ...prev,
+      [retailerId]: (prev[retailerId] ?? []).filter((r) => r.id !== rowId),
+    }));
+  }
+
+  async function saveManualEdit(retailerId: string) {
+    if (!manualEditDraft || !manualEditDraft.category.trim()) return;
+    const { error } = await supabase
+      .from("brand_retailer_category_timing")
+      .update({
+        category: manualEditDraft.category.trim(),
+        category_review_date: manualEditDraft.category_review_date || null,
+        reset_date: manualEditDraft.reset_date || null,
+        notes: manualEditDraft.notes || null,
+      })
+      .eq("id", manualEditDraft.id);
+    if (error) { setStatus(error.message); return; }
+    setSavedManualReviews((prev) => ({
+      ...prev,
+      [retailerId]: (prev[retailerId] ?? []).map((r) =>
+        r.id === manualEditDraft.id ? { ...r, ...manualEditDraft } : r
+      ),
+    }));
+    setManualEditingId(null);
+    setManualEditDraft(null);
   }
 
   async function getClientEmails(): Promise<string[]> {
@@ -1052,6 +1153,265 @@ export default function BrandRetailersPage() {
                         );
                       })}
                     </div>
+                  )}
+
+                  {/* Saved manual review rows */}
+                  {(savedManualReviews[r.id] ?? []).map((mr) => {
+                    const isEditing = manualEditingId === mr.id;
+                    const draft = isEditing ? manualEditDraft! : null;
+                    return (
+                      <div
+                        key={mr.id}
+                        className="rounded-lg p-3"
+                        style={{ border: "1px solid var(--border)", background: "var(--muted)" }}
+                      >
+                        {isEditing && draft ? (
+                          <div className="space-y-2">
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                              <div>
+                                <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Category *</div>
+                                <input
+                                  className="border rounded-lg px-2 py-1.5 w-full text-sm"
+                                  style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                                  value={draft.category}
+                                  placeholder="Category"
+                                  onChange={(e) => setManualEditDraft({ ...draft, category: e.target.value })}
+                                />
+                              </div>
+                              <div>
+                                <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Review Date</div>
+                                <input
+                                  type="date"
+                                  className="border rounded-lg px-2 py-1.5 w-full text-sm"
+                                  style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                                  value={draft.category_review_date ?? ""}
+                                  onChange={(e) => setManualEditDraft({ ...draft, category_review_date: e.target.value || null })}
+                                />
+                              </div>
+                              <div>
+                                <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Reset Date</div>
+                                <input
+                                  type="date"
+                                  className="border rounded-lg px-2 py-1.5 w-full text-sm"
+                                  style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                                  value={draft.reset_date ?? ""}
+                                  onChange={(e) => setManualEditDraft({ ...draft, reset_date: e.target.value || null })}
+                                />
+                              </div>
+                              <div>
+                                <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Notes</div>
+                                <input
+                                  className="border rounded-lg px-2 py-1.5 w-full text-sm"
+                                  style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                                  placeholder="Optional"
+                                  value={draft.notes ?? ""}
+                                  onChange={(e) => setManualEditDraft({ ...draft, notes: e.target.value || null })}
+                                />
+                              </div>
+                            </div>
+                            <div className="flex gap-2 justify-end">
+                              <button
+                                className="text-xs px-3 py-1.5 rounded-lg"
+                                style={{ border: "1px solid var(--border)", color: "var(--muted-foreground)" }}
+                                onClick={() => { setManualEditingId(null); setManualEditDraft(null); }}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                className="text-xs px-3 py-1.5 rounded-lg font-medium"
+                                style={{ background: "var(--foreground)", color: "var(--background)" }}
+                                onClick={() => saveManualEdit(r.id)}
+                              >
+                                Save edit
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                            <div>
+                              <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Category</div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-medium" style={{ color: "var(--foreground)" }}>{mr.category}</span>
+                                <span
+                                  className="text-xs px-1.5 py-0.5 rounded font-medium"
+                                  style={{ background: "rgba(100,116,139,0.15)", color: "var(--muted-foreground)", fontSize: "0.65rem" }}
+                                >
+                                  Manual
+                                </span>
+                              </div>
+                            </div>
+                            <div>
+                              <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Review Date</div>
+                              <div className="font-medium" style={{ color: "var(--foreground)" }}>{prettyDate(mr.category_review_date)}</div>
+                            </div>
+                            <div>
+                              <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Reset Date</div>
+                              <div className="font-medium" style={{ color: "var(--foreground)" }}>{prettyDate(mr.reset_date)}</div>
+                            </div>
+                            <div>
+                              <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Notes</div>
+                              <div className="font-medium" style={{ color: "var(--foreground)" }}>{mr.notes || "—"}</div>
+                            </div>
+                            {isRepOrAdmin && (
+                              <div className="col-span-2 md:col-span-4 flex justify-end">
+                                <div className="relative">
+                                  <button
+                                    className="text-xs px-2 py-0.5 rounded"
+                                    style={{ border: "1px solid var(--border)", color: "var(--muted-foreground)" }}
+                                    onClick={() => setManualMenuOpen(manualMenuOpen === mr.id ? null : mr.id)}
+                                  >
+                                    ⋯
+                                  </button>
+                                  {manualMenuOpen === mr.id && (
+                                    <div
+                                      className="absolute right-0 top-full mt-1 rounded-lg shadow-lg z-10 py-1 min-w-[100px]"
+                                      style={{ background: "var(--card)", border: "1px solid var(--border)" }}
+                                    >
+                                      <button
+                                        className="block w-full text-left px-3 py-1.5 text-xs hover:opacity-70"
+                                        style={{ color: "var(--foreground)" }}
+                                        onClick={() => {
+                                          setManualEditingId(mr.id);
+                                          setManualEditDraft({ ...mr });
+                                          setManualMenuOpen(null);
+                                        }}
+                                      >
+                                        Edit
+                                      </button>
+                                      <button
+                                        className="block w-full text-left px-3 py-1.5 text-xs hover:opacity-70"
+                                        style={{ color: "#ef4444" }}
+                                        onClick={() => {
+                                          setManualMenuOpen(null);
+                                          if (window.confirm("Delete this manual review entry? This can't be undone.")) {
+                                            deleteManualReview(r.id, mr.id);
+                                          }
+                                        }}
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* Draft (unsaved) manual review rows */}
+                  {isRepOrAdmin && (pendingManualReviews[r.id] ?? []).map((draft) => (
+                    <div
+                      key={draft.localId}
+                      className="rounded-lg p-3"
+                      style={{ border: "1px dashed var(--border)", background: "rgba(100,116,139,0.06)" }}
+                    >
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                        <div>
+                          <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Category *</div>
+                          <input
+                            className="border rounded-lg px-2 py-1.5 w-full text-sm"
+                            style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                            placeholder="Category"
+                            value={draft.category}
+                            onChange={(e) =>
+                              setPendingManualReviews((prev) => ({
+                                ...prev,
+                                [r.id]: (prev[r.id] ?? []).map((d) =>
+                                  d.localId === draft.localId ? { ...d, category: e.target.value } : d
+                                ),
+                              }))
+                            }
+                          />
+                        </div>
+                        <div>
+                          <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Review Date</div>
+                          <input
+                            type="date"
+                            className="border rounded-lg px-2 py-1.5 w-full text-sm"
+                            style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                            value={draft.category_review_date}
+                            onChange={(e) =>
+                              setPendingManualReviews((prev) => ({
+                                ...prev,
+                                [r.id]: (prev[r.id] ?? []).map((d) =>
+                                  d.localId === draft.localId ? { ...d, category_review_date: e.target.value } : d
+                                ),
+                              }))
+                            }
+                          />
+                        </div>
+                        <div>
+                          <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Reset Date</div>
+                          <input
+                            type="date"
+                            className="border rounded-lg px-2 py-1.5 w-full text-sm"
+                            style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                            value={draft.reset_date}
+                            onChange={(e) =>
+                              setPendingManualReviews((prev) => ({
+                                ...prev,
+                                [r.id]: (prev[r.id] ?? []).map((d) =>
+                                  d.localId === draft.localId ? { ...d, reset_date: e.target.value } : d
+                                ),
+                              }))
+                            }
+                          />
+                        </div>
+                        <div>
+                          <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Notes</div>
+                          <input
+                            className="border rounded-lg px-2 py-1.5 w-full text-sm"
+                            style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                            placeholder="Optional"
+                            value={draft.notes}
+                            onChange={(e) =>
+                              setPendingManualReviews((prev) => ({
+                                ...prev,
+                                [r.id]: (prev[r.id] ?? []).map((d) =>
+                                  d.localId === draft.localId ? { ...d, notes: e.target.value } : d
+                                ),
+                              }))
+                            }
+                          />
+                        </div>
+                      </div>
+                      <div className="flex justify-end mt-2">
+                        <button
+                          className="text-xs"
+                          style={{ color: "var(--muted-foreground)" }}
+                          onClick={() =>
+                            setPendingManualReviews((prev) => ({
+                              ...prev,
+                              [r.id]: (prev[r.id] ?? []).filter((d) => d.localId !== draft.localId),
+                            }))
+                          }
+                        >
+                          ✕ Remove
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* + Add review button */}
+                  {isRepOrAdmin && (
+                    <button
+                      className="text-xs px-3 py-1.5 rounded-lg"
+                      style={{ border: "1px dashed var(--border)", color: "var(--muted-foreground)" }}
+                      onClick={() =>
+                        setPendingManualReviews((prev) => ({
+                          ...prev,
+                          [r.id]: [
+                            ...(prev[r.id] ?? []),
+                            { localId: `${Date.now()}-${Math.random()}`, category: "", category_review_date: "", reset_date: "", notes: "" },
+                          ],
+                        }))
+                      }
+                    >
+                      + Add review
+                    </button>
                   )}
                 </div>
 
