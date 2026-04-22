@@ -279,6 +279,9 @@ export default function BrandRetailersPage() {
   // Attachments: retailer_id → message_id → AttachmentRow[]
   const [cardAttachments, setCardAttachments] = useState<Record<string, Record<string, AttachmentRow[]>>>({});
   const [signedImageUrls, setSignedImageUrls] = useState<Record<string, string>>({});
+  // Category review dismissals
+  const [dismissedReviewKeys, setDismissedReviewKeys] = useState<Set<string>>(new Set());
+  const [cardDismissedOpen, setCardDismissedOpen] = useState<Record<string, boolean>>({});
   // Manual category review entries
   const [pendingManualReviews, setPendingManualReviews] = useState<Record<string, ManualReviewDraft[]>>({});
   const [savedManualReviews, setSavedManualReviews] = useState<Record<string, ManualReviewRow[]>>({});
@@ -417,6 +420,18 @@ export default function BrandRetailersPage() {
       });
       setDateOverrides(overrideMap);
       setPendingDateEdits({});
+
+      const { data: dismissalData } = await supabase
+        .from("brand_category_review_dismissals")
+        .select("retailer_name,universal_category,retailer_category_review_name")
+        .eq("brand_id", brandId);
+
+      const dismissedKeys = new Set<string>(
+        ((dismissalData ?? []) as Array<{ retailer_name: string; universal_category: string; retailer_category_review_name: string }>).map((d) =>
+          rowKey(d.retailer_name, d.universal_category, d.retailer_category_review_name)
+        )
+      );
+      setDismissedReviewKeys(dismissedKeys);
 
       const { data: manualData } = await supabase
         .from("brand_retailer_category_timing")
@@ -667,6 +682,62 @@ export default function BrandRetailersPage() {
       return;
     }
     window.open(data.signedUrl, "_blank");
+  }
+
+  async function dismissReview(review: CategoryReviewRow) {
+    if (!userId) return;
+    const key = rowKey(review.retailer_name, review.universal_category, review.retailer_category_review_name);
+
+    // Optimistic
+    setDismissedReviewKeys((prev) => new Set([...prev, key]));
+
+    const { error } = await supabase
+      .from("brand_category_review_dismissals")
+      .upsert(
+        {
+          brand_id: brandId,
+          retailer_name: review.retailer_name,
+          retailer_id: review.retailer_id ?? null,
+          universal_category: review.universal_category,
+          retailer_category_review_name: review.retailer_category_review_name ?? "",
+          review_date: review.review_date ?? null,
+          dismissed_by_user_id: userId,
+        },
+        { onConflict: "brand_id,retailer_name,universal_category,retailer_category_review_name" }
+      );
+
+    if (error) {
+      setDismissedReviewKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+      setStatus(error.message);
+    }
+  }
+
+  async function restoreReview(review: CategoryReviewRow) {
+    const key = rowKey(review.retailer_name, review.universal_category, review.retailer_category_review_name);
+
+    // Optimistic
+    setDismissedReviewKeys((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+
+    const { error } = await supabase
+      .from("brand_category_review_dismissals")
+      .delete()
+      .eq("brand_id", brandId)
+      .eq("retailer_name", review.retailer_name)
+      .eq("universal_category", review.universal_category)
+      .eq("retailer_category_review_name", review.retailer_category_review_name ?? "");
+
+    if (error) {
+      setDismissedReviewKeys((prev) => new Set([...prev, key]));
+      setStatus(error.message);
+    }
   }
 
   async function deleteManualReview(retailerId: string, rowId: string) {
@@ -959,7 +1030,15 @@ export default function BrandRetailersPage() {
           {filteredRetailers.map((r) => {
             const row = pipelineMap[r.id] ?? defaultPipelineRow(r.id);
             const headline = r.banner?.trim() ? r.banner : r.name;
-            const reviewRows = calendarMap[r.id] ?? [];
+            const allReviewRows = calendarMap[r.id] ?? [];
+            const reviewRows = allReviewRows.filter(
+              (rev) => !dismissedReviewKeys.has(rowKey(rev.retailer_name, rev.universal_category, rev.retailer_category_review_name))
+            );
+            const dismissedCardRows = isRepOrAdmin
+              ? allReviewRows.filter((rev) =>
+                  dismissedReviewKeys.has(rowKey(rev.retailer_name, rev.universal_category, rev.retailer_category_review_name))
+                )
+              : [];
             const authorized = authorizedMap[r.id];
             const hasLegacyNotes = !!row.notes?.trim();
             const activeTab: "client" | "internal" = cardTab[r.id] ?? "client";
@@ -1130,28 +1209,83 @@ export default function BrandRetailersPage() {
                                 </div>
                               )}
                             </div>
-                            <div>
-                              <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>
-                                Reset Date
-                              </div>
-                              {isRepOrAdmin ? (
-                                <input
-                                  type="date"
-                                  className="border rounded-lg px-3 py-2 w-full text-sm"
-                                  style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
-                                  value={effectiveResetDate}
-                                  onChange={(e) => updateDateEdit(rk, "reset_date", e.target.value || null)}
-                                />
-                              ) : (
-                                <div className="font-medium" style={{ color: "var(--foreground)" }}>
-                                  {prettyDate(effectiveResetDate || null)}
+                            <div className="flex items-start gap-2">
+                              <div className="flex-1">
+                                <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>
+                                  Reset Date
                                 </div>
+                                {isRepOrAdmin ? (
+                                  <input
+                                    type="date"
+                                    className="border rounded-lg px-3 py-2 w-full text-sm"
+                                    style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                                    value={effectiveResetDate}
+                                    onChange={(e) => updateDateEdit(rk, "reset_date", e.target.value || null)}
+                                  />
+                                ) : (
+                                  <div className="font-medium" style={{ color: "var(--foreground)" }}>
+                                    {prettyDate(effectiveResetDate || null)}
+                                  </div>
+                                )}
+                              </div>
+                              {isRepOrAdmin && (
+                                <button
+                                  className="mt-5 text-xs shrink-0 opacity-40 hover:opacity-100 transition-opacity"
+                                  title="Dismiss from this brand's view"
+                                  onClick={() => dismissReview(review)}
+                                >
+                                  ✕
+                                </button>
                               )}
                             </div>
                           </div>
                         </div>
                         );
                       })}
+                    </div>
+                  )}
+
+                  {/* Dismissed category reviews — collapsible, reps/admins only */}
+                  {isRepOrAdmin && dismissedCardRows.length > 0 && (
+                    <div>
+                      <button
+                        className="text-xs"
+                        style={{ color: "var(--muted-foreground)" }}
+                        onClick={() =>
+                          setCardDismissedOpen((prev) => ({ ...prev, [r.id]: !prev[r.id] }))
+                        }
+                      >
+                        {cardDismissedOpen[r.id] ? "▾" : "▸"} Dismissed ({dismissedCardRows.length})
+                      </button>
+                      {cardDismissedOpen[r.id] && (
+                        <div className="mt-2 space-y-2">
+                          {dismissedCardRows.map((review, idx) => (
+                            <div
+                              key={`dismissed-${review.retailer_name}-${review.universal_category}-${idx}`}
+                              className="rounded-lg px-3 py-2 text-sm flex items-center justify-between gap-3"
+                              style={{ border: "1px solid var(--border)", background: "var(--muted)", opacity: 0.6 }}
+                            >
+                              <div className="min-w-0">
+                                <span className="font-medium" style={{ color: "var(--foreground)" }}>
+                                  {review.retailer_category_review_name || review.universal_category}
+                                </span>
+                                {review.review_date && (
+                                  <span className="ml-2 text-xs" style={{ color: "var(--muted-foreground)" }}>
+                                    {prettyDate(review.review_date)}
+                                  </span>
+                                )}
+                              </div>
+                              <button
+                                className="text-xs underline shrink-0"
+                                style={{ color: "var(--muted-foreground)" }}
+                                onClick={() => restoreReview(review)}
+                              >
+                                Restore
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
 

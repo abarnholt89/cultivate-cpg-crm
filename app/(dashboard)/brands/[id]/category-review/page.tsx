@@ -88,7 +88,8 @@ export default function BrandCategoryReviewPage() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [dateFilter, setDateFilter] = useState("all");
-  const [showDismissed, setShowDismissed] = useState(false);
+  // Inline edit state: key → { field: "review_date"|"reset_date", value: string }
+  const [dismissedSectionOpen, setDismissedSectionOpen] = useState(false);
 
   // Inline edit state: key → { field: "review_date"|"reset_date", value: string }
   const [editingCell, setEditingCell] = useState<{
@@ -294,8 +295,7 @@ export default function BrandCategoryReviewPage() {
 
     return mergedRows.filter((row) => {
       const key = rowKey(row.retailer_name, row.universal_category, row.retailer_category_review_name);
-      const isDismissed = dismissals.has(key);
-      if (isDismissed && !showDismissed) return false;
+      if (dismissals.has(key)) return false;
 
       const matchesSearch =
         !q ||
@@ -313,7 +313,14 @@ export default function BrandCategoryReviewPage() {
       if (dateFilter === "past") return row.review_date < today;
       return true;
     });
-  }, [mergedRows, dismissals, showDismissed, search, dateFilter]);
+  }, [mergedRows, dismissals, search, dateFilter]);
+
+  const dismissedRows = useMemo(() => {
+    if (!isRepOrAdmin) return [];
+    return mergedRows.filter((row) =>
+      dismissals.has(rowKey(row.retailer_name, row.universal_category, row.retailer_category_review_name))
+    );
+  }, [mergedRows, dismissals, isRepOrAdmin]);
 
   const stats = useMemo(() => {
     const today = todayISO();
@@ -321,15 +328,19 @@ export default function BrandCategoryReviewPage() {
     const next90 = addDaysISO(today, 90);
     let next30Count = 0, next90Count = 0, pastDueCount = 0, missingCount = 0;
 
-    mergedRows.forEach((row) => {
+    const activeRows = mergedRows.filter(
+      (r) => !dismissals.has(rowKey(r.retailer_name, r.universal_category, r.retailer_category_review_name))
+    );
+
+    activeRows.forEach((row) => {
       if (!row.review_date) { missingCount++; return; }
       if (row.review_date < today) pastDueCount++;
       if (row.review_date >= today && row.review_date <= next30) next30Count++;
       if (row.review_date >= today && row.review_date <= next90) next90Count++;
     });
 
-    return { total: mergedRows.length, next30: next30Count, next90: next90Count, pastDue: pastDueCount, missing: missingCount };
-  }, [mergedRows]);
+    return { total: activeRows.length, next30: next30Count, next90: next90Count, pastDue: pastDueCount, missing: missingCount };
+  }, [mergedRows, dismissals]);
 
   if (!brandId) return <div className="p-6">No brand ID in URL.</div>;
 
@@ -406,19 +417,6 @@ export default function BrandCategoryReviewPage() {
             <option value="missing">Missing Review Date</option>
           </select>
 
-          {isRepOrAdmin && dismissals.size > 0 && (
-            <button
-              className="text-sm px-3 py-2 rounded-lg"
-              style={{
-                border: "1px solid var(--border)",
-                background: showDismissed ? "var(--foreground)" : "var(--muted)",
-                color: showDismissed ? "var(--background)" : "var(--muted-foreground)",
-              }}
-              onClick={() => setShowDismissed((v) => !v)}
-            >
-              {showDismissed ? "Hide Dismissed" : `Show Dismissed (${dismissals.size})`}
-            </button>
-          )}
         </div>
 
         {filteredRows.length === 0 ? (
@@ -452,7 +450,6 @@ export default function BrandCategoryReviewPage() {
               <tbody>
                 {filteredRows.map((row, idx) => {
                   const key = rowKey(row.retailer_name, row.universal_category, row.retailer_category_review_name);
-                  const isDismissed = dismissals.has(key);
                   const hasOverride = !!dateOverrides[key];
                   const editingReview = editingCell?.key === key && editingCell.field === "review_date";
                   const editingReset = editingCell?.key === key && editingCell.field === "reset_date";
@@ -462,7 +459,6 @@ export default function BrandCategoryReviewPage() {
                       key={`${key}-${idx}`}
                       style={{
                         borderBottom: "1px solid var(--border)",
-                        opacity: isDismissed ? 0.45 : 1,
                         background: idx % 2 === 0 ? "transparent" : "var(--muted)",
                       }}
                     >
@@ -566,26 +562,17 @@ export default function BrandCategoryReviewPage() {
                         )}
                       </td>
 
-                      {/* Dismiss / undismiss */}
+                      {/* Dismiss */}
                       {isRepOrAdmin && (
                         <td className="py-3 text-right">
-                          {isDismissed ? (
-                            <button
-                              className="text-xs underline"
-                              style={{ color: "var(--muted-foreground)" }}
-                              onClick={() => undismiss(row)}
-                            >
-                              Restore
-                            </button>
-                          ) : (
-                            <button
-                              className="text-xs underline"
-                              style={{ color: "var(--muted-foreground)" }}
-                              onClick={() => dismiss(row)}
-                            >
-                              Dismiss
-                            </button>
-                          )}
+                          <button
+                            className="text-xs"
+                            style={{ color: "var(--muted-foreground)" }}
+                            title="Dismiss from this brand's view"
+                            onClick={() => dismiss(row)}
+                          >
+                            ✕
+                          </button>
                         </td>
                       )}
                     </tr>
@@ -596,6 +583,65 @@ export default function BrandCategoryReviewPage() {
           </div>
         )}
       </div>
+
+      {/* Dismissed reviews — collapsible, reps/admins only */}
+      {isRepOrAdmin && dismissedRows.length > 0 && (
+        <div>
+          <button
+            className="text-sm"
+            style={{ color: "var(--muted-foreground)" }}
+            onClick={() => setDismissedSectionOpen((v) => !v)}
+          >
+            {dismissedSectionOpen ? "▾" : "▸"} Dismissed reviews ({dismissedRows.length})
+          </button>
+
+          {dismissedSectionOpen && (
+            <div
+              className="mt-3 rounded-xl overflow-x-auto"
+              style={{ border: "1px solid var(--border)", background: "var(--card)" }}
+            >
+              <table className="w-full text-sm">
+                <thead>
+                  <tr style={{ borderBottom: "1px solid var(--border)", color: "var(--muted-foreground)" }}>
+                    <th className="text-left py-2 px-4 font-medium">Retailer</th>
+                    <th className="text-left py-2 px-4 font-medium">Review Name</th>
+                    <th className="text-left py-2 px-4 font-medium">Universal Category</th>
+                    <th className="text-left py-2 px-4 font-medium">Review Date</th>
+                    <th className="text-left py-2 px-4 font-medium">Reset Date</th>
+                    <th className="w-20" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {dismissedRows.map((row, idx) => (
+                    <tr
+                      key={`dismissed-${idx}`}
+                      style={{
+                        borderBottom: idx < dismissedRows.length - 1 ? "1px solid var(--border)" : undefined,
+                        opacity: 0.65,
+                      }}
+                    >
+                      <td className="py-2.5 px-4" style={{ color: "var(--foreground)" }}>{row.retailer_name}</td>
+                      <td className="py-2.5 px-4" style={{ color: "var(--foreground)" }}>{row.retailer_category_review_name || "—"}</td>
+                      <td className="py-2.5 px-4" style={{ color: "var(--foreground)" }}>{row.universal_category}</td>
+                      <td className="py-2.5 px-4" style={{ color: "var(--foreground)" }}>{prettyDate(row.review_date)}</td>
+                      <td className="py-2.5 px-4" style={{ color: "var(--foreground)" }}>{prettyDate(row.reset_date)}</td>
+                      <td className="py-2.5 px-4 text-right">
+                        <button
+                          className="text-xs underline"
+                          style={{ color: "var(--muted-foreground)" }}
+                          onClick={() => undismiss(row)}
+                        >
+                          Restore
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
