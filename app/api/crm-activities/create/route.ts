@@ -38,23 +38,31 @@ export async function POST(req: Request) {
     console.log("[create-activity] senderEmail received:", senderEmail);
 
     let repId: string | null = null;
+    let senderName: string = senderEmail || "Cultivate Team";
+
     if (senderEmail) {
       const { data: profile } = await supabase
         .from("profiles")
-        .select("id")
+        .select("id, full_name")
         .ilike("email", senderEmail.trim())
         .maybeSingle();
-      if (profile) repId = profile.id;
+      if (profile) {
+        repId = profile.id;
+        if (profile.full_name) senderName = profile.full_name;
+      }
     }
 
     if (!repId) {
       const { data: fallbackProfile } = await supabase
         .from("profiles")
-        .select("id")
+        .select("id, full_name")
         .in("role", ["admin", "rep"])
         .limit(1)
         .maybeSingle();
-      if (fallbackProfile) repId = fallbackProfile.id;
+      if (fallbackProfile) {
+        repId = fallbackProfile.id;
+        if (fallbackProfile.full_name) senderName = fallbackProfile.full_name;
+      }
     }
 
     const activityIds: string[] = [];
@@ -90,6 +98,28 @@ export async function POST(req: Request) {
       }
 
       activityIds.push(data.id);
+
+      // Mirror to brand_retailer_messages so the activity appears in the
+      // retailer card inline Messages view. Non-fatal if this fails.
+      try {
+        const msgVisibility = "client_visible" === "client_visible" ? "client" : "internal";
+        const { error: msgError } = await supabase
+          .from("brand_retailer_messages")
+          .insert({
+            brand_id: brandId,
+            retailer_id: retailerId,
+            visibility: msgVisibility,
+            sender_id: repId,
+            sender_name: senderName,
+            body: clientMessage,
+            created_at: sentAt,
+          });
+        if (msgError) {
+          console.error("[create-activity] brand_retailer_messages insert failed:", msgError.message);
+        }
+      } catch (msgErr: any) {
+        console.error("[create-activity] brand_retailer_messages unexpected error:", msgErr.message);
+      }
     }
 
     return Response.json({ activityIds });
