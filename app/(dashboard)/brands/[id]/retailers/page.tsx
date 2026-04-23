@@ -42,6 +42,7 @@ type PipelineRow = {
   submitted_date: string | null;
   submitted_notes: string | null;
   notes: string | null;
+  authorized_items_note: string | null;
 };
 
 type CategoryReviewRow = {
@@ -53,11 +54,6 @@ type CategoryReviewRow = {
   universal_category: string;
   review_date: string | null;
   reset_date: string | null;
-};
-
-type AuthorizedRow = {
-  authorized_item_count: number;
-  authorized_upc_count: number;
 };
 
 type MessageRow = {
@@ -258,7 +254,6 @@ export default function BrandRetailersPage() {
   const [retailers, setRetailers] = useState<Retailer[]>([]);
   const [pipelineMap, setPipelineMap] = useState<Record<string, PipelineRow>>({});
   const [calendarMap, setCalendarMap] = useState<Record<string, CategoryReviewRow[]>>({});
-  const [authorizedMap, setAuthorizedMap] = useState<Record<string, AuthorizedRow>>({});
   const [inlineMessages, setInlineMessages] = useState<Record<string, { client: MessageRow[]; internal: MessageRow[] }>>({});
   const [role, setRole] = useState<Role>(null);
   const [userId, setUserId] = useState<string | null>(null);
@@ -352,7 +347,7 @@ export default function BrandRetailersPage() {
 
       const { data: pipelineData, error: pipelineError } = await supabase
         .from("brand_retailer_timing")
-        .select("id,brand_id,retailer_id,account_status,schedule_mode,submitted_date,submitted_notes,notes")
+        .select("id,brand_id,retailer_id,account_status,schedule_mode,submitted_date,submitted_notes,notes,authorized_items_note")
         .eq("brand_id", brandId);
 
       if (pipelineError) {
@@ -371,6 +366,7 @@ export default function BrandRetailersPage() {
           submitted_date: row.submitted_date ?? null,
           submitted_notes: row.submitted_notes ?? null,
           notes: row.notes ?? null,
+          authorized_items_note: row.authorized_items_note ?? null,
         };
       });
       setPipelineMap(nextPipelineMap);
@@ -445,26 +441,6 @@ export default function BrandRetailersPage() {
       });
       setSavedManualReviews(nextSavedManual);
       setPendingManualReviews({});
-
-      const { data: authorizedData, error: authorizedError } = await supabase
-        .from("authorized_accounts_with_brand_id")
-        .select("retailer_id,authorized_item_count,authorized_upc_count")
-        .eq("brand_id", brandId);
-
-      if (authorizedError) {
-        setStatus(authorizedError.message);
-        return;
-      }
-
-      const nextAuthorizedMap: Record<string, AuthorizedRow> = {};
-      (authorizedData ?? []).forEach((row: any) => {
-        nextAuthorizedMap[row.retailer_id] = {
-          authorized_item_count: row.authorized_item_count ?? 0,
-          authorized_upc_count: row.authorized_upc_count ?? 0,
-        };
-      });
-
-      setAuthorizedMap(nextAuthorizedMap);
 
       // Load all messages per retailer for inline display
       const isAdminOrRep = resolvedRole === "admin" || resolvedRole === "rep";
@@ -548,6 +524,7 @@ export default function BrandRetailersPage() {
       submitted_date: null,
       submitted_notes: null,
       notes: null,
+      authorized_items_note: null,
     };
   }
 
@@ -577,6 +554,7 @@ export default function BrandRetailersPage() {
       submitted_date: row.submitted_date,
       submitted_notes: row.submitted_notes,
       notes: row.notes,
+      authorized_items_note: row.authorized_items_note,
     };
 
     const { error } = await supabase
@@ -884,11 +862,6 @@ export default function BrandRetailersPage() {
     setStatus("Sent ✅");
   }
 
-  function authorizedSummary(authorized?: AuthorizedRow) {
-    if (!authorized) return "No authorized items";
-    return `${authorized.authorized_item_count} items • ${authorized.authorized_upc_count} UPCs`;
-  }
-
   const brandName = useMemo(() => brand?.name ?? "Brand", [brand]);
 
   const filteredRetailers = useMemo(() => {
@@ -901,7 +874,6 @@ export default function BrandRetailersPage() {
       const row = pipelineMap[r.id] ?? defaultPipelineRow(r.id);
       const calendarRows = calendarMap[r.id] ?? [];
       const nextReview = calendarRows.find((entry) => !!entry.review_date);
-      const authorized = authorizedMap[r.id];
 
       if (selectedFilter === "all") return true;
       if (selectedFilter === "in_motion") {
@@ -926,7 +898,7 @@ export default function BrandRetailersPage() {
       }
 
       if (selectedFilter === "authorized") {
-        return !!authorized;
+        return !!row.authorized_items_note?.trim();
       }
 
       if (
@@ -970,7 +942,7 @@ export default function BrandRetailersPage() {
     }
 
     return retailers.filter((r) => matchesFilter(r) && matchesSearch(r) && matchesRep(r));
-  }, [retailers, pipelineMap, calendarMap, authorizedMap, selectedFilter, query, selectedRep]);
+  }, [retailers, pipelineMap, calendarMap, selectedFilter, query, selectedRep]);
 
   return (
     <div className="p-6 space-y-6">
@@ -1039,7 +1011,6 @@ export default function BrandRetailersPage() {
                   dismissedReviewKeys.has(rowKey(rev.retailer_name, rev.universal_category, rev.retailer_category_review_name))
                 )
               : [];
-            const authorized = authorizedMap[r.id];
             const hasLegacyNotes = !!row.notes?.trim();
             const activeTab: "client" | "internal" = cardTab[r.id] ?? "client";
             const clientMsgs = inlineMessages[r.id]?.client ?? [];
@@ -1082,12 +1053,6 @@ export default function BrandRetailersPage() {
                   </div>
 
                   <div className="flex flex-col items-end gap-2 shrink-0">
-                    {authorized ? (
-                      <Badge
-                        label={`Authorized • ${authorized.authorized_item_count} items`}
-                        tone="good"
-                      />
-                    ) : null}
                     <a
                       className="text-xs underline cursor-pointer"
                       style={{ color: "var(--muted-foreground)" }}
@@ -1110,8 +1075,21 @@ export default function BrandRetailersPage() {
                   </div>
 
                   <div className="rounded-lg p-3" style={{ border: "1px solid var(--border)", background: "var(--muted)" }}>
-                    <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Authorized Items</div>
-                    <div className="font-medium" style={{ color: "var(--foreground)" }}>{authorizedSummary(authorized)}</div>
+                    <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Authorized Items (notes)</div>
+                    {isRepOrAdmin ? (
+                      <textarea
+                        className="w-full text-sm bg-transparent resize-none focus:outline-none"
+                        style={{ color: "var(--foreground)", minHeight: "2.5rem" }}
+                        rows={2}
+                        value={row.authorized_items_note ?? ""}
+                        placeholder="e.g., 4 SKUs: Original, Salted Caramel, Maple, Vanilla — cheat sheet, see APL file for official list"
+                        onChange={(e) => updateLocal(r.id, { authorized_items_note: e.target.value || null })}
+                      />
+                    ) : (
+                      <div className="text-sm font-medium" style={{ color: row.authorized_items_note ? "var(--foreground)" : "var(--muted-foreground)" }}>
+                        {row.authorized_items_note || "No notes yet"}
+                      </div>
+                    )}
                   </div>
                 </div>
 
