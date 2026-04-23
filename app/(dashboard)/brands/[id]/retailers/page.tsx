@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
@@ -285,6 +285,18 @@ export default function BrandRetailersPage() {
   const [manualEditDraft, setManualEditDraft] = useState<ManualReviewRow | null>(null);
 
   const isRepOrAdmin = role === "admin" || role === "rep";
+
+  const didHashScrollRef = useRef(false);
+  useEffect(() => {
+    if (didHashScrollRef.current) return;
+    const hash = window.location.hash;
+    if (!hash || !Object.keys(pipelineMap).length) return;
+    const el = document.getElementById(hash.slice(1));
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      didHashScrollRef.current = true;
+    }
+  }, [pipelineMap]);
 
   useEffect(() => {
     setSelectedFilter(filterFromUrl);
@@ -1022,6 +1034,7 @@ export default function BrandRetailersPage() {
             return (
               <div
                 key={r.id}
+                id={`retailer-${r.id}`}
                 className="rounded-xl p-5 space-y-4"
                 style={{
                   border: "1px solid var(--border)",

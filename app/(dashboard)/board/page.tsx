@@ -726,7 +726,7 @@ export default function AllBrandsBoardPage() {
                                   }}
                                 >
                                   <Link
-                                    href={`/brands/${brand.id}/retailers/${row.retailerId}`}
+                                    href={`/brands/${brand.id}/retailers#retailer-${row.retailerId}`}
                                     className="underline"
                                     style={{ color: "var(--foreground)" }}
                                     onClick={(e) => e.stopPropagation()}

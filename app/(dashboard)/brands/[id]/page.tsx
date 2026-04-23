@@ -507,7 +507,7 @@ export default function BrandDashboardPage() {
               return (
                 <Link
                   key={row.id ?? `${row.retailer_id ?? "no-retailer"}-${index}`}
-                  href={`/brands/${brandId}/retailers/${row.retailer_id}`}
+                  href={`/brands/${brandId}/retailers#retailer-${row.retailer_id}`}
                   className="block rounded-lg p-3 transition hover:bg-gray-50"
                   style={{
                     border: "1px solid #e5e7eb",
@@ -574,7 +574,7 @@ export default function BrandDashboardPage() {
                   <div className="text-sm text-gray-600">Reset Date: {prettyDate(row.reset_date)}</div>
                   {row.retailer_id ? (
                     <div className="mt-2">
-                      <Link href={`/brands/${brandId}/retailers/${row.retailer_id}`} className="text-sm underline">
+                      <Link href={`/brands/${brandId}/retailers#retailer-${row.retailer_id}`} className="text-sm underline">
                         Open retailer →
                       </Link>
                     </div>
