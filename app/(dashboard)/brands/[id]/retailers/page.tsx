@@ -289,13 +289,20 @@ export default function BrandRetailersPage() {
   const didHashScrollRef = useRef(false);
   useEffect(() => {
     if (didHashScrollRef.current) return;
+    if (!Object.keys(pipelineMap).length) return;
     const hash = window.location.hash;
-    if (!hash || !Object.keys(pipelineMap).length) return;
-    const el = document.getElementById(hash.slice(1));
-    if (el) {
+    if (!hash) return;
+    const targetId = hash.slice(1); // e.g. "retailer-abc123"
+    const timer = setTimeout(() => {
+      const el = document.getElementById(targetId);
+      if (!el) {
+        console.warn(`[hash-scroll] element #${targetId} not found — may be filtered out`);
+        return;
+      }
       el.scrollIntoView({ behavior: "smooth", block: "start" });
       didHashScrollRef.current = true;
-    }
+    }, 100);
+    return () => clearTimeout(timer);
   }, [pipelineMap]);
 
   useEffect(() => {
