@@ -1032,16 +1032,35 @@ export default function BrandRetailersPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <Link className="underline text-sm" href={`/brands/${brandId}`} style={{ color: "var(--muted-foreground)" }}>
-          ← Back to Brand
-        </Link>
-        <h1 className="text-3xl font-bold mt-2" style={{ color: "var(--foreground)" }}>{brandName} — Retailers</h1>
-        <div className="text-sm mt-1" style={{ color: "var(--muted-foreground)" }}>
-          Showing <span className="font-semibold">{filteredRetailers.length}</span> of{" "}
-          <span className="font-semibold">{retailers.length}</span> retailers
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <Link className="underline text-sm" href={`/brands/${brandId}`} style={{ color: "var(--muted-foreground)" }}>
+            ← Back to Brand
+          </Link>
+          <h1 className="text-3xl font-bold mt-2" style={{ color: "var(--foreground)" }}>{brandName} — Retailers</h1>
+          <div className="text-sm mt-1" style={{ color: "var(--muted-foreground)" }}>
+            Showing <span className="font-semibold">{filteredRetailers.length}</span> of{" "}
+            <span className="font-semibold">{retailers.length}</span> retailers
+          </div>
+          {status && <p className="mt-2 text-sm text-red-600">{status}</p>}
         </div>
-        {status && <p className="mt-2 text-sm text-red-600">{status}</p>}
+
+        <div className="flex gap-2 text-sm flex-wrap">
+          <Link href={`/brands/${brandId}`} className="px-3 py-1.5 rounded border hover:bg-gray-50">
+            Overview
+          </Link>
+          <span className="px-3 py-1.5 rounded border text-white" style={{ background: "var(--foreground)" }}>
+            Retailers
+          </span>
+          {isRepOrAdmin && (
+            <Link href="/board" className="px-3 py-1.5 rounded border hover:bg-gray-50">
+              Board
+            </Link>
+          )}
+          <Link href={`/brands/${brandId}/category-review`} className="px-3 py-1.5 rounded border hover:bg-gray-50">
+            Category Review
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">

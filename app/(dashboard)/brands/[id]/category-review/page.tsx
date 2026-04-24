@@ -369,9 +369,11 @@ export default function BrandCategoryReviewPage() {
           <Link href={`/brands/${brandId}/retailers`} className="px-3 py-1.5 rounded border hover:bg-gray-50">
             Retailers
           </Link>
-          <Link href={`/brands/${brandId}/board`} className="px-3 py-1.5 rounded border hover:bg-gray-50">
-            Board
-          </Link>
+          {isRepOrAdmin && (
+            <Link href="/board" className="px-3 py-1.5 rounded border hover:bg-gray-50">
+              Board
+            </Link>
+          )}
           <span
             className="px-3 py-1.5 rounded border text-white"
             style={{ background: "var(--foreground)" }}

@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
+type Role = "admin" | "rep" | "client" | null;
+
 type Brand = { id: string; name: string };
 
 type PipelineStatus =
@@ -132,6 +134,7 @@ export default function BrandDashboardPage() {
 
   const happeningRef = useRef<HTMLDivElement>(null);
 
+  const [role, setRole] = useState<Role>(null);
   const [brand, setBrand] = useState<Brand | null>(null);
   const [pipelineRows, setPipelineRows] = useState<PipelineRow[]>([]);
   const [calendarRows, setCalendarRows] = useState<CategoryReviewRow[]>([]);
@@ -152,6 +155,17 @@ export default function BrandDashboardPage() {
 
     async function load() {
       setError("");
+
+      const { data: authData } = await supabase.auth.getUser();
+      const userId = authData?.user?.id;
+      if (userId) {
+        const { data: profileData } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", userId)
+          .maybeSingle();
+        setRole((profileData?.role as Role) ?? "client");
+      }
 
       const { data: brandData, error: brandError } = await supabase
         .from("brands")
@@ -420,16 +434,18 @@ export default function BrandDashboardPage() {
         </div>
 
         <div className="flex gap-2 text-sm flex-wrap">
-          <Link
-            href={`/brands/${brandId}/retailers`}
-            className="inline-block px-4 py-2 rounded border hover:bg-gray-50"
-          >
+          <span className="px-3 py-1.5 rounded border text-white" style={{ background: "var(--foreground)" }}>
+            Overview
+          </span>
+          <Link href={`/brands/${brandId}/retailers`} className="px-3 py-1.5 rounded border hover:bg-gray-50">
             Retailers
           </Link>
-          <Link
-            href={`/brands/${brandId}/category-review`}
-            className="inline-block px-4 py-2 rounded border hover:bg-gray-50"
-          >
+          {role !== "client" && (
+            <Link href="/board" className="px-3 py-1.5 rounded border hover:bg-gray-50">
+              Board
+            </Link>
+          )}
+          <Link href={`/brands/${brandId}/category-review`} className="px-3 py-1.5 rounded border hover:bg-gray-50">
             Category Review
           </Link>
         </div>
