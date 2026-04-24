@@ -52,18 +52,8 @@ export async function POST(req: Request) {
       }
     }
 
-    if (!repId) {
-      const { data: fallbackProfile } = await supabase
-        .from("profiles")
-        .select("id, full_name")
-        .in("role", ["admin", "rep"])
-        .limit(1)
-        .maybeSingle();
-      if (fallbackProfile) {
-        repId = fallbackProfile.id;
-        if (fallbackProfile.full_name) senderName = fallbackProfile.full_name;
-      }
-    }
+    // No fallback: if senderEmail didn't match a profile, senderName stays as
+    // senderEmail and repId stays null rather than impersonating the first admin.
 
     const activityIds: string[] = [];
     const clientMessage = buildClientMessage(activityTypeKey);
