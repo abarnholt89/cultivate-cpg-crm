@@ -56,6 +56,12 @@ type CategoryReviewRow = {
   reset_date: string | null;
 };
 
+type AuthorizedRow = {
+  retailer_id: string;
+  authorized_item_count: number;
+  authorized_upc_count: number;
+};
+
 type MessageRow = {
   id: string;
   retailer_id: string;
@@ -254,6 +260,7 @@ export default function BrandRetailersPage() {
   const [retailers, setRetailers] = useState<Retailer[]>([]);
   const [pipelineMap, setPipelineMap] = useState<Record<string, PipelineRow>>({});
   const [calendarMap, setCalendarMap] = useState<Record<string, CategoryReviewRow[]>>({});
+  const [authorizedMap, setAuthorizedMap] = useState<Record<string, AuthorizedRow>>({});
   const [inlineMessages, setInlineMessages] = useState<Record<string, { client: MessageRow[]; internal: MessageRow[] }>>({});
   const [role, setRole] = useState<Role>(null);
   const [userId, setUserId] = useState<string | null>(null);
@@ -443,6 +450,17 @@ export default function BrandRetailersPage() {
       });
       setSavedManualReviews(nextSavedManual);
       setPendingManualReviews({});
+
+      const { data: authorizedData } = await supabase
+        .from("authorized_accounts_with_brand_id")
+        .select("retailer_id,authorized_item_count,authorized_upc_count")
+        .eq("brand_id", brandId);
+
+      const nextAuthorizedMap: Record<string, AuthorizedRow> = {};
+      ((authorizedData ?? []) as AuthorizedRow[]).forEach((row) => {
+        nextAuthorizedMap[row.retailer_id] = row;
+      });
+      setAuthorizedMap(nextAuthorizedMap);
 
       // Load all messages per retailer for inline display
       const isAdminOrRep = resolvedRole === "admin" || resolvedRole === "rep";
@@ -919,7 +937,7 @@ export default function BrandRetailersPage() {
       }
 
       if (selectedFilter === "authorized") {
-        return !!row.authorized_items_note?.trim();
+        return !!authorizedMap[r.id];
       }
 
       if (
@@ -963,7 +981,7 @@ export default function BrandRetailersPage() {
     }
 
     return retailers.filter((r) => matchesFilter(r) && matchesSearch(r) && matchesRep(r));
-  }, [retailers, pipelineMap, calendarMap, selectedFilter, query, selectedRep]);
+  }, [retailers, pipelineMap, calendarMap, authorizedMap, selectedFilter, query, selectedRep]);
 
   return (
     <div className="p-6 space-y-6">
@@ -1032,6 +1050,7 @@ export default function BrandRetailersPage() {
                   dismissedReviewKeys.has(rowKey(rev.retailer_name, rev.universal_category, rev.retailer_category_review_name))
                 )
               : [];
+            const authorized = authorizedMap[r.id];
             const hasLegacyNotes = !!row.notes?.trim();
             const activeTab: "client" | "internal" = cardTab[r.id] ?? "client";
             const clientMsgs = inlineMessages[r.id]?.client ?? [];
@@ -1075,6 +1094,12 @@ export default function BrandRetailersPage() {
                   </div>
 
                   <div className="flex flex-col items-end gap-2 shrink-0">
+                    {authorized ? (
+                      <Badge
+                        label={`${authorized.authorized_item_count} SKUs authorized`}
+                        tone="good"
+                      />
+                    ) : null}
                     <a
                       className="text-xs underline cursor-pointer"
                       style={{ color: "var(--muted-foreground)" }}
