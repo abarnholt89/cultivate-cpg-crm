@@ -109,6 +109,35 @@ export async function POST(req: Request) {
 
       activityIds.push(data.id);
 
+      // Immediately bind this Gmail thread to the brand/retailer so that
+      // inbound replies are matched back without relying on the time-windowed
+      // email_log_tokens webhook path. Non-fatal if this fails.
+      if (gmailThreadId && senderEmail) {
+        try {
+          const { error: threadCtxError } = await supabase
+            .from("gmail_thread_context")
+            .upsert(
+              {
+                thread_id: gmailThreadId,
+                initial_message_id: gmailMessageId || null,
+                rep_id: repId,
+                gmail_email: senderEmail.trim().toLowerCase(),
+                retailer_id: retailerId,
+                brand_id: brandId,
+                activity_type_key: activityTypeKey,
+                status: "active",
+                updated_at: new Date().toISOString(),
+              },
+              { onConflict: "thread_id" }
+            );
+          if (threadCtxError) {
+            console.error("[create-activity] gmail_thread_context upsert failed:", threadCtxError.message);
+          }
+        } catch (ctxErr: any) {
+          console.error("[create-activity] gmail_thread_context unexpected error:", ctxErr.message);
+        }
+      }
+
       // Mirror to brand_retailer_messages so the activity appears in the
       // retailer card inline Messages view. Non-fatal if this fails.
       try {
