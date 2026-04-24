@@ -287,23 +287,6 @@ export default function BrandRetailersPage() {
   const isRepOrAdmin = role === "admin" || role === "rep";
 
   const didHashScrollRef = useRef(false);
-  useEffect(() => {
-    if (didHashScrollRef.current) return;
-    if (!Object.keys(pipelineMap).length) return;
-    const hash = window.location.hash;
-    if (!hash) return;
-    const targetId = hash.slice(1); // e.g. "retailer-abc123"
-    const timer = setTimeout(() => {
-      const el = document.getElementById(targetId);
-      if (!el) {
-        console.warn(`[hash-scroll] element #${targetId} not found — may be filtered out`);
-        return;
-      }
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-      didHashScrollRef.current = true;
-    }, 100);
-    return () => clearTimeout(timer);
-  }, [pipelineMap]);
 
   useEffect(() => {
     setSelectedFilter(filterFromUrl);
@@ -501,6 +484,25 @@ export default function BrandRetailersPage() {
         nextCardAttachments[a.retailer_id][a.message_id].push(a);
       });
       setCardAttachments(nextCardAttachments);
+
+      // Scroll to hashed retailer card after all data is loaded and rendered.
+      // We defer with setTimeout so React has flushed all the state updates above
+      // into the DOM before we attempt getElementById.
+      if (!didHashScrollRef.current) {
+        const hash = window.location.hash;
+        if (hash) {
+          const targetId = hash.slice(1);
+          setTimeout(() => {
+            const el = document.getElementById(targetId);
+            if (!el) {
+              console.warn(`[hash-scroll] element #${targetId} not found — may be filtered out`);
+              return;
+            }
+            el.scrollIntoView({ behavior: "smooth", block: "start" });
+            didHashScrollRef.current = true;
+          }, 100);
+        }
+      }
     }
 
     load();
