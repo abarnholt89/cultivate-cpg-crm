@@ -238,7 +238,7 @@ export default function RepInboxPage() {
 
       let ownedRetailerIds: string[] = [];
 
-if (nextRole === "rep" || nextRole === "admin") {
+if (nextRole === "rep") {
   const { data: ownedRetailers, error: ownedRetailersError } = await supabase
     .from("retailers")
     .select("id")
@@ -268,34 +268,55 @@ const followUpCountPromise =
         .lt("next_follow_up_at", new Date().toISOString());
 
 const timingPromise =
-  ownedRetailerIds.length === 0
-    ? Promise.resolve({ data: [], error: null })
+  nextRole === "rep"
+    ? ownedRetailerIds.length === 0
+      ? Promise.resolve({ data: [], error: null })
+      : supabase
+          .from("brand_retailer_timing")
+          .select(
+            "id,brand_id,retailer_id,account_status,category_review_date,reset_date,next_follow_up_at"
+          )
+          .in("retailer_id", ownedRetailerIds)
     : supabase
         .from("brand_retailer_timing")
         .select(
           "id,brand_id,retailer_id,account_status,category_review_date,reset_date,next_follow_up_at"
-        )
-        .in("retailer_id", ownedRetailerIds);
+        );
 
 const clientMessagesPromise =
-  ownedRetailerIds.length === 0
-    ? Promise.resolve({ data: [], error: null })
+  nextRole === "rep"
+    ? ownedRetailerIds.length === 0
+      ? Promise.resolve({ data: [], error: null })
+      : supabase
+          .from("brand_retailer_messages")
+          .select("id,brand_id,retailer_id,sender_id,sender_name,body,created_at")
+          .eq("visibility", "client")
+          .in("retailer_id", ownedRetailerIds)
+          .neq("sender_id", userId)
+          .order("created_at", { ascending: false })
+          .limit(50)
     : supabase
         .from("brand_retailer_messages")
         .select("id,brand_id,retailer_id,sender_id,sender_name,body,created_at")
         .eq("visibility", "client")
-        .in("retailer_id", ownedRetailerIds)
         .neq("sender_id", userId)
         .order("created_at", { ascending: false })
         .limit(50);
 
 const calendarPromise =
-  ownedRetailerIds.length === 0
-    ? Promise.resolve({ data: [], error: null })
+  nextRole === "rep"
+    ? ownedRetailerIds.length === 0
+      ? Promise.resolve({ data: [], error: null })
+      : supabase
+          .from("brand_category_review_view")
+          .select("brand_id,retailer_id,retailer_name,retailer_category_review_name,universal_category,review_date")
+          .in("retailer_id", ownedRetailerIds)
+          .not("review_date", "is", null)
+          .gte("review_date", prev30)
+          .lte("review_date", next30)
     : supabase
         .from("brand_category_review_view")
         .select("brand_id,retailer_id,retailer_name,retailer_category_review_name,universal_category,review_date")
-        .in("retailer_id", ownedRetailerIds)
         .not("review_date", "is", null)
         .gte("review_date", prev30)
         .lte("review_date", next30);
