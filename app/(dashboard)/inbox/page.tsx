@@ -77,6 +77,15 @@ type UpcomingItem = {
   account_status: TimingRow["account_status"];
 };
 
+type CalendarViewRow = {
+  brand_id: string;
+  retailer_id: string | null;
+  retailer_name: string;
+  retailer_category_review_name: string | null;
+  universal_category: string;
+  review_date: string | null;
+};
+
 type ClientMessageInboxRow = {
   id: string;
   brand_id: string;
@@ -219,6 +228,7 @@ export default function RepInboxPage() {
 
       const today = todayISO();
       const next30 = addDaysISO(today, 30);
+      const prev30 = addDaysISO(today, -30);
       const monthStart = new Date();
       monthStart.setDate(1);
       monthStart.setHours(0, 0, 0, 0);
@@ -290,6 +300,24 @@ const clientMessagesPromise =
         .order("created_at", { ascending: false })
         .limit(50);
 
+const calendarPromise =
+  nextRole === "rep"
+    ? ownedRetailerIds.length === 0
+      ? Promise.resolve({ data: [], error: null })
+      : supabase
+          .from("brand_category_review_view")
+          .select("brand_id,retailer_id,retailer_name,retailer_category_review_name,universal_category,review_date")
+          .in("retailer_id", ownedRetailerIds)
+          .not("review_date", "is", null)
+          .gte("review_date", prev30)
+          .lte("review_date", next30)
+    : supabase
+        .from("brand_category_review_view")
+        .select("brand_id,retailer_id,retailer_name,retailer_category_review_name,universal_category,review_date")
+        .not("review_date", "is", null)
+        .gte("review_date", prev30)
+        .lte("review_date", next30);
+
       const [
         followUpCountResult,
         tasksResult,
@@ -297,6 +325,7 @@ const clientMessagesPromise =
         clientMessagesResult,
         agingResult,
         activitiesResult,
+        calendarResult,
       ] = await Promise.all([
         followUpCountPromise,
         supabase.rpc("get_my_rep_tasks", {
@@ -314,6 +343,7 @@ const clientMessagesPromise =
           .from("activities")
           .select("user_id,brand_id,retailer_id,created_at")
           .gte("created_at", monthStart.toISOString()),
+        calendarPromise,
       ]);
 
       const taskRows = (tasksResult.data as RepTaskRow[]) ?? [];
@@ -370,13 +400,15 @@ if (clientMessagesResult.error) {
       const timingRows = ((timingResult.data as TimingRow[]) ?? []).filter((row) => {
         return (
           (row.category_review_date &&
-            isBetweenInclusive(row.category_review_date, today, next30)) ||
+            isBetweenInclusive(row.category_review_date, prev30, next30)) ||
           (row.reset_date &&
-            isBetweenInclusive(row.reset_date, today, next30)) ||
+            isBetweenInclusive(row.reset_date, prev30, next30)) ||
           (row.next_follow_up_at &&
             isBetweenInclusive(row.next_follow_up_at.slice(0, 10), today, next30))
         );
       });
+
+      const calendarRows = ((calendarResult.data as CalendarViewRow[]) ?? []);
 
       const brandIds = [
         ...new Set([
@@ -384,6 +416,7 @@ if (clientMessagesResult.error) {
           ...clientMessageRows.map((m) => m.brand_id),
           ...taskRows.map((t) => t.brand_id),
           ...agingRows.map((a) => a.brand_id),
+          ...calendarRows.map((r) => r.brand_id),
         ]),
       ];
 
@@ -393,6 +426,7 @@ if (clientMessagesResult.error) {
           ...clientMessageRows.map((m) => m.retailer_id),
           ...taskRows.map((t) => t.retailer_id),
           ...agingRows.map((a) => a.retailer_id),
+          ...(calendarRows.map((r) => r.retailer_id).filter(Boolean) as string[]),
         ]),
       ];
 
@@ -504,7 +538,7 @@ if (clientMessagesResult.error) {
 
         if (
           row.category_review_date &&
-          isBetweenInclusive(row.category_review_date, today, next30)
+          isBetweenInclusive(row.category_review_date, prev30, next30)
         ) {
           upcomingItems.push({
             id: `${row.id}-category_review_date`,
@@ -519,7 +553,7 @@ if (clientMessagesResult.error) {
           });
         }
 
-        if (row.reset_date && isBetweenInclusive(row.reset_date, today, next30)) {
+        if (row.reset_date && isBetweenInclusive(row.reset_date, prev30, next30)) {
           upcomingItems.push({
             id: `${row.id}-reset_date`,
             brand_id: row.brand_id,
@@ -549,6 +583,25 @@ if (clientMessagesResult.error) {
             account_status: row.account_status,
           });
         }
+      });
+
+      calendarRows.forEach((row, idx) => {
+        if (!row.review_date) return;
+        const brand = nextBrandsById[row.brand_id];
+        const retailer = row.retailer_id ? nextRetailersById[row.retailer_id] : null;
+        const retailerHeadline =
+          retailer?.banner?.trim() ? retailer.banner : retailer?.name ?? row.retailer_name;
+        upcomingItems.push({
+          id: `cal-${row.brand_id}-${row.retailer_name}-${row.universal_category}-${idx}`,
+          brand_id: row.brand_id,
+          brand_name: brand?.name ?? "Brand",
+          retailer_id: row.retailer_id ?? "",
+          retailer_name: retailer?.name ?? row.retailer_name,
+          retailer_headline: retailerHeadline,
+          milestone_type: "Category Review",
+          milestone_date: row.review_date,
+          account_status: "upcoming_review",
+        });
       });
 
       upcomingItems.sort((a, b) => a.milestone_date.localeCompare(b.milestone_date));
@@ -608,7 +661,7 @@ if (clientMessagesResult.error) {
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <PulseMetric label="Needs Follow Up" value={pulse.followUps} />
           <PulseMetric label="Stalled Accounts" value={pulse.stalled} />
-          <PulseMetric label="Upcoming Reviews" value={pulse.upcoming} />
+          <PulseMetric label="Review Activity" value={pulse.upcoming} />
           <PulseMetric label="Open Reminders" value={pulse.reminders} />
         </div>
       </div>
@@ -616,7 +669,7 @@ if (clientMessagesResult.error) {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <SummaryCard label="Client Messages" value={counts.messages} highlight />
         <SummaryCard label="MacGruber Reminders" value={counts.nudges} />
-        <SummaryCard label="Upcoming 30 Days" value={counts.upcoming} />
+        <SummaryCard label="Review Activity" value={counts.upcoming} />
         <SummaryCard label="Aging Accounts" value={counts.aging} />
       </div>
 
@@ -696,12 +749,12 @@ if (clientMessagesResult.error) {
 
         <section className="space-y-4 rounded-xl border border-border bg-card p-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-foreground">Upcoming 30 Days</h2>
+            <h2 className="text-lg font-semibold text-foreground">Review Activity</h2>
           </div>
 
           {upcoming.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No upcoming milestones in the next 30 days.
+              No review activity in the past or next 30 days.
             </p>
           ) : (
             <div className="space-y-3">

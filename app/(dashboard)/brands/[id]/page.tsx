@@ -47,6 +47,14 @@ type AuthorizedRow = {
   authorized_upc_count: number;
 };
 
+type ManualTimingRow = {
+  id: string;
+  retailer_id: string;
+  category: string | null;
+  category_review_date: string | null;
+  reset_date: string | null;
+};
+
 type MsgSummary = {
   count: number;
   latest_at: string | null;
@@ -127,6 +135,7 @@ export default function BrandDashboardPage() {
   const [brand, setBrand] = useState<Brand | null>(null);
   const [pipelineRows, setPipelineRows] = useState<PipelineRow[]>([]);
   const [calendarRows, setCalendarRows] = useState<CategoryReviewRow[]>([]);
+  const [manualTimingRows, setManualTimingRows] = useState<ManualTimingRow[]>([]);
   const [authorizedRows, setAuthorizedRows] = useState<AuthorizedRow[]>([]);
   const [retailersById, setRetailersById] = useState<Record<string, Retailer>>({});
   const [error, setError] = useState("");
@@ -154,7 +163,7 @@ export default function BrandDashboardPage() {
       if (!brandData) { setError("Brand not found."); return; }
       setBrand(brandData);
 
-      const [pipelineResponse, calendarResponse, authorizedResponse, msgsResponse] =
+      const [pipelineResponse, calendarResponse, authorizedResponse, msgsResponse, manualTimingResponse] =
         await Promise.all([
           supabase
             .from("brand_retailer_timing")
@@ -176,6 +185,10 @@ export default function BrandDashboardPage() {
             .eq("brand_id", brandId)
             .eq("visibility", "client")
             .order("created_at", { ascending: false }),
+          supabase
+            .from("brand_retailer_category_timing")
+            .select("id,retailer_id,category,category_review_date,reset_date")
+            .eq("brand_id", brandId),
         ]);
 
       if (pipelineResponse.error) { setError(pipelineResponse.error.message); return; }
@@ -185,6 +198,7 @@ export default function BrandDashboardPage() {
       const nextPipelineRows = (pipelineResponse.data as PipelineRow[]) ?? [];
       const nextCalendarRows = (calendarResponse.data as CategoryReviewRow[]) ?? [];
       const nextAuthorizedRows = (authorizedResponse.data as AuthorizedRow[]) ?? [];
+      const nextManualTimingRows = (manualTimingResponse.data as ManualTimingRow[]) ?? [];
       const allMsgs = (msgsResponse.data ?? []) as {
         id: string;
         retailer_id: string;
@@ -195,6 +209,7 @@ export default function BrandDashboardPage() {
 
       setPipelineRows(nextPipelineRows);
       setCalendarRows(nextCalendarRows);
+      setManualTimingRows(nextManualTimingRows);
       setAuthorizedRows(nextAuthorizedRows);
 
       // ── activity banner ──────────────────────────────────────────────────
@@ -238,6 +253,7 @@ export default function BrandDashboardPage() {
           ...nextPipelineRows.map((r) => r.retailer_id).filter(Boolean),
           ...((nextCalendarRows.map((r) => r.retailer_id).filter(Boolean) as string[]) ?? []),
           ...nextAuthorizedRows.map((r) => r.retailer_id).filter(Boolean),
+          ...nextManualTimingRows.map((r) => r.retailer_id).filter(Boolean),
         ]),
       ];
 
@@ -274,19 +290,23 @@ export default function BrandDashboardPage() {
 
   const summary = useMemo(() => {
     const today = todayISO();
+    const prev30 = addDaysISO(today, -30);
     const next30 = addDaysISO(today, 30);
     let upcomingReviews = 0;
     let inMotion = 0;
     let activeAccounts = 0;
     calendarRows.forEach((r) => {
-      if (r.review_date && isBetweenInclusive(r.review_date, today, next30)) upcomingReviews++;
+      if (r.review_date && isBetweenInclusive(r.review_date, prev30, next30)) upcomingReviews++;
+    });
+    manualTimingRows.forEach((r) => {
+      if (r.category_review_date && isBetweenInclusive(r.category_review_date, prev30, next30)) upcomingReviews++;
     });
     pipelineRows.forEach((r) => {
       if (isInMotion(r.account_status)) inMotion++;
       if (r.account_status === "active_account") activeAccounts++;
     });
     return { upcomingReviews, inMotion, activeAccounts };
-  }, [pipelineRows, calendarRows]);
+  }, [pipelineRows, calendarRows, manualTimingRows]);
 
   // Distinct retailers with at least one client-visible message in the last 7 days
   const recentRetailerCount = useMemo(() => {
@@ -296,14 +316,43 @@ export default function BrandDashboardPage() {
     ).length;
   }, [messagesByRetailer]);
 
+  type ReviewActivityItem = {
+    key: string;
+    retailer_name: string;
+    category_label: string;
+    date: string;
+    retailer_id: string | null;
+  };
+
   const upcomingList = useMemo(() => {
     const today = todayISO();
+    const prev30 = addDaysISO(today, -30);
     const next30 = addDaysISO(today, 30);
-    return [...calendarRows]
-      .filter((r) => !!r.review_date && isBetweenInclusive(r.review_date, today, next30))
-      .sort((a, b) => (a.review_date || "").localeCompare(b.review_date || ""))
+
+    const calendarItems: ReviewActivityItem[] = calendarRows
+      .filter((r) => !!r.review_date && isBetweenInclusive(r.review_date, prev30, next30))
+      .map((r) => ({
+        key: `cal-${r.retailer_name}-${r.universal_category}-${r.review_date}`,
+        retailer_name: r.retailer_name,
+        category_label: r.retailer_category_review_name || r.universal_category,
+        date: r.review_date!,
+        retailer_id: r.retailer_id,
+      }));
+
+    const manualItems: ReviewActivityItem[] = manualTimingRows
+      .filter((r) => !!r.category_review_date && isBetweenInclusive(r.category_review_date, prev30, next30))
+      .map((r) => ({
+        key: `manual-${r.id}`,
+        retailer_name: retailersById[r.retailer_id]?.name ?? "Retailer",
+        category_label: r.category || "Category Review",
+        date: r.category_review_date!,
+        retailer_id: r.retailer_id,
+      }));
+
+    return [...calendarItems, ...manualItems]
+      .sort((a, b) => a.date.localeCompare(b.date))
       .slice(0, 8);
-  }, [calendarRows]);
+  }, [calendarRows, manualTimingRows, retailersById]);
 
   const recentWorkflow = useMemo(() => {
     const sevenDaysAgo = nDaysAgoISO(7);
@@ -552,29 +601,25 @@ export default function BrandDashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="border rounded-xl p-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Upcoming Reviews (30 days)</h2>
+            <h2 className="text-lg font-semibold">Review Activity</h2>
             <Link href={`/brands/${brandId}/category-review`} className="text-sm underline">View all</Link>
           </div>
 
           {upcomingList.length === 0 ? (
-            <p className="text-sm text-gray-600 mt-4">No upcoming reviews in the next 30 days.</p>
+            <p className="text-sm text-gray-600 mt-4">No review activity in the past or next 30 days.</p>
           ) : (
             <div className="space-y-3 mt-4">
-              {upcomingList.map((row, idx) => (
+              {upcomingList.map((item) => (
                 <div
-                  key={`${row.retailer_name}-${row.universal_category}-${idx}`}
+                  key={item.key}
                   className="block border rounded-lg p-3"
                 >
-                  <div className="font-medium">{row.retailer_name}</div>
-                  {row.retailer_category_review_name ? (
-                    <div className="text-sm text-gray-500">{row.retailer_category_review_name}</div>
-                  ) : null}
-                  <div className="text-sm text-gray-600 mt-1">Universal Category: {row.universal_category}</div>
-                  <div className="text-sm text-gray-600">Review Date: {prettyDate(row.review_date)}</div>
-                  <div className="text-sm text-gray-600">Reset Date: {prettyDate(row.reset_date)}</div>
-                  {row.retailer_id ? (
+                  <div className="font-medium">{item.retailer_name}</div>
+                  <div className="text-sm text-gray-500">{item.category_label}</div>
+                  <div className="text-sm text-gray-600 mt-1">{prettyDate(item.date)}</div>
+                  {item.retailer_id ? (
                     <div className="mt-2">
-                      <Link href={`/brands/${brandId}/retailers#retailer-${row.retailer_id}`} className="text-sm underline">
+                      <Link href={`/brands/${brandId}/retailers#retailer-${item.retailer_id}`} className="text-sm underline">
                         Open retailer →
                       </Link>
                     </div>
