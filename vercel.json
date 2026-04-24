@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/renew-gmail-watch",
-      "schedule": "0 0 */5 * *"
+      "schedule": "0 0 */6 * *"
     }
   ]
 }
