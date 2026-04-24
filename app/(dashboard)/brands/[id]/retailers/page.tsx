@@ -1133,10 +1133,8 @@ export default function BrandRetailersPage() {
                 style={{
                   border: "1px solid var(--border)",
                   background: "var(--card)",
-                  ...(isRepOrAdmin && {
-                    borderLeft: `4px solid ${statusLeftBorderColor(row.account_status)}`,
-                    boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
-                  }),
+                  borderLeft: `4px solid ${statusLeftBorderColor(row.account_status)}`,
+                  boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
                 }}
               >
                 {/* Header */}
