@@ -130,6 +130,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       .select("id")
       .eq("visibility", "client")
       .in("retailer_id", retailerIds)
+      .neq("sender_id", userId)
       .order("created_at", { ascending: false })
       .limit(100);
 
