@@ -37,23 +37,43 @@ export async function POST(req: Request) {
 
     console.log("[create-activity] senderEmail received:", senderEmail);
 
-    let repId: string | null = null;
+    const SYSTEM_FALLBACK_REP_ID = "b47ace4b-fd4d-4d2f-96da-9794781bf0ef";
+
+    let repId: string = SYSTEM_FALLBACK_REP_ID;
     let senderName: string = senderEmail || "Cultivate Team";
 
     if (senderEmail) {
+      // Tier 1: exact case-insensitive email match
       const { data: profile } = await supabase
         .from("profiles")
         .select("id, full_name")
         .ilike("email", senderEmail.trim())
         .maybeSingle();
+
       if (profile) {
         repId = profile.id;
         if (profile.full_name) senderName = profile.full_name;
+      } else {
+        // Tier 2: match on local part before @ (e.g. "george" from "george@cultivatecpg.com")
+        const localPart = senderEmail.trim().split("@")[0];
+        if (localPart) {
+          const { data: localProfile } = await supabase
+            .from("profiles")
+            .select("id, full_name")
+            .ilike("email", `${localPart}@%`)
+            .maybeSingle();
+
+          if (localProfile) {
+            repId = localProfile.id;
+            if (localProfile.full_name) senderName = localProfile.full_name;
+          } else {
+            // Tier 3: system fallback — rep_id is set but senderName stays as
+            // the raw email so the actual sender is still auditable in the record.
+            console.warn("[create-activity] no profile match for:", senderEmail, "— using system fallback rep_id");
+          }
+        }
       }
     }
-
-    // No fallback: if senderEmail didn't match a profile, senderName stays as
-    // senderEmail and repId stays null rather than impersonating the first admin.
 
     const activityIds: string[] = [];
     const clientMessage = buildClientMessage(activityTypeKey);
