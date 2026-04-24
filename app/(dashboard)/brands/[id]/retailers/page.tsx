@@ -278,6 +278,8 @@ export default function BrandRetailersPage() {
   const [cardCompose, setCardCompose] = useState<Record<string, string>>({});
   const [cardFile, setCardFile] = useState<Record<string, File | null>>({});
   const [cardSending, setCardSending] = useState<Record<string, boolean>>({});
+  const [editingMessages, setEditingMessages] = useState<Record<string, string>>({});
+  const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
   // Attachments: retailer_id → message_id → AttachmentRow[]
   const [cardAttachments, setCardAttachments] = useState<Record<string, Record<string, AttachmentRow[]>>>({});
   const [signedImageUrls, setSignedImageUrls] = useState<Record<string, string>>({});
@@ -817,6 +819,50 @@ export default function BrandRetailersPage() {
       file_size: file.size,
       uploaded_by_user_id: userId,
     });
+  }
+
+  async function editMessage(messageId: string, retailerId: string, visibility: "client" | "internal", newBody: string) {
+    const { error } = await supabase
+      .from("brand_retailer_messages")
+      .update({ body: newBody })
+      .eq("id", messageId);
+    if (error) { setStatus(error.message); return; }
+    setInlineMessages((prev) => {
+      const stream = visibility === "internal" ? "internal" : "client";
+      const msgs = prev[retailerId]?.[stream] ?? [];
+      return {
+        ...prev,
+        [retailerId]: {
+          ...prev[retailerId],
+          [stream]: msgs.map((m) => m.id === messageId ? { ...m, body: newBody } : m),
+        },
+      };
+    });
+    setEditingMessages((prev) => {
+      const next = { ...prev };
+      delete next[messageId];
+      return next;
+    });
+  }
+
+  async function deleteMessage(messageId: string, retailerId: string, visibility: "client" | "internal") {
+    const { error } = await supabase
+      .from("brand_retailer_messages")
+      .delete()
+      .eq("id", messageId);
+    if (error) { setStatus(error.message); return; }
+    setInlineMessages((prev) => {
+      const stream = visibility === "internal" ? "internal" : "client";
+      const msgs = prev[retailerId]?.[stream] ?? [];
+      return {
+        ...prev,
+        [retailerId]: {
+          ...prev[retailerId],
+          [stream]: msgs.filter((m) => m.id !== messageId),
+        },
+      };
+    });
+    setDeletingMessageId(null);
   }
 
   async function sendMessage(retailerId: string) {
@@ -1621,72 +1667,144 @@ export default function BrandRetailersPage() {
                         {visibleMsgs.map((m) => {
                           const attachments = cardAttachments[r.id]?.[m.id] ?? [];
                           const hideBody = m.body === "[Attachment]" && attachments.length > 0;
+                          const isEditing = editingMessages[m.id] !== undefined;
+                          const isDeleting = deletingMessageId === m.id;
                           return (
                             <div
                               key={m.id}
                               className="rounded-md px-3 py-2 text-sm space-y-1.5"
                               style={{ background: "var(--muted)" }}
                             >
-                              <div className="flex items-baseline justify-between gap-2">
+                              <div className="flex items-center justify-between gap-2">
                                 <span className="text-xs font-medium" style={{ color: "var(--foreground)" }}>
                                   {m.sender_name ?? "Cultivate"}
                                 </span>
-                                <span className="text-xs shrink-0" style={{ color: "var(--muted-foreground)" }}>
-                                  {timeAgo(m.created_at)}
-                                </span>
-                              </div>
-                              {!hideBody && (
-                                <div style={{ color: "var(--foreground)" }}>{m.body}</div>
-                              )}
-                              {attachments.length > 0 && (
-                                <div className="space-y-1.5 pt-0.5">
-                                  {attachments.map((a) => {
-                                    if (isImageMime(a.mime_type)) {
-                                      const url = signedImageUrls[a.id];
-                                      return url ? (
-                                        <img
-                                          key={a.id}
-                                          src={url}
-                                          alt={a.file_name}
-                                          title="Click to open full size"
-                                          onClick={() => openAttachment(a.storage_path)}
-                                          style={{
-                                            maxWidth: 200,
-                                            maxHeight: 160,
-                                            borderRadius: 6,
-                                            objectFit: "cover",
-                                            display: "block",
-                                            cursor: "pointer",
-                                          }}
-                                          onError={(e) => {
-                                            (e.currentTarget as HTMLImageElement).style.display = "none";
-                                            e.currentTarget.insertAdjacentText("afterend", "File unavailable");
-                                          }}
-                                        />
-                                      ) : (
-                                        <div key={a.id} className="text-xs italic" style={{ color: "var(--muted-foreground)" }}>
-                                          Loading image…
-                                        </div>
-                                      );
-                                    }
-                                    return (
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+                                    {timeAgo(m.created_at)}
+                                  </span>
+                                  {isRepOrAdmin && !isEditing && !isDeleting && (
+                                    <>
                                       <button
-                                        key={a.id}
-                                        type="button"
-                                        onClick={() => openAttachment(a.storage_path)}
-                                        className="flex items-center gap-1.5 text-xs rounded-md px-2 py-1.5 hover:opacity-80 transition-opacity"
-                                        style={{
-                                          background: "var(--secondary)",
-                                          border: "1px solid var(--border)",
-                                          color: "var(--foreground)",
-                                        }}
+                                        className="text-xs opacity-40 hover:opacity-100 transition-opacity"
+                                        style={{ color: "var(--muted-foreground)" }}
+                                        onClick={() => setEditingMessages((prev) => ({ ...prev, [m.id]: m.body }))}
                                       >
-                                        📄 {a.file_name}
-                                        {a.file_size ? <span style={{ color: "var(--muted-foreground)" }}>· {formatFileSize(a.file_size)}</span> : null}
+                                        Edit
                                       </button>
-                                    );
-                                  })}
+                                      <button
+                                        className="text-xs opacity-40 hover:opacity-100 transition-opacity"
+                                        style={{ color: "var(--muted-foreground)" }}
+                                        onClick={() => setDeletingMessageId(m.id)}
+                                      >
+                                        Delete
+                                      </button>
+                                    </>
+                                  )}
                                 </div>
+                              </div>
+                              {isDeleting ? (
+                                <div className="space-y-2 pt-1">
+                                  <div className="text-xs" style={{ color: "var(--muted-foreground)" }}>Delete this message?</div>
+                                  <div className="flex gap-2">
+                                    <button
+                                      className="text-xs px-2 py-1 rounded font-medium"
+                                      style={{ background: "#dc2626", color: "#fff" }}
+                                      onClick={() => deleteMessage(m.id, r.id, m.visibility)}
+                                    >
+                                      Confirm delete
+                                    </button>
+                                    <button
+                                      className="text-xs px-2 py-1 rounded"
+                                      style={{ border: "1px solid var(--border)", color: "var(--muted-foreground)" }}
+                                      onClick={() => setDeletingMessageId(null)}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : isEditing ? (
+                                <div className="space-y-2 pt-1">
+                                  <textarea
+                                    className="border rounded-lg px-3 py-2 w-full text-sm"
+                                    style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                                    rows={3}
+                                    value={editingMessages[m.id]}
+                                    onChange={(e) => setEditingMessages((prev) => ({ ...prev, [m.id]: e.target.value }))}
+                                  />
+                                  <div className="flex gap-2">
+                                    <button
+                                      className="text-xs px-2 py-1 rounded font-medium"
+                                      style={{ background: "var(--foreground)", color: "var(--background)" }}
+                                      onClick={() => editMessage(m.id, r.id, m.visibility, editingMessages[m.id])}
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      className="text-xs px-2 py-1 rounded"
+                                      style={{ border: "1px solid var(--border)", color: "var(--muted-foreground)" }}
+                                      onClick={() => setEditingMessages((prev) => { const next = { ...prev }; delete next[m.id]; return next; })}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  {!hideBody && (
+                                    <div style={{ color: "var(--foreground)" }}>{m.body}</div>
+                                  )}
+                                  {attachments.length > 0 && (
+                                    <div className="space-y-1.5 pt-0.5">
+                                      {attachments.map((a) => {
+                                        if (isImageMime(a.mime_type)) {
+                                          const url = signedImageUrls[a.id];
+                                          return url ? (
+                                            <img
+                                              key={a.id}
+                                              src={url}
+                                              alt={a.file_name}
+                                              title="Click to open full size"
+                                              onClick={() => openAttachment(a.storage_path)}
+                                              style={{
+                                                maxWidth: 200,
+                                                maxHeight: 160,
+                                                borderRadius: 6,
+                                                objectFit: "cover",
+                                                display: "block",
+                                                cursor: "pointer",
+                                              }}
+                                              onError={(e) => {
+                                                (e.currentTarget as HTMLImageElement).style.display = "none";
+                                                e.currentTarget.insertAdjacentText("afterend", "File unavailable");
+                                              }}
+                                            />
+                                          ) : (
+                                            <div key={a.id} className="text-xs italic" style={{ color: "var(--muted-foreground)" }}>
+                                              Loading image…
+                                            </div>
+                                          );
+                                        }
+                                        return (
+                                          <button
+                                            key={a.id}
+                                            type="button"
+                                            onClick={() => openAttachment(a.storage_path)}
+                                            className="flex items-center gap-1.5 text-xs rounded-md px-2 py-1.5 hover:opacity-80 transition-opacity"
+                                            style={{
+                                              background: "var(--secondary)",
+                                              border: "1px solid var(--border)",
+                                              color: "var(--foreground)",
+                                            }}
+                                          >
+                                            📄 {a.file_name}
+                                            {a.file_size ? <span style={{ color: "var(--muted-foreground)" }}>· {formatFileSize(a.file_size)}</span> : null}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </>
                               )}
                             </div>
                           );
