@@ -63,6 +63,7 @@ type Retailer = {
   id: string;
   name: string;
   banner: string | null;
+  rep_owner_user_id: string | null;
 };
 
 type UpcomingItem = {
@@ -184,6 +185,8 @@ export default function RepInboxPage() {
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
   const [leaderboard, setLeaderboard] = useState<LeaderboardRow[]>([]);
+  const [repProfiles, setRepProfiles] = useState<{ id: string; full_name: string }[]>([]);
+  const [agingRepFilter, setAgingRepFilter] = useState("");
   const [pulse, setPulse] = useState({
     followUps: 0,
     stalled: 0,
@@ -235,7 +238,7 @@ export default function RepInboxPage() {
 
       let ownedRetailerIds: string[] = [];
 
-if (nextRole === "rep") {
+if (nextRole === "rep" || nextRole === "admin") {
   const { data: ownedRetailers, error: ownedRetailersError } = await supabase
     .from("retailers")
     .select("id")
@@ -265,55 +268,34 @@ const followUpCountPromise =
         .lt("next_follow_up_at", new Date().toISOString());
 
 const timingPromise =
-  nextRole === "rep"
-    ? ownedRetailerIds.length === 0
-      ? Promise.resolve({ data: [], error: null })
-      : supabase
-          .from("brand_retailer_timing")
-          .select(
-            "id,brand_id,retailer_id,account_status,category_review_date,reset_date,next_follow_up_at"
-          )
-          .in("retailer_id", ownedRetailerIds)
+  ownedRetailerIds.length === 0
+    ? Promise.resolve({ data: [], error: null })
     : supabase
         .from("brand_retailer_timing")
         .select(
           "id,brand_id,retailer_id,account_status,category_review_date,reset_date,next_follow_up_at"
-        );
+        )
+        .in("retailer_id", ownedRetailerIds);
 
 const clientMessagesPromise =
-  nextRole === "rep"
-    ? ownedRetailerIds.length === 0
-      ? Promise.resolve({ data: [], error: null })
-      : supabase
-          .from("brand_retailer_messages")
-          .select("id,brand_id,retailer_id,sender_id,sender_name,body,created_at")
-          .eq("visibility", "client")
-          .in("retailer_id", ownedRetailerIds)
-          .neq("sender_id", userId)
-          .order("created_at", { ascending: false })
-          .limit(50)
+  ownedRetailerIds.length === 0
+    ? Promise.resolve({ data: [], error: null })
     : supabase
         .from("brand_retailer_messages")
         .select("id,brand_id,retailer_id,sender_id,sender_name,body,created_at")
         .eq("visibility", "client")
+        .in("retailer_id", ownedRetailerIds)
         .neq("sender_id", userId)
         .order("created_at", { ascending: false })
         .limit(50);
 
 const calendarPromise =
-  nextRole === "rep"
-    ? ownedRetailerIds.length === 0
-      ? Promise.resolve({ data: [], error: null })
-      : supabase
-          .from("brand_category_review_view")
-          .select("brand_id,retailer_id,retailer_name,retailer_category_review_name,universal_category,review_date")
-          .in("retailer_id", ownedRetailerIds)
-          .not("review_date", "is", null)
-          .gte("review_date", prev30)
-          .lte("review_date", next30)
+  ownedRetailerIds.length === 0
+    ? Promise.resolve({ data: [], error: null })
     : supabase
         .from("brand_category_review_view")
         .select("brand_id,retailer_id,retailer_name,retailer_category_review_name,universal_category,review_date")
+        .in("retailer_id", ownedRetailerIds)
         .not("review_date", "is", null)
         .gte("review_date", prev30)
         .lte("review_date", next30);
@@ -430,12 +412,15 @@ if (clientMessagesResult.error) {
         ]),
       ];
 
-      const [brandsResult, retailersResult] = await Promise.all([
+      const [brandsResult, retailersResult, repProfilesResult] = await Promise.all([
         brandIds.length
           ? supabase.from("brands").select("id,name").in("id", brandIds)
           : Promise.resolve({ data: [], error: null }),
         retailerIds.length
-          ? supabase.from("retailers").select("id,name,banner").in("id", retailerIds)
+          ? supabase.from("retailers").select("id,name,banner,rep_owner_user_id").in("id", retailerIds)
+          : Promise.resolve({ data: [], error: null }),
+        nextRole === "admin"
+          ? supabase.from("profiles").select("id,full_name").eq("role", "rep").order("full_name")
           : Promise.resolve({ data: [], error: null }),
       ]);
 
@@ -458,6 +443,10 @@ if (clientMessagesResult.error) {
         nextRetailersById[r.id] = r;
       });
       setRetailersById(nextRetailersById);
+
+      setRepProfiles(
+        ((repProfilesResult.data as { id: string; full_name: string }[]) ?? [])
+      );
 
       const activityUserIds = [
         ...new Set(activityRows.map((row) => row.user_id).filter(Boolean)),
@@ -619,6 +608,13 @@ if (clientMessagesResult.error) {
 
     load();
   }, [router]);
+
+  const filteredAgingAccounts = useMemo(() => {
+    if (!agingRepFilter) return agingAccounts;
+    return agingAccounts.filter(
+      (item) => retailersById[item.retailer_id]?.rep_owner_user_id === agingRepFilter
+    );
+  }, [agingAccounts, agingRepFilter, retailersById]);
 
   const counts = useMemo(
     () => ({
@@ -782,15 +778,27 @@ if (clientMessagesResult.error) {
         </section>
 
         <section className="space-y-4 rounded-xl border border-border bg-card p-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold text-foreground">Aging Accounts</h2>
+            {role === "admin" && repProfiles.length > 0 && (
+              <select
+                value={agingRepFilter}
+                onChange={(e) => setAgingRepFilter(e.target.value)}
+                className="text-sm border border-border rounded px-2 py-1 bg-card text-foreground"
+              >
+                <option value="">All Reps</option>
+                {repProfiles.map((rep) => (
+                  <option key={rep.id} value={rep.id}>{rep.full_name}</option>
+                ))}
+              </select>
+            )}
           </div>
 
-          {agingAccounts.length === 0 ? (
+          {filteredAgingAccounts.length === 0 ? (
             <p className="text-sm text-muted-foreground">No aging accounts right now.</p>
           ) : (
             <div className="space-y-3">
-              {agingAccounts.map((item) => {
+              {filteredAgingAccounts.map((item) => {
                 const brandName = brandsById[item.brand_id]?.name ?? "Brand";
                 const retailer = retailersById[item.retailer_id];
                 const retailerHeadline =
