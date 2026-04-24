@@ -596,6 +596,7 @@ export default function BrandRetailersPage() {
       submitted_notes: row.submitted_notes,
       notes: row.notes,
       authorized_items_note: row.authorized_items_note,
+      last_activity_at: new Date().toISOString(),
     };
 
     const { error } = await supabase
