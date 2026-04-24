@@ -693,7 +693,7 @@ if (clientMessagesResult.error) {
                 return (
                   <Link
                     key={message.id}
-                    href={`/brands/${message.brand_id}/retailers/${message.retailer_id}`}
+                    href={`/brands/${message.brand_id}/retailers#retailer-${message.retailer_id}`}
                     className="block rounded-lg border border-border bg-card p-3 transition-colors hover:bg-accent"
                   >
                     <div className="font-medium text-foreground">{retailerHeadline}</div>
@@ -760,7 +760,7 @@ if (clientMessagesResult.error) {
               {upcoming.map((item) => (
                 <Link
                   key={item.id}
-                  href={`/brands/${item.brand_id}/retailers/${item.retailer_id}`}
+                  href={`/brands/${item.brand_id}/retailers#retailer-${item.retailer_id}`}
                   className="block rounded-lg border border-border bg-card p-3 transition-colors hover:bg-accent"
                 >
                   <div className="flex items-center justify-between gap-3">
@@ -812,7 +812,7 @@ if (clientMessagesResult.error) {
                 return (
                   <Link
                     key={item.brand_retailer_timing_id}
-                    href={`/brands/${item.brand_id}/retailers/${item.retailer_id}`}
+                    href={`/brands/${item.brand_id}/retailers#retailer-${item.retailer_id}`}
                     className="block rounded-lg border border-border bg-card p-3 transition-colors hover:bg-accent"
                   >
                     <div className="flex items-center justify-between gap-3">

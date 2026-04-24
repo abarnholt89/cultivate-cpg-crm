@@ -128,7 +128,7 @@ export async function POST(req: Request) {
 
     const replyUrl =
       brandId && retailerId
-        ? `${APP_URL}/brands/${brandId}/retailers/${retailerId}`
+        ? `${APP_URL}/brands/${brandId}/retailers#retailer-${retailerId}`
         : APP_URL;
 
     const htmlBody = buildEmailHtml({
