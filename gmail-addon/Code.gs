@@ -17,7 +17,10 @@ function buildContextualCard(e) {
     GmailApp.setCurrentMessageAccessToken(accessToken);
     var message = GmailApp.getMessageById(messageId);
 
-    var from = message.getFrom();
+    // Use the active user's email (the rep) for sender attribution, not
+    // message.getFrom() which returns whoever sent the currently open email
+    // (often the retailer in an inbound thread).
+    var repEmail = Session.getActiveUser().getEmail();
     var subject = message.getSubject();
     var threadId = message.getThread().getId();
 
@@ -26,11 +29,13 @@ function buildContextualCard(e) {
       return buildErrorCard_("Failed to load options: " + options.error);
     }
 
-    var senderDomain = extractDomain_(from);
+    // Still use message From for retailer auto-detection
+    var inboundFrom = message.getFrom();
+    var senderDomain = extractDomain_(inboundFrom);
     var detectedRetailerId = detectRetailerByDomain_(senderDomain, options.retailers);
 
     return buildActivityCard_(
-      from,
+      repEmail,
       subject,
       messageId,
       threadId,
@@ -71,13 +76,17 @@ function buildHomepageCard() {
  */
 function buildComposeCard(e) {
   try {
+    var repEmail = Session.getActiveUser().getEmail();
+
     var options = fetchOptions_();
     if (options.error) {
       return buildErrorCard_("Failed to load options: " + options.error);
     }
 
+    // No messageId/threadId available in compose context — the email hasn't
+    // been sent yet. threadId will be populated by the webhook once sent.
     return buildActivityCard_(
-      "",
+      repEmail,
       "",
       "",
       "",
