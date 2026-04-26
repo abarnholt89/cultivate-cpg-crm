@@ -428,12 +428,12 @@ export default function PromotionsPage() {
     setBulkRetailerDistributor(retailer.distributor);
     setBulkLoadingStep(true);
 
-    // All active SKUs for this brand — no authorized-only restriction
+    // All SKUs for this brand — no authorization or status restriction
     const { data: bpData } = await supabase
       .from("brand_products")
       .select("retail_upc,description")
       .eq("brand_id", bulkBrandId)
-      .eq("status", "active")
+      .neq("status", "archived")
       .order("description");
 
     const skus: SkuOption[] = ((bpData ?? []) as { retail_upc: string | null; description: string }[])
@@ -449,7 +449,7 @@ export default function PromotionsPage() {
 
   async function saveBulkPromos() {
     if (bulkSelected.size === 0) { setBulkError("Select at least one SKU."); return; }
-    if (!bulkForm.promo_type.trim()) { setBulkError("Promo type is required."); return; }
+    if (!bulkForm.promo_type) { setBulkError("Promo type is required."); return; }
     if (!bulkForm.start_date) { setBulkError("Start date is required."); return; }
     setBulkSaving(true);
     setBulkError("");
@@ -690,7 +690,7 @@ export default function PromotionsPage() {
               <button onClick={() => setBulkSelected(new Set())} className="text-xs underline text-muted-foreground hover:text-foreground">None</button>
             </div>
             {bulkSkus.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No authorized SKUs found for this brand at this retailer.</p>
+              <p className="text-sm text-muted-foreground">No SKUs found for this brand.</p>
             ) : (
               <div className="max-h-64 overflow-y-auto border border-border rounded-lg divide-y divide-border">
                 {bulkSkus.map((sku) => (
@@ -724,7 +724,16 @@ export default function PromotionsPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Promo Type *</label>
-                <input type="text" value={bulkForm.promo_type} onChange={(e) => setBulkForm((f) => ({ ...f, promo_type: e.target.value }))} placeholder="TPR" className={inputCls} style={inputStyle} />
+                <select value={bulkForm.promo_type} onChange={(e) => setBulkForm((f) => ({ ...f, promo_type: e.target.value }))} className={inputCls} style={inputStyle}>
+                  <option value="TPR">TPR</option>
+                  <option value="EDLP">EDLP</option>
+                  <option value="EDLC">EDLC</option>
+                  <option value="Ad">Ad</option>
+                  <option value="Display">Display</option>
+                  <option value="Demo">Demo</option>
+                  <option value="Digital">Digital</option>
+                  <option value="Other">Other</option>
+                </select>
               </div>
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Status</label>
