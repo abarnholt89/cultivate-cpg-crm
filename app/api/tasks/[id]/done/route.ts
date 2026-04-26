@@ -7,13 +7,14 @@ const supabase = createClient(
 
 export async function PATCH(
   _req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const { error } = await supabase
       .from("tasks")
       .update({ status: "done" })
-      .eq("id", params.id);
+      .eq("id", id);
 
     if (error) return Response.json({ error: error.message }, { status: 500 });
 
