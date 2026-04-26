@@ -789,28 +789,35 @@ export default function BrandRetailersPage() {
     setSkuModalLoading(true);
     setSkuModalItems([]);
 
-    const brandName = brand?.name ?? "";
+    // Fetch all UPCs for this brand, then find which are authorized at this retailer
+    const { data: bpData } = await supabase
+      .from("brand_products")
+      .select("id,description,retail_upc")
+      .eq("brand_id", brandId)
+      .eq("status", "active")
+      .order("description");
 
-    // Fetch authorized SKUs for this retailer + brand
+    const brandProductsList = (bpData ?? []) as { id: string; description: string; retail_upc: string | null }[];
+    if (isRepOrAdmin && allBrandProducts.length === 0) {
+      setAllBrandProducts(brandProductsList);
+    }
+
+    const brandUpcs = brandProductsList.map((p) => p.retail_upc).filter((u): u is string => Boolean(u));
+
+    if (brandUpcs.length === 0) {
+      setSkuModalItems([]);
+      setSkuModalLoading(false);
+      return;
+    }
+
+    // Fetch authorized_products rows matching this retailer + any of the brand's UPCs
     const { data } = await supabase
       .from("authorized_products")
       .select("sku_description,upc")
       .eq("retailer_id", retailerId)
-      .ilike("client_name", `%${brandName}%`);
+      .in("upc", brandUpcs);
 
     setSkuModalItems((data ?? []) as { sku_description: string; upc: string }[]);
-
-    // Pre-fetch all brand products for edit mode
-    if (isRepOrAdmin && allBrandProducts.length === 0) {
-      const { data: bpData } = await supabase
-        .from("brand_products")
-        .select("id,description,retail_upc")
-        .eq("brand_id", brandId)
-        .eq("status", "active")
-        .order("description");
-      setAllBrandProducts((bpData ?? []) as { id: string; description: string; retail_upc: string | null }[]);
-    }
-
     setSkuModalLoading(false);
   }
 
@@ -839,8 +846,7 @@ export default function BrandRetailersPage() {
         .from("authorized_products")
         .delete()
         .eq("retailer_id", retailerId)
-        .eq("upc", String(upc))
-        .ilike("client_name", `%${brandName}%`);
+        .eq("upc", String(upc));
     }
 
     // Add newly authorized rows
@@ -862,12 +868,11 @@ export default function BrandRetailersPage() {
       await supabase.from("authorized_products").insert(insertRows);
     }
 
-    // Refresh modal items
-    const { data } = await supabase
-      .from("authorized_products")
-      .select("sku_description,upc")
-      .eq("retailer_id", retailerId)
-      .ilike("client_name", `%${brandName}%`);
+    // Refresh modal items using UPC-based filter
+    const brandUpcs = allBrandProducts.map((p) => p.retail_upc).filter((u): u is string => Boolean(u));
+    const { data } = brandUpcs.length > 0
+      ? await supabase.from("authorized_products").select("sku_description,upc").eq("retailer_id", retailerId).in("upc", brandUpcs)
+      : { data: [] };
 
     setSkuModalItems((data ?? []) as { sku_description: string; upc: string }[]);
     setSkuEditMode(false);

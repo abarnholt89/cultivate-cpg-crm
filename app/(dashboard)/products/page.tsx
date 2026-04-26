@@ -13,10 +13,25 @@ type Product = {
   description: string;
   retail_upc: string | null;
   size: string | null;
-  srp: number | null;
+  uom: string | null;
   cost: number | null;
+  case_cost: number | null;
+  srp: number | null;
   status: string;
   created_at: string;
+  kehe_item: string | null;
+  unfi_east_item: string | null;
+  unfi_west_item: string | null;
+  unit_pack: string | null;
+  inner_pack: string | null;
+  master_case_pack: string | null;
+  ti: number | null;
+  hi: number | null;
+  cert_non_gmo: boolean | null;
+  cert_organic: boolean | null;
+  cert_gluten_free: boolean | null;
+  cert_kosher: boolean | null;
+  cert_vegan: boolean | null;
 };
 
 type Brand = { id: string; name: string };
@@ -28,9 +43,25 @@ type EditForm = {
   srp: string;
 };
 
-function formatCurrency(n: number | null) {
-  if (n == null) return "—";
-  return `$${n.toFixed(2)}`;
+const PRODUCT_SELECT = [
+  "id", "brand_id", "description", "retail_upc", "size", "uom",
+  "cost", "case_cost", "srp", "status", "created_at",
+  "kehe_item", "unfi_east_item", "unfi_west_item",
+  "unit_pack", "inner_pack", "master_case_pack", "ti", "hi",
+  "cert_non_gmo", "cert_organic", "cert_gluten_free", "cert_kosher", "cert_vegan",
+].join(",");
+
+function fmt$(n: number | null) {
+  return n == null ? "—" : `$${n.toFixed(2)}`;
+}
+
+function fmtN(n: number | null) {
+  return n == null ? "—" : String(n);
+}
+
+function Check({ v }: { v: boolean | null }) {
+  if (!v) return <span className="text-muted-foreground text-xs">—</span>;
+  return <span className="text-green-600 font-bold text-xs">✓</span>;
 }
 
 export default function ProductsLibraryPage() {
@@ -47,7 +78,6 @@ export default function ProductsLibraryPage() {
   const [brandFilter, setBrandFilter] = useState("");
   const [query, setQuery] = useState("");
 
-  // Inline edit state
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<EditForm>({ description: "", retail_upc: "", size: "", srp: "" });
   const [editSaving, setEditSaving] = useState(false);
@@ -74,11 +104,7 @@ export default function ProductsLibraryPage() {
     setAuthorized(true);
 
     const [productsRes, brandsRes, authRowsRes] = await Promise.all([
-      supabase
-        .from("brand_products")
-        .select("id,brand_id,description,retail_upc,size,srp,cost,status,created_at")
-        .eq("status", "active")
-        .order("description"),
+      supabase.from("brand_products").select(PRODUCT_SELECT).eq("status", "active").order("description"),
       supabase.from("brands").select("id,name").order("name"),
       supabase.from("authorized_products").select("upc,retailer_id"),
     ]);
@@ -91,10 +117,8 @@ export default function ProductsLibraryPage() {
     const byId: Record<string, Brand> = {};
     brandsData.forEach((b) => { byId[b.id] = b; });
     setBrandsById(byId);
+    setProducts((productsRes.data as unknown as Product[]) ?? []);
 
-    setProducts((productsRes.data as Product[]) ?? []);
-
-    // Count unique retailers per UPC
     const counts: Record<string, Set<string>> = {};
     ((authRowsRes.data ?? []) as { upc: string; retailer_id: string }[]).forEach((r) => {
       if (!r.upc || !r.retailer_id) return;
@@ -142,17 +166,13 @@ export default function ProductsLibraryPage() {
     setEditError("");
   }
 
-  function cancelEdit() {
-    setEditingId(null);
-    setEditError("");
-  }
+  function cancelEdit() { setEditingId(null); setEditError(""); }
 
   async function saveEdit() {
     if (!editingId) return;
     if (!editForm.description.trim()) { setEditError("Description is required"); return; }
     setEditSaving(true);
     setEditError("");
-
     const { error } = await supabase
       .from("brand_products")
       .update({
@@ -162,34 +182,25 @@ export default function ProductsLibraryPage() {
         srp: editForm.srp ? parseFloat(editForm.srp) : null,
       })
       .eq("id", editingId);
-
-    if (error) {
-      setEditError(error.message);
-      setEditSaving(false);
-      return;
-    }
-
+    if (error) { setEditError(error.message); setEditSaving(false); return; }
     setProducts((prev) =>
-      prev.map((p) =>
-        p.id === editingId
-          ? {
-              ...p,
-              description: editForm.description.trim(),
-              retail_upc: editForm.retail_upc.trim() || null,
-              size: editForm.size.trim() || null,
-              srp: editForm.srp ? parseFloat(editForm.srp) : null,
-            }
-          : p
-      )
+      prev.map((p) => p.id === editingId
+        ? { ...p, description: editForm.description.trim(), retail_upc: editForm.retail_upc.trim() || null, size: editForm.size.trim() || null, srp: editForm.srp ? parseFloat(editForm.srp) : null }
+        : p)
     );
     setEditingId(null);
     setEditSaving(false);
   }
 
   const isRepOrAdmin = role === "admin" || role === "rep";
+  const totalCols = 22 + (isRepOrAdmin ? 1 : 0);
 
   if (loading) return <div className="p-6 text-sm text-muted-foreground">Loading products…</div>;
   if (!authorized) return null;
+
+  const thStyle = "px-3 py-2 font-medium text-muted-foreground whitespace-nowrap text-left text-xs";
+  const tdStyle = "px-3 py-2 text-xs whitespace-nowrap";
+  const groupTh = "px-3 py-1 text-xs font-semibold text-white/80 text-center";
 
   return (
     <div className="space-y-6 p-6">
@@ -201,23 +212,17 @@ export default function ProductsLibraryPage() {
         {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       </div>
 
-      {/* Filters */}
       <div className="flex flex-wrap gap-3">
         <select
-          value={brandFilter}
-          onChange={(e) => setBrandFilter(e.target.value)}
+          value={brandFilter} onChange={(e) => setBrandFilter(e.target.value)}
           className="rounded-lg px-3 py-2 text-sm focus:outline-none"
           style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
         >
           <option value="">All Brands</option>
-          {brands.map((b) => (
-            <option key={b.id} value={b.id}>{b.name}</option>
-          ))}
+          {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
         </select>
         <input
-          type="text"
-          placeholder="Search description or UPC…"
-          value={query}
+          type="text" placeholder="Search description or UPC…" value={query}
           onChange={(e) => setQuery(e.target.value)}
           className="rounded-lg px-3 py-2 text-sm flex-1 min-w-[200px] focus:outline-none focus:ring-2"
           style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
@@ -231,16 +236,44 @@ export default function ProductsLibraryPage() {
         <p className="text-sm text-muted-foreground">No products match your filters.</p>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-border">
-          <table className="w-full text-sm">
+          <table className="text-sm" style={{ minWidth: "max-content", width: "100%" }}>
             <thead>
+              {/* Group header row */}
+              <tr style={{ background: "#1e3a4a" }}>
+                <th className={groupTh} colSpan={1} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Brand</th>
+                <th className={groupTh} colSpan={4} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Identity</th>
+                <th className={groupTh} colSpan={3} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Distributor Items</th>
+                <th className={groupTh} colSpan={3} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Pricing</th>
+                <th className={groupTh} colSpan={5} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Pack Info</th>
+                <th className={groupTh} colSpan={5} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Certifications</th>
+                <th className={groupTh} colSpan={1}>Auth.</th>
+                {isRepOrAdmin && <th className={groupTh} colSpan={1} />}
+              </tr>
+              {/* Column header row */}
               <tr className="border-b border-border bg-secondary text-left">
-                <th className="px-4 py-3 font-medium text-muted-foreground">Brand</th>
-                <th className="px-4 py-3 font-medium text-muted-foreground">Description</th>
-                <th className="px-4 py-3 font-medium text-muted-foreground">UPC</th>
-                <th className="px-4 py-3 font-medium text-muted-foreground">Size</th>
-                <th className="px-4 py-3 font-medium text-muted-foreground">SRP</th>
-                <th className="px-4 py-3 font-medium text-muted-foreground">Auth. Retailers</th>
-                {isRepOrAdmin && <th className="px-4 py-3" />}
+                <th className={thStyle} style={{ borderRight: "1px solid var(--border)" }}>Brand</th>
+                <th className={thStyle}>Description</th>
+                <th className={thStyle}>UPC</th>
+                <th className={thStyle}>Size</th>
+                <th className={thStyle} style={{ borderRight: "1px solid var(--border)" }}>UOM</th>
+                <th className={thStyle}>KeHE</th>
+                <th className={thStyle}>UNFI East</th>
+                <th className={thStyle} style={{ borderRight: "1px solid var(--border)" }}>UNFI West</th>
+                <th className={thStyle}>Unit Cost</th>
+                <th className={thStyle}>Case Cost</th>
+                <th className={thStyle} style={{ borderRight: "1px solid var(--border)" }}>SRP</th>
+                <th className={thStyle}>Unit Pack</th>
+                <th className={thStyle}>Inner Pack</th>
+                <th className={thStyle}>Master Case</th>
+                <th className={thStyle}>TI</th>
+                <th className={thStyle} style={{ borderRight: "1px solid var(--border)" }}>HI</th>
+                <th className={thStyle}>Non-GMO</th>
+                <th className={thStyle}>Organic</th>
+                <th className={thStyle}>GF</th>
+                <th className={thStyle}>Kosher</th>
+                <th className={thStyle} style={{ borderRight: "1px solid var(--border)" }}>Vegan</th>
+                <th className={thStyle}>Auth.</th>
+                {isRepOrAdmin && <th className={thStyle} />}
               </tr>
             </thead>
             <tbody>
@@ -249,137 +282,79 @@ export default function ProductsLibraryPage() {
                 const authCount = product.retail_upc ? (authorizedCounts[product.retail_upc] ?? 0) : 0;
                 const isEven = idx % 2 === 0;
                 const isEditing = editingId === product.id;
+                const rowBg = isEven ? "var(--card)" : "var(--secondary)";
 
-                if (isEditing) {
-                  return (
-                    <tr
-                      key={product.id}
-                      className="border-b border-border last:border-0"
-                      style={{ background: "var(--card)" }}
-                    >
-                      <td className="px-4 py-3">
-                        {brand ? (
-                          <Link
-                            href={`/brands/${product.brand_id}/products`}
-                            className="text-sm font-medium text-foreground hover:underline"
-                          >
-                            {brand.name}
-                          </Link>
-                        ) : (
-                          <span className="text-muted-foreground text-xs">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2">
-                        <input
-                          type="text"
-                          value={editForm.description}
-                          onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
-                          className="border rounded px-2 py-1 w-full text-sm"
-                          style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
-                        />
-                      </td>
-                      <td className="px-4 py-2">
-                        <input
-                          type="text"
-                          value={editForm.retail_upc}
-                          onChange={(e) => setEditForm((f) => ({ ...f, retail_upc: e.target.value }))}
-                          className="border rounded px-2 py-1 w-full text-sm font-mono"
-                          style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
-                        />
-                      </td>
-                      <td className="px-4 py-2">
-                        <input
-                          type="text"
-                          value={editForm.size}
-                          onChange={(e) => setEditForm((f) => ({ ...f, size: e.target.value }))}
-                          className="border rounded px-2 py-1 w-full text-sm"
-                          style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
-                        />
-                      </td>
-                      <td className="px-4 py-2">
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={editForm.srp}
-                          onChange={(e) => setEditForm((f) => ({ ...f, srp: e.target.value }))}
-                          className="border rounded px-2 py-1 w-20 text-sm"
-                          style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        {authCount > 0 ? (
-                          <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">
-                            {authCount}
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground text-xs">—</span>
-                        )}
-                      </td>
-                      {isRepOrAdmin && (
-                        <td className="px-4 py-2 text-right whitespace-nowrap">
-                          {editError && <span className="text-xs text-red-600 mr-2">{editError}</span>}
-                          <button
-                            onClick={saveEdit}
-                            disabled={editSaving}
-                            className="text-xs font-medium text-foreground hover:underline disabled:opacity-50 mr-3"
-                          >
-                            {editSaving ? "Saving…" : "Save"}
-                          </button>
-                          <button
-                            onClick={cancelEdit}
-                            className="text-xs text-muted-foreground hover:text-foreground"
-                          >
-                            Cancel
-                          </button>
-                        </td>
-                      )}
-                    </tr>
-                  );
-                }
-
-                return (
-                  <tr
-                    key={product.id}
-                    className="border-b border-border last:border-0"
-                    style={{ background: isEven ? "var(--card)" : "var(--secondary)" }}
-                  >
-                    <td className="px-4 py-3">
-                      {brand ? (
-                        <Link
-                          href={`/brands/${product.brand_id}/products`}
-                          className="text-sm font-medium text-foreground hover:underline"
-                        >
-                          {brand.name}
-                        </Link>
-                      ) : (
-                        <span className="text-muted-foreground text-xs">—</span>
-                      )}
+                return [
+                  <tr key={product.id} className="border-b border-border last:border-0" style={{ background: rowBg }}>
+                    <td className={tdStyle} style={{ borderRight: "1px solid var(--border)" }}>
+                      {brand
+                        ? <Link href={`/brands/${product.brand_id}/products`} className="text-xs font-medium text-foreground hover:underline whitespace-nowrap">{brand.name}</Link>
+                        : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-foreground">{product.description}</td>
-                    <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{product.retail_upc ?? "—"}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{product.size ?? "—"}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{formatCurrency(product.srp)}</td>
-                    <td className="px-4 py-3">
-                      {authCount > 0 ? (
-                        <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">
-                          {authCount}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground text-xs">—</span>
-                      )}
+                    <td className={`${tdStyle} text-foreground font-medium max-w-[240px] whitespace-normal`}>{product.description}</td>
+                    <td className={`${tdStyle} font-mono text-muted-foreground`}>{product.retail_upc ?? "—"}</td>
+                    <td className={`${tdStyle} text-muted-foreground`}>{product.size ?? "—"}</td>
+                    <td className={`${tdStyle} text-muted-foreground`} style={{ borderRight: "1px solid var(--border)" }}>{product.uom ?? "—"}</td>
+                    <td className={`${tdStyle} text-muted-foreground`}>{product.kehe_item ?? "—"}</td>
+                    <td className={`${tdStyle} text-muted-foreground`}>{product.unfi_east_item ?? "—"}</td>
+                    <td className={`${tdStyle} text-muted-foreground`} style={{ borderRight: "1px solid var(--border)" }}>{product.unfi_west_item ?? "—"}</td>
+                    <td className={`${tdStyle} text-muted-foreground`}>{fmt$(product.cost)}</td>
+                    <td className={`${tdStyle} text-muted-foreground`}>{fmt$(product.case_cost)}</td>
+                    <td className={`${tdStyle} text-muted-foreground`} style={{ borderRight: "1px solid var(--border)" }}>{fmt$(product.srp)}</td>
+                    <td className={`${tdStyle} text-muted-foreground`}>{product.unit_pack ?? "—"}</td>
+                    <td className={`${tdStyle} text-muted-foreground`}>{product.inner_pack ?? "—"}</td>
+                    <td className={`${tdStyle} text-muted-foreground`}>{product.master_case_pack ?? "—"}</td>
+                    <td className={`${tdStyle} text-muted-foreground`}>{fmtN(product.ti)}</td>
+                    <td className={`${tdStyle} text-muted-foreground`} style={{ borderRight: "1px solid var(--border)" }}>{fmtN(product.hi)}</td>
+                    <td className={`${tdStyle} text-center`}><Check v={product.cert_non_gmo} /></td>
+                    <td className={`${tdStyle} text-center`}><Check v={product.cert_organic} /></td>
+                    <td className={`${tdStyle} text-center`}><Check v={product.cert_gluten_free} /></td>
+                    <td className={`${tdStyle} text-center`}><Check v={product.cert_kosher} /></td>
+                    <td className={`${tdStyle} text-center`} style={{ borderRight: "1px solid var(--border)" }}><Check v={product.cert_vegan} /></td>
+                    <td className={tdStyle}>
+                      {authCount > 0
+                        ? <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">{authCount}</span>
+                        : <span className="text-muted-foreground">—</span>}
                     </td>
                     {isRepOrAdmin && (
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          onClick={() => startEdit(product)}
-                          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                        >
-                          Edit
-                        </button>
+                      <td className={`${tdStyle} text-right`}>
+                        <button onClick={() => startEdit(product)} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Edit</button>
                       </td>
                     )}
-                  </tr>
-                );
+                  </tr>,
+                  // Inline edit expander
+                  isEditing && (
+                    <tr key={`${product.id}-edit`} className="border-b border-border" style={{ background: "var(--card)" }}>
+                      <td colSpan={totalCols} className="px-4 py-3">
+                        <div className="flex flex-wrap gap-3 items-end">
+                          <div>
+                            <label className="block text-xs text-muted-foreground mb-1">Description</label>
+                            <input type="text" value={editForm.description} onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))} className="border rounded px-2 py-1 text-sm w-64" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-muted-foreground mb-1">UPC</label>
+                            <input type="text" value={editForm.retail_upc} onChange={(e) => setEditForm((f) => ({ ...f, retail_upc: e.target.value }))} className="border rounded px-2 py-1 text-sm w-40 font-mono" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-muted-foreground mb-1">Size</label>
+                            <input type="text" value={editForm.size} onChange={(e) => setEditForm((f) => ({ ...f, size: e.target.value }))} className="border rounded px-2 py-1 text-sm w-24" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-muted-foreground mb-1">SRP</label>
+                            <input type="number" step="0.01" value={editForm.srp} onChange={(e) => setEditForm((f) => ({ ...f, srp: e.target.value }))} className="border rounded px-2 py-1 text-sm w-20" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {editError && <span className="text-xs text-red-600">{editError}</span>}
+                            <button onClick={saveEdit} disabled={editSaving} className="px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50" style={{ background: "var(--foreground)", color: "var(--background)" }}>
+                              {editSaving ? "Saving…" : "Save"}
+                            </button>
+                            <button onClick={cancelEdit} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  ),
+                ].filter(Boolean);
               })}
             </tbody>
           </table>
