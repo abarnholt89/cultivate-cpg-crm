@@ -327,14 +327,15 @@ export default function PromotionsPage() {
         if (nextRole === "client") {
           const { data: brandUsers } = await supabase.from("brand_users").select("brand_id").eq("user_id", uid);
           const brandIds = (brandUsers ?? []).map((r: any) => r.brand_id);
-          if (brandIds.length === 0) { setPromotions([]); setFiltered([]); setLoading(false); return; }
+          if (brandIds.length === 0) { setPromotions([]); setLoading(false); return; }
           rows = await fetchAllRows<PromotionRow>(supabase.from("promotions").select("*").in("brand_id", brandIds).order("promo_year", { ascending: false }).order("promo_month", { ascending: true }));
         } else {
           rows = await fetchAllRows<PromotionRow>(supabase.from("promotions").select("*").order("promo_year", { ascending: false }).order("promo_month", { ascending: true }));
         }
 
         setPromotions(rows);
-        setFiltered(rows);
+        // Do NOT call setFiltered here — the filter useEffect owns that
+        // to ensure hideEdlp and other filters are always applied consistently.
 
         // Default calYear to most recent year in data
         const mostRecentYear = rows.reduce((max, r) => Math.max(max, r.promo_year), new Date().getFullYear());
@@ -409,36 +410,29 @@ export default function PromotionsPage() {
     setBulkBrandName(brand.name);
     setBulkLoadingStep(true);
 
-    // Get brand's UPCs
-    const { data: bpData } = await supabase.from("brand_products").select("retail_upc").eq("brand_id", brandId).eq("status", "active");
-    const upcs = ((bpData ?? []) as { retail_upc: string | null }[]).map((p) => p.retail_upc).filter((u): u is string => Boolean(u));
-    setBulkBrandUpcs(upcs);
+    // Look up authorized retailers directly from the view (brand_id → retailer_id mapping)
+    const { data: viewRows } = await supabase
+      .from("authorized_accounts_with_brand_id")
+      .select("retailer_id")
+      .eq("brand_id", brandId);
 
-    // Get retailers that have authorized SKUs for these UPCs
-    if (upcs.length > 0) {
-      const { data: authRows } = await supabase
-        .from("authorized_products")
-        .select("retailer_id,retailer_name")
-        .in("upc", upcs);
+    const retailerIds = [...new Set(((viewRows ?? []) as { retailer_id: string }[]).map((r) => r.retailer_id).filter(Boolean))];
 
-      const retailerMap = new Map<string, string>();
-      ((authRows ?? []) as { retailer_id: string; retailer_name: string }[]).forEach((r) => {
-        if (r.retailer_id && r.retailer_name) retailerMap.set(r.retailer_id, r.retailer_name);
-      });
-
-      if (retailerMap.size > 0) {
-        const { data: retailerRows } = await supabase
-          .from("retailers")
-          .select("id,name,banner,distributor")
-          .in("id", Array.from(retailerMap.keys()))
-          .order("name");
-        setBulkAvailableRetailers((retailerRows as RetailerOption[]) ?? []);
-      } else {
-        setBulkAvailableRetailers([]);
-      }
+    if (retailerIds.length > 0) {
+      const { data: retailerRows } = await supabase
+        .from("retailers")
+        .select("id,name,banner,distributor")
+        .in("id", retailerIds)
+        .order("name");
+      setBulkAvailableRetailers((retailerRows as RetailerOption[]) ?? []);
     } else {
       setBulkAvailableRetailers([]);
     }
+
+    // Also get brand UPCs for SKU checklist in step 3
+    const { data: bpData } = await supabase.from("brand_products").select("retail_upc").eq("brand_id", brandId).eq("status", "active");
+    const upcs = ((bpData ?? []) as { retail_upc: string | null }[]).map((p) => p.retail_upc).filter((u): u is string => Boolean(u));
+    setBulkBrandUpcs(upcs);
 
     setBulkLoadingStep(false);
     setBulkStep(2);
