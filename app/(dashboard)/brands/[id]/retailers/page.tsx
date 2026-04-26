@@ -789,35 +789,23 @@ export default function BrandRetailersPage() {
     setSkuModalLoading(true);
     setSkuModalItems([]);
 
-    // Fetch all UPCs for this brand, then find which are authorized at this retailer
+    // Fetch authorized SKUs for this brand+retailer directly
+    const { data: authData } = await supabase
+      .from("authorized_products")
+      .select("sku_description,upc")
+      .eq("brand_id", brandId)
+      .eq("retailer_id", retailerId)
+      .order("sku_description");
+
+    // Fetch full brand catalog for edit-mode checklist (no status filter)
     const { data: bpData } = await supabase
       .from("brand_products")
       .select("id,description,retail_upc")
       .eq("brand_id", brandId)
-      .eq("status", "active")
       .order("description");
 
-    const brandProductsList = (bpData ?? []) as { id: string; description: string; retail_upc: string | null }[];
-    if (isRepOrAdmin && allBrandProducts.length === 0) {
-      setAllBrandProducts(brandProductsList);
-    }
-
-    const brandUpcs = brandProductsList.map((p) => p.retail_upc).filter((u): u is string => Boolean(u));
-
-    if (brandUpcs.length === 0) {
-      setSkuModalItems([]);
-      setSkuModalLoading(false);
-      return;
-    }
-
-    // Fetch authorized_products rows matching this retailer + any of the brand's UPCs
-    const { data } = await supabase
-      .from("authorized_products")
-      .select("sku_description,upc")
-      .eq("retailer_id", retailerId)
-      .in("upc", brandUpcs);
-
-    setSkuModalItems((data ?? []) as { sku_description: string; upc: string }[]);
+    setAllBrandProducts((bpData ?? []) as { id: string; description: string; retail_upc: string | null }[]);
+    setSkuModalItems((authData ?? []) as { sku_description: string; upc: string }[]);
     setSkuModalLoading(false);
   }
 
@@ -835,16 +823,17 @@ export default function BrandRetailersPage() {
     const retailerId = skuModal.retailerId;
     const retailerName = skuModal.retailerName;
 
-    // Determine additions and removals by comparing with current state
+    // Determine additions and removals by comparing with current authorized set
     const currentUpcs = new Set(skuModalItems.map((i) => i.upc).filter(Boolean));
     const toAdd = [...skuEditSelected].filter((upc) => !currentUpcs.has(upc));
     const toRemove = [...currentUpcs].filter((upc) => !skuEditSelected.has(upc));
 
-    // Remove deauthorized rows
+    // Remove deauthorized rows (scoped to this brand+retailer+upc)
     for (const upc of toRemove) {
       await supabase
         .from("authorized_products")
         .delete()
+        .eq("brand_id", brandId)
         .eq("retailer_id", retailerId)
         .eq("upc", String(upc));
     }
@@ -854,6 +843,7 @@ export default function BrandRetailersPage() {
       const insertRows = toAdd.map((upc) => {
         const product = allBrandProducts.find((p) => p.retail_upc === upc);
         return {
+          brand_id: brandId,
           client_name: brandName,
           brand_source: brandName,
           sku_description: product?.description ?? upc,
@@ -868,11 +858,13 @@ export default function BrandRetailersPage() {
       await supabase.from("authorized_products").insert(insertRows);
     }
 
-    // Refresh modal items using UPC-based filter
-    const brandUpcs = allBrandProducts.map((p) => p.retail_upc).filter((u): u is string => Boolean(u));
-    const { data } = brandUpcs.length > 0
-      ? await supabase.from("authorized_products").select("sku_description,upc").eq("retailer_id", retailerId).in("upc", brandUpcs)
-      : { data: [] };
+    // Refresh modal items using brand_id + retailer_id
+    const { data } = await supabase
+      .from("authorized_products")
+      .select("sku_description,upc")
+      .eq("brand_id", brandId)
+      .eq("retailer_id", retailerId)
+      .order("sku_description");
 
     setSkuModalItems((data ?? []) as { sku_description: string; upc: string }[]);
     setSkuEditMode(false);
