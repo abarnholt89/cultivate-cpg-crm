@@ -21,6 +21,13 @@ type Product = {
 
 type Brand = { id: string; name: string };
 
+type EditForm = {
+  description: string;
+  retail_upc: string;
+  size: string;
+  srp: string;
+};
+
 function formatCurrency(n: number | null) {
   if (n == null) return "—";
   return `$${n.toFixed(2)}`;
@@ -39,6 +46,12 @@ export default function ProductsLibraryPage() {
   const [error, setError] = useState("");
   const [brandFilter, setBrandFilter] = useState("");
   const [query, setQuery] = useState("");
+
+  // Inline edit state
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<EditForm>({ description: "", retail_upc: "", size: "", srp: "" });
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState("");
 
   useEffect(() => {
     load();
@@ -96,19 +109,84 @@ export default function ProductsLibraryPage() {
   }
 
   const filtered = useMemo(() => {
-    return products.filter((p) => {
-      if (brandFilter && p.brand_id !== brandFilter) return false;
-      if (query) {
-        const q = query.toLowerCase();
-        return (
-          p.description.toLowerCase().includes(q) ||
-          (p.retail_upc ?? "").toLowerCase().includes(q) ||
-          (p.size ?? "").toLowerCase().includes(q)
-        );
-      }
-      return true;
+    return products
+      .filter((p) => {
+        if (brandFilter && p.brand_id !== brandFilter) return false;
+        if (query) {
+          const q = query.toLowerCase();
+          return (
+            p.description.toLowerCase().includes(q) ||
+            (p.retail_upc ?? "").toLowerCase().includes(q) ||
+            (p.size ?? "").toLowerCase().includes(q)
+          );
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const aBrand = brandsById[a.brand_id]?.name ?? "";
+        const bBrand = brandsById[b.brand_id]?.name ?? "";
+        const brandCmp = aBrand.localeCompare(bBrand);
+        if (brandCmp !== 0) return brandCmp;
+        return a.description.localeCompare(b.description);
+      });
+  }, [products, brandFilter, query, brandsById]);
+
+  function startEdit(product: Product) {
+    setEditingId(product.id);
+    setEditForm({
+      description: product.description,
+      retail_upc: product.retail_upc ?? "",
+      size: product.size ?? "",
+      srp: product.srp != null ? String(product.srp) : "",
     });
-  }, [products, brandFilter, query]);
+    setEditError("");
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditError("");
+  }
+
+  async function saveEdit() {
+    if (!editingId) return;
+    if (!editForm.description.trim()) { setEditError("Description is required"); return; }
+    setEditSaving(true);
+    setEditError("");
+
+    const { error } = await supabase
+      .from("brand_products")
+      .update({
+        description: editForm.description.trim(),
+        retail_upc: editForm.retail_upc.trim() || null,
+        size: editForm.size.trim() || null,
+        srp: editForm.srp ? parseFloat(editForm.srp) : null,
+      })
+      .eq("id", editingId);
+
+    if (error) {
+      setEditError(error.message);
+      setEditSaving(false);
+      return;
+    }
+
+    setProducts((prev) =>
+      prev.map((p) =>
+        p.id === editingId
+          ? {
+              ...p,
+              description: editForm.description.trim(),
+              retail_upc: editForm.retail_upc.trim() || null,
+              size: editForm.size.trim() || null,
+              srp: editForm.srp ? parseFloat(editForm.srp) : null,
+            }
+          : p
+      )
+    );
+    setEditingId(null);
+    setEditSaving(false);
+  }
+
+  const isRepOrAdmin = role === "admin" || role === "rep";
 
   if (loading) return <div className="p-6 text-sm text-muted-foreground">Loading products…</div>;
   if (!authorized) return null;
@@ -162,6 +240,7 @@ export default function ProductsLibraryPage() {
                 <th className="px-4 py-3 font-medium text-muted-foreground">Size</th>
                 <th className="px-4 py-3 font-medium text-muted-foreground">SRP</th>
                 <th className="px-4 py-3 font-medium text-muted-foreground">Auth. Retailers</th>
+                {isRepOrAdmin && <th className="px-4 py-3" />}
               </tr>
             </thead>
             <tbody>
@@ -169,6 +248,95 @@ export default function ProductsLibraryPage() {
                 const brand = brandsById[product.brand_id];
                 const authCount = product.retail_upc ? (authorizedCounts[product.retail_upc] ?? 0) : 0;
                 const isEven = idx % 2 === 0;
+                const isEditing = editingId === product.id;
+
+                if (isEditing) {
+                  return (
+                    <tr
+                      key={product.id}
+                      className="border-b border-border last:border-0"
+                      style={{ background: "var(--card)" }}
+                    >
+                      <td className="px-4 py-3">
+                        {brand ? (
+                          <Link
+                            href={`/brands/${product.brand_id}/products`}
+                            className="text-sm font-medium text-foreground hover:underline"
+                          >
+                            {brand.name}
+                          </Link>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2">
+                        <input
+                          type="text"
+                          value={editForm.description}
+                          onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
+                          className="border rounded px-2 py-1 w-full text-sm"
+                          style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
+                        />
+                      </td>
+                      <td className="px-4 py-2">
+                        <input
+                          type="text"
+                          value={editForm.retail_upc}
+                          onChange={(e) => setEditForm((f) => ({ ...f, retail_upc: e.target.value }))}
+                          className="border rounded px-2 py-1 w-full text-sm font-mono"
+                          style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
+                        />
+                      </td>
+                      <td className="px-4 py-2">
+                        <input
+                          type="text"
+                          value={editForm.size}
+                          onChange={(e) => setEditForm((f) => ({ ...f, size: e.target.value }))}
+                          className="border rounded px-2 py-1 w-full text-sm"
+                          style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
+                        />
+                      </td>
+                      <td className="px-4 py-2">
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={editForm.srp}
+                          onChange={(e) => setEditForm((f) => ({ ...f, srp: e.target.value }))}
+                          className="border rounded px-2 py-1 w-20 text-sm"
+                          style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        {authCount > 0 ? (
+                          <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">
+                            {authCount}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                      </td>
+                      {isRepOrAdmin && (
+                        <td className="px-4 py-2 text-right whitespace-nowrap">
+                          {editError && <span className="text-xs text-red-600 mr-2">{editError}</span>}
+                          <button
+                            onClick={saveEdit}
+                            disabled={editSaving}
+                            className="text-xs font-medium text-foreground hover:underline disabled:opacity-50 mr-3"
+                          >
+                            {editSaving ? "Saving…" : "Save"}
+                          </button>
+                          <button
+                            onClick={cancelEdit}
+                            className="text-xs text-muted-foreground hover:text-foreground"
+                          >
+                            Cancel
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                }
+
                 return (
                   <tr
                     key={product.id}
@@ -200,6 +368,16 @@ export default function ProductsLibraryPage() {
                         <span className="text-muted-foreground text-xs">—</span>
                       )}
                     </td>
+                    {isRepOrAdmin && (
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          onClick={() => startEdit(product)}
+                          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          Edit
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
