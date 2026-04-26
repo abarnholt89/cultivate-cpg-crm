@@ -178,8 +178,12 @@ export default function RepInboxPage() {
   const [authorized, setAuthorized] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [taskRepFilter, setTaskRepFilter] = useState("");
+  const [newTaskOpen, setNewTaskOpen] = useState(false);
+  const [newTaskForm, setNewTaskForm] = useState({ title: "", notes: "", due_date: "", assigned_to: "" });
+  const [newTaskSaving, setNewTaskSaving] = useState(false);
   const [agingAccounts, setAgingAccounts] = useState<AgingRow[]>([]);
   const [upcoming, setUpcoming] = useState<UpcomingItem[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [clientMessages, setClientMessages] = useState<ClientMessageInboxRow[]>([]);
   const [brandsById, setBrandsById] = useState<Record<string, Brand>>({});
   const [retailersById, setRetailersById] = useState<Record<string, Retailer>>({});
@@ -207,6 +211,8 @@ export default function RepInboxPage() {
         router.replace("/login");
         return;
       }
+
+      setCurrentUserId(userId);
 
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
@@ -431,7 +437,7 @@ if (clientMessagesResult.error) {
           ? supabase.from("retailers").select("id,name,banner,rep_owner_user_id").in("id", retailerIds)
           : Promise.resolve({ data: [], error: null }),
         nextRole === "admin"
-          ? supabase.from("profiles").select("id,full_name").eq("role", "rep").order("full_name")
+          ? supabase.from("profiles").select("id,full_name").in("role", ["rep", "admin"]).order("full_name")
           : Promise.resolve({ data: [], error: null }),
       ]);
 
@@ -637,6 +643,34 @@ if (clientMessagesResult.error) {
     setTasks((prev) => prev.filter((t) => t.id !== id));
   }
 
+  async function saveNewTask() {
+    if (!newTaskForm.title.trim()) return;
+    setNewTaskSaving(true);
+    try {
+      const res = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: newTaskForm.title.trim(),
+          notes: newTaskForm.notes || null,
+          due_date: newTaskForm.due_date || null,
+          assigned_to: newTaskForm.assigned_to || currentUserId || null,
+          created_by: currentUserId || null,
+          brand_id: null,
+          retailer_id: null,
+        }),
+      });
+      if (res.ok) {
+        setNewTaskOpen(false);
+        setNewTaskForm({ title: "", notes: "", due_date: "", assigned_to: "" });
+        // Optimistically update task count in pulse
+        setPulse((prev) => ({ ...prev, reminders: prev.reminders + 1 }));
+      }
+    } finally {
+      setNewTaskSaving(false);
+    }
+  }
+
   const counts = useMemo(
     () => ({
       messages: clientMessages.length,
@@ -731,19 +765,86 @@ if (clientMessagesResult.error) {
         <section className="space-y-4 rounded-xl border border-border bg-card p-4">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold text-foreground">Tasks</h2>
-            {role === "admin" && repProfiles.length > 0 && (
-              <select
-                value={taskRepFilter}
-                onChange={(e) => setTaskRepFilter(e.target.value)}
-                className="text-sm border border-border rounded px-2 py-1 bg-card text-foreground"
+            <div className="flex items-center gap-2">
+              {role === "admin" && repProfiles.length > 0 && (
+                <select
+                  value={taskRepFilter}
+                  onChange={(e) => setTaskRepFilter(e.target.value)}
+                  className="text-sm border border-border rounded px-2 py-1 bg-card text-foreground"
+                >
+                  <option value="">All</option>
+                  {repProfiles.map((rep) => (
+                    <option key={rep.id} value={rep.id}>{rep.full_name}</option>
+                  ))}
+                </select>
+              )}
+              <button
+                onClick={() => setNewTaskOpen((prev) => !prev)}
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
               >
-                <option value="">All Reps</option>
-                {repProfiles.map((rep) => (
-                  <option key={rep.id} value={rep.id}>{rep.full_name}</option>
-                ))}
-              </select>
-            )}
+                + New Task
+              </button>
+            </div>
           </div>
+
+          {newTaskOpen && (
+            <div className="rounded-lg border border-border bg-secondary p-3 space-y-3">
+              <input
+                type="text"
+                placeholder="Task title"
+                value={newTaskForm.title}
+                onChange={(e) => setNewTaskForm((prev) => ({ ...prev, title: e.target.value }))}
+                className="border rounded-lg px-3 py-2 w-full text-sm bg-card text-foreground border-border focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <textarea
+                placeholder="Notes (optional)"
+                value={newTaskForm.notes}
+                onChange={(e) => setNewTaskForm((prev) => ({ ...prev, notes: e.target.value }))}
+                rows={2}
+                className="border rounded-lg px-3 py-2 w-full text-sm bg-card text-foreground border-border focus:outline-none resize-none"
+              />
+              <div className="flex gap-3 flex-wrap">
+                <div className="flex-1 min-w-0">
+                  <label className="block text-xs text-muted-foreground mb-1">Due Date</label>
+                  <input
+                    type="date"
+                    value={newTaskForm.due_date}
+                    onChange={(e) => setNewTaskForm((prev) => ({ ...prev, due_date: e.target.value }))}
+                    className="border rounded-lg px-3 py-2 w-full text-sm bg-card text-foreground border-border focus:outline-none"
+                  />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <label className="block text-xs text-muted-foreground mb-1">Assign To</label>
+                  <select
+                    value={newTaskForm.assigned_to}
+                    onChange={(e) => setNewTaskForm((prev) => ({ ...prev, assigned_to: e.target.value }))}
+                    className="border rounded-lg px-3 py-2 w-full text-sm bg-card text-foreground border-border focus:outline-none"
+                  >
+                    <option value="">Me</option>
+                    {repProfiles.filter((p) => p.id !== currentUserId).map((p) => (
+                      <option key={p.id} value={p.id}>{p.full_name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={saveNewTask}
+                  disabled={!newTaskForm.title.trim() || newTaskSaving}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
+                  style={{ background: "var(--foreground)", color: "var(--background)" }}
+                >
+                  {newTaskSaving ? "Saving…" : "Save Task"}
+                </button>
+                <button
+                  onClick={() => { setNewTaskOpen(false); setNewTaskForm({ title: "", notes: "", due_date: "", assigned_to: "" }); }}
+                  className="px-3 py-1.5 rounded-lg text-sm text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
 
           {filteredTasks.length === 0 ? (
             <p className="text-sm text-muted-foreground">No open tasks.</p>

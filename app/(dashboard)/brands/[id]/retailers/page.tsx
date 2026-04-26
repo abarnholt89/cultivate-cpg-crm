@@ -539,7 +539,7 @@ export default function BrandRetailersPage() {
     supabase
       .from("profiles")
       .select("id,full_name")
-      .eq("role", "rep")
+      .in("role", ["rep", "admin"])
       .order("full_name")
       .then(({ data }) => {
         setRepProfilesList((data as { id: string; full_name: string }[]) ?? []);
