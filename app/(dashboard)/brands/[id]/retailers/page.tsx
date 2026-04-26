@@ -101,6 +101,13 @@ type ManualReviewRow = {
   notes: string | null;
 };
 
+type RetailerTask = {
+  id: string;
+  title: string;
+  due_date: string | null;
+  assigned_profile: { full_name: string | null } | null;
+};
+
 function rowKey(
   retailerName: string,
   universalCategory: string,
@@ -297,6 +304,7 @@ export default function BrandRetailersPage() {
   const [taskFormOpen, setTaskFormOpen] = useState<Record<string, boolean>>({});
   const [taskForms, setTaskForms] = useState<Record<string, { title: string; notes: string; due_date: string; assigned_to: string }>>({});
   const [taskSaving, setTaskSaving] = useState<Record<string, boolean>>({});
+  const [retailerTasksMap, setRetailerTasksMap] = useState<Record<string, RetailerTask[]>>({});
 
   const isRepOrAdmin = role === "admin" || role === "rep";
 
@@ -509,6 +517,24 @@ export default function BrandRetailersPage() {
         nextCardAttachments[a.retailer_id][a.message_id].push(a);
       });
       setCardAttachments(nextCardAttachments);
+
+      // Fetch open tasks for this brand to display on retailer cards
+      if (resolvedRole === "admin" || resolvedRole === "rep") {
+        const { data: tasksData } = await supabase
+          .from("tasks")
+          .select("id,title,due_date,retailer_id,assigned_profile:profiles!assigned_to(full_name)")
+          .eq("brand_id", brandId)
+          .eq("status", "open")
+          .order("due_date", { ascending: true, nullsFirst: false });
+
+        const nextTasksMap: Record<string, RetailerTask[]> = {};
+        ((tasksData ?? []) as unknown as (RetailerTask & { retailer_id: string | null })[]).forEach((t) => {
+          if (!t.retailer_id) return;
+          if (!nextTasksMap[t.retailer_id]) nextTasksMap[t.retailer_id] = [];
+          nextTasksMap[t.retailer_id].push(t);
+        });
+        setRetailerTasksMap(nextTasksMap);
+      }
 
       // Scroll to hashed retailer card after all data is loaded and rendered.
       // We defer with setTimeout so React has flushed all the state updates above
@@ -731,6 +757,18 @@ export default function BrandRetailersPage() {
       });
       setTaskFormOpen((prev) => ({ ...prev, [retailerId]: false }));
       setTaskForms((prev) => ({ ...prev, [retailerId]: { title: "", notes: "", due_date: "", assigned_to: "" } }));
+      // Optimistically prepend to the retailer task list
+      const assigneeName = repProfilesList.find((p) => p.id === (form.assigned_to || userId))?.full_name ?? null;
+      const optimisticTask: RetailerTask = {
+        id: `optimistic-${Date.now()}`,
+        title: form.title.trim(),
+        due_date: form.due_date || null,
+        assigned_profile: { full_name: assigneeName },
+      };
+      setRetailerTasksMap((prev) => ({
+        ...prev,
+        [retailerId]: [optimisticTask, ...(prev[retailerId] ?? [])],
+      }));
     } finally {
       setTaskSaving((prev) => ({ ...prev, [retailerId]: false }));
     }
@@ -2033,7 +2071,32 @@ export default function BrandRetailersPage() {
                 ) : null}
 
                 {isRepOrAdmin ? (
-                  <div className="border-t border-border pt-4 mt-2">
+                  <div className="border-t border-border pt-4 mt-2 space-y-3">
+                    {(retailerTasksMap[r.id] ?? []).length > 0 && (
+                      <div className="space-y-1.5">
+                        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Open Tasks</div>
+                        {(retailerTasksMap[r.id] ?? []).map((t) => {
+                          const today = todayISO();
+                          const urgency = !t.due_date ? "normal" : t.due_date < today ? "overdue" : t.due_date <= (() => { const d = new Date(today + "T00:00:00"); d.setDate(d.getDate() + 7); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })() ? "soon" : "normal";
+                          return (
+                            <div
+                              key={t.id}
+                              className={`flex items-center justify-between gap-2 rounded px-2 py-1.5 text-sm ${urgency === "overdue" ? "bg-red-50 border border-red-200" : urgency === "soon" ? "bg-amber-50 border border-amber-200" : "bg-secondary border border-border"}`}
+                            >
+                              <span className="font-medium truncate text-foreground">{t.title}</span>
+                              <div className="flex items-center gap-2 flex-shrink-0 text-xs text-muted-foreground whitespace-nowrap">
+                                {t.assigned_profile?.full_name && <span>{t.assigned_profile.full_name}</span>}
+                                {t.due_date && (
+                                  <span className={urgency === "overdue" ? "text-red-600 font-medium" : urgency === "soon" ? "text-amber-600 font-medium" : ""}>
+                                    {prettyDate(t.due_date)}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                     {!taskFormOpen[r.id] ? (
                       <button
                         onClick={() => {

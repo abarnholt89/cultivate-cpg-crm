@@ -128,6 +128,14 @@ function addDaysISO(iso: string, days: number) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function taskUrgency(due_date: string | null): "overdue" | "soon" | "normal" {
+  if (!due_date) return "normal";
+  const today = todayISO();
+  if (due_date < today) return "overdue";
+  if (due_date <= addDaysISO(today, 7)) return "soon";
+  return "normal";
+}
+
 function isBetweenInclusive(dateISO: string, startISO: string, endISO: string) {
   return dateISO >= startISO && dateISO <= endISO;
 }
@@ -181,6 +189,9 @@ export default function RepInboxPage() {
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [newTaskForm, setNewTaskForm] = useState({ title: "", notes: "", due_date: "", assigned_to: "" });
   const [newTaskSaving, setNewTaskSaving] = useState(false);
+  const [showCompleted, setShowCompleted] = useState(false);
+  const [completedTasks, setCompletedTasks] = useState<Task[]>([]);
+  const [loadingCompleted, setLoadingCompleted] = useState(false);
   const [agingAccounts, setAgingAccounts] = useState<AgingRow[]>([]);
   const [upcoming, setUpcoming] = useState<UpcomingItem[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -671,6 +682,27 @@ if (clientMessagesResult.error) {
     }
   }
 
+  async function toggleShowCompleted() {
+    const next = !showCompleted;
+    setShowCompleted(next);
+    if (next && completedTasks.length === 0) {
+      setLoadingCompleted(true);
+      try {
+        const q = supabase
+          .from("tasks")
+          .select("id,title,notes,due_date,assigned_to,brand_id,retailer_id,status,created_at,assigned_profile:profiles!assigned_to(full_name),created_profile:profiles!created_by(full_name),brand:brands(name),retailer:retailers(name,banner)")
+          .eq("status", "done")
+          .order("created_at", { ascending: false })
+          .limit(30);
+        const finalQ = role === "admin" ? q : q.eq("assigned_to", currentUserId!);
+        const { data } = await finalQ;
+        setCompletedTasks((data as unknown as Task[]) ?? []);
+      } finally {
+        setLoadingCompleted(false);
+      }
+    }
+  }
+
   const counts = useMemo(
     () => ({
       messages: clientMessages.length,
@@ -779,6 +811,12 @@ if (clientMessagesResult.error) {
                 </select>
               )}
               <button
+                onClick={toggleShowCompleted}
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
+              >
+                {showCompleted ? "Hide completed" : "Show completed"}
+              </button>
+              <button
                 onClick={() => setNewTaskOpen((prev) => !prev)}
                 className="text-sm text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
               >
@@ -850,48 +888,22 @@ if (clientMessagesResult.error) {
             <p className="text-sm text-muted-foreground">No open tasks.</p>
           ) : (
             <div className="space-y-3">
-              {filteredTasks.map((task) => {
-                const today = todayISO();
-                const isPastDue = task.due_date ? task.due_date < today : false;
-                const href =
-                  task.brand_id && task.retailer_id
-                    ? `/brands/${task.brand_id}/retailers#retailer-${task.retailer_id}`
-                    : task.brand_id
-                    ? `/brands/${task.brand_id}/retailers`
-                    : "/inbox";
+              {filteredTasks.map((task) => <TaskTile key={task.id} task={task} onDone={markTaskDone} />)}
+            </div>
+          )}
 
-                return (
-                  <div
-                    key={task.id}
-                    className="flex items-start gap-3 rounded-lg border border-border bg-card p-3"
-                  >
-                    <button
-                      onClick={() => markTaskDone(task.id)}
-                      className="mt-0.5 flex-shrink-0 w-4 h-4 rounded border border-border hover:border-primary hover:bg-primary/10 transition-colors"
-                      title="Mark done"
-                    />
-                    <Link href={href} className="min-w-0 flex-1 hover:opacity-80 transition-opacity">
-                      <div className="font-medium text-foreground">{task.title}</div>
-                      {(task.brand?.name || task.retailer?.name) && (
-                        <div className="mt-1 text-sm text-muted-foreground">
-                          {[task.brand?.name, task.retailer?.name].filter(Boolean).join(" · ")}
-                        </div>
-                      )}
-                      {task.notes ? (
-                        <div className="mt-2 line-clamp-2 text-sm text-foreground/85">
-                          {task.notes}
-                        </div>
-                      ) : null}
-                      {task.due_date && (
-                        <div className={`mt-2 text-xs ${isPastDue ? "text-red-600 font-medium" : "text-muted-foreground"}`}>
-                          Due {prettyDate(task.due_date)}
-                          {isPastDue ? " · Overdue" : ""}
-                        </div>
-                      )}
-                    </Link>
-                  </div>
-                );
-              })}
+          {showCompleted && (
+            <div className="mt-4 border-t border-border pt-4 space-y-2">
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Completed</div>
+              {loadingCompleted ? (
+                <p className="text-sm text-muted-foreground">Loading…</p>
+              ) : completedTasks.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No completed tasks.</p>
+              ) : (
+                <div className="space-y-2">
+                  {completedTasks.map((task) => <TaskTile key={task.id} task={task} done />)}
+                </div>
+              )}
             </div>
           )}
         </section>
@@ -1021,6 +1033,75 @@ if (clientMessagesResult.error) {
           </section>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function TaskTile({
+  task,
+  onDone,
+  done = false,
+}: {
+  task: Task;
+  onDone?: (id: string) => void;
+  done?: boolean;
+}) {
+  const urgency = done ? "normal" : taskUrgency(task.due_date);
+
+  const tileClass =
+    urgency === "overdue"
+      ? "flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3"
+      : urgency === "soon"
+      ? "flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3"
+      : "flex items-start gap-3 rounded-lg border border-border bg-card p-3";
+
+  const dueDateClass =
+    urgency === "overdue"
+      ? "mt-2 text-xs text-red-600 font-medium"
+      : urgency === "soon"
+      ? "mt-2 text-xs text-amber-600 font-medium"
+      : "mt-2 text-xs text-muted-foreground";
+
+  const href =
+    task.brand_id && task.retailer_id
+      ? `/brands/${task.brand_id}/retailers#retailer-${task.retailer_id}`
+      : task.brand_id
+      ? `/brands/${task.brand_id}/retailers`
+      : "/inbox";
+
+  return (
+    <div className={tileClass}>
+      {!done && onDone && (
+        <button
+          onClick={() => onDone(task.id)}
+          className="mt-0.5 flex-shrink-0 w-4 h-4 rounded border border-border hover:border-primary hover:bg-primary/10 transition-colors"
+          title="Mark done"
+        />
+      )}
+      {done && (
+        <div className="mt-0.5 flex-shrink-0 w-4 h-4 rounded border border-border bg-muted flex items-center justify-center">
+          <span className="text-[10px] text-muted-foreground">✓</span>
+        </div>
+      )}
+      <Link href={href} className="min-w-0 flex-1 hover:opacity-80 transition-opacity">
+        <div className={`font-medium ${done ? "line-through text-muted-foreground" : "text-foreground"}`}>
+          {task.title}
+        </div>
+        {(task.brand?.name || task.retailer?.name) && (
+          <div className="mt-1 text-sm text-muted-foreground">
+            {[task.brand?.name, task.retailer?.name].filter(Boolean).join(" · ")}
+          </div>
+        )}
+        {!done && task.notes ? (
+          <div className="mt-2 line-clamp-2 text-sm text-foreground/85">{task.notes}</div>
+        ) : null}
+        {task.due_date && (
+          <div className={dueDateClass}>
+            Due {prettyDate(task.due_date)}
+            {urgency === "overdue" ? " · Overdue" : ""}
+          </div>
+        )}
+      </Link>
     </div>
   );
 }
