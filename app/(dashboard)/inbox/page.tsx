@@ -795,34 +795,32 @@ if (clientMessagesResult.error) {
         </section>
 
         <section className="space-y-4 rounded-xl border border-border bg-card p-4">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-foreground">Tasks</h2>
-            <div className="flex items-center gap-2">
-              {role === "admin" && repProfiles.length > 0 && (
-                <select
-                  value={taskRepFilter}
-                  onChange={(e) => setTaskRepFilter(e.target.value)}
-                  className="text-sm border border-border rounded px-2 py-1 bg-card text-foreground"
-                >
-                  <option value="">All</option>
-                  {repProfiles.map((rep) => (
-                    <option key={rep.id} value={rep.id}>{rep.full_name}</option>
-                  ))}
-                </select>
-              )}
-              <button
-                onClick={toggleShowCompleted}
-                className="text-sm text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <h2 className="text-lg font-semibold text-foreground mr-auto">Tasks</h2>
+            {role === "admin" && repProfiles.length > 0 && (
+              <select
+                value={taskRepFilter}
+                onChange={(e) => setTaskRepFilter(e.target.value)}
+                className="text-sm border border-border rounded px-2 py-1 bg-card text-foreground"
               >
-                {showCompleted ? "Hide completed" : "Show completed"}
-              </button>
-              <button
-                onClick={() => setNewTaskOpen((prev) => !prev)}
-                className="text-sm text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
-              >
-                + New Task
-              </button>
-            </div>
+                <option value="">All</option>
+                {repProfiles.map((rep) => (
+                  <option key={rep.id} value={rep.id}>{rep.full_name}</option>
+                ))}
+              </select>
+            )}
+            <button
+              onClick={toggleShowCompleted}
+              className="text-sm text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
+            >
+              {showCompleted ? "Hide completed" : "Show completed"}
+            </button>
+            <button
+              onClick={() => setNewTaskOpen((prev) => !prev)}
+              className="text-sm text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
+            >
+              + New Task
+            </button>
           </div>
 
           {newTaskOpen && (
