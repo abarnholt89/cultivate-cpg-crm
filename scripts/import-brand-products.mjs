@@ -64,6 +64,29 @@ function resolveXlsxPath() {
   process.exit(1);
 }
 
+// ── Manual name overrides ─────────────────────────────────────────────────────
+// Maps exact spreadsheet brand names → exact DB brand names for cases where
+// the fuzzy matcher can't find a match automatically.
+
+const NAME_MAP = {
+  "Alice Mushrooms": "Alice - Alice Mushrooms",
+  "Aplós": "Aplos",
+  "B.T.R. NATION": "B.T.R. - Better Brownie Bites INC",
+  "Cravings By Chrissy Teigen": "Cravings by Chrissy - Chrissy's Cravings",
+  "Dr Emil Nutrition": "Dr. Emil - Brand Holdings",
+  "Hedgehog Foods": "Hedgehog - Hedgehog Foods LLC",
+  "naturSource": "Naturesource - Naturesource Inc.",
+  "OKO Blends": "Oko Foods",
+  "Queen Street Gluten Free": "Queen Street Bakery - Queen Street Gluten Free Inc.",
+  "Seven Teas & Lemonade": "Seven Teas - Tea Horse Rd",
+  "B.T.R. Nation": "B.T.R. - Better Brownie Bites INC",
+  "naturSource - KeHE": "Naturesource - Naturesource Inc.",
+  "naturSource - UNFI": "Naturesource - Naturesource Inc.",
+  "Queen Street Gluten Free Inc": "Queen Street Bakery - Queen Street Gluten Free Inc.",
+  "Seven Teas & Lemonade KeHE": "Seven Teas - Tea Horse Rd",
+  "Seven Teas & Lemonade UNFI": "Seven Teas - Tea Horse Rd",
+};
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function normalize(s) {
@@ -149,7 +172,14 @@ for (const row of dataRows) {
   if (!sheetBrand || !description) continue;
 
   if (!brandGroups.has(sheetBrand)) {
-    const result = bestMatch(sheetBrand, brands);
+    let result = null;
+    // Check manual override first
+    const mappedName = NAME_MAP[sheetBrand];
+    if (mappedName) {
+      const hit = brands.find((b) => b.name === mappedName);
+      if (hit) result = { brand: hit, how: "manual-map" };
+    }
+    if (!result) result = bestMatch(sheetBrand, brands);
     brandGroups.set(sheetBrand, { result, rows: [] });
   }
 
