@@ -299,6 +299,15 @@ export default function BrandRetailersPage() {
   const [manualMenuOpen, setManualMenuOpen] = useState<string | null>(null);
   const [manualEditingId, setManualEditingId] = useState<string | null>(null);
   const [manualEditDraft, setManualEditDraft] = useState<ManualReviewRow | null>(null);
+  // SKU modal state
+  const [skuModal, setSkuModal] = useState<{ retailerId: string; retailerName: string } | null>(null);
+  const [skuModalItems, setSkuModalItems] = useState<{ sku_description: string; upc: string }[]>([]);
+  const [skuModalLoading, setSkuModalLoading] = useState(false);
+  const [skuEditMode, setSkuEditMode] = useState(false);
+  const [allBrandProducts, setAllBrandProducts] = useState<{ id: string; description: string; retail_upc: string | null }[]>([]);
+  const [skuEditSelected, setSkuEditSelected] = useState<Set<string>>(new Set()); // set of upc strings
+  const [skuEditSaving, setSkuEditSaving] = useState(false);
+
   // Task form state
   const [repProfilesList, setRepProfilesList] = useState<{ id: string; full_name: string }[]>([]);
   const [taskFormOpen, setTaskFormOpen] = useState<Record<string, boolean>>({});
@@ -774,6 +783,97 @@ export default function BrandRetailersPage() {
     }
   }
 
+  async function openSkuModal(retailerId: string, retailerName: string) {
+    setSkuModal({ retailerId, retailerName });
+    setSkuEditMode(false);
+    setSkuModalLoading(true);
+    setSkuModalItems([]);
+
+    const brandName = brand?.name ?? "";
+
+    // Fetch authorized SKUs for this retailer + brand
+    const { data } = await supabase
+      .from("authorized_products")
+      .select("sku_description,upc")
+      .eq("retailer_id", retailerId)
+      .ilike("client_name", `%${brandName}%`);
+
+    setSkuModalItems((data ?? []) as { sku_description: string; upc: string }[]);
+
+    // Pre-fetch all brand products for edit mode
+    if (isRepOrAdmin && allBrandProducts.length === 0) {
+      const { data: bpData } = await supabase
+        .from("brand_products")
+        .select("id,description,retail_upc")
+        .eq("brand_id", brandId)
+        .eq("status", "active")
+        .order("description");
+      setAllBrandProducts((bpData ?? []) as { id: string; description: string; retail_upc: string | null }[]);
+    }
+
+    setSkuModalLoading(false);
+  }
+
+  function enterSkuEditMode() {
+    const currentUpcs = new Set(skuModalItems.map((i) => i.upc).filter(Boolean));
+    setSkuEditSelected(currentUpcs);
+    setSkuEditMode(true);
+  }
+
+  async function saveSkuEdit() {
+    if (!skuModal || !brand) return;
+    setSkuEditSaving(true);
+
+    const brandName = brand.name;
+    const retailerId = skuModal.retailerId;
+    const retailerName = skuModal.retailerName;
+
+    // Determine additions and removals by comparing with current state
+    const currentUpcs = new Set(skuModalItems.map((i) => i.upc).filter(Boolean));
+    const toAdd = [...skuEditSelected].filter((upc) => !currentUpcs.has(upc));
+    const toRemove = [...currentUpcs].filter((upc) => !skuEditSelected.has(upc));
+
+    // Remove deauthorized rows
+    for (const upc of toRemove) {
+      await supabase
+        .from("authorized_products")
+        .delete()
+        .eq("retailer_id", retailerId)
+        .eq("upc", String(upc))
+        .ilike("client_name", `%${brandName}%`);
+    }
+
+    // Add newly authorized rows
+    if (toAdd.length > 0) {
+      const insertRows = toAdd.map((upc) => {
+        const product = allBrandProducts.find((p) => p.retail_upc === upc);
+        return {
+          client_name: brandName,
+          brand_source: brandName,
+          sku_description: product?.description ?? upc,
+          upc: String(upc),
+          raw_retailer_name: retailerName,
+          retailer_name: retailerName,
+          retailer_id: retailerId,
+          authorized: true,
+          authorization_source: "manual",
+        };
+      });
+      await supabase.from("authorized_products").insert(insertRows);
+    }
+
+    // Refresh modal items
+    const { data } = await supabase
+      .from("authorized_products")
+      .select("sku_description,upc")
+      .eq("retailer_id", retailerId)
+      .ilike("client_name", `%${brandName}%`);
+
+    setSkuModalItems((data ?? []) as { sku_description: string; upc: string }[]);
+    setSkuEditMode(false);
+    setSkuEditSaving(false);
+  }
+
   async function openAttachment(storagePath: string) {
     const { data, error } = await supabase.storage
       .from("brand-message-attachments")
@@ -1133,6 +1233,9 @@ export default function BrandRetailersPage() {
           <span className="px-3 py-1.5 rounded border text-white" style={{ background: "var(--foreground)" }}>
             Retailers
           </span>
+          <Link href={`/brands/${brandId}/products`} className="px-3 py-1.5 rounded border hover:bg-gray-50">
+            Products
+          </Link>
           {isRepOrAdmin && (
             <Link href="/board" className="px-3 py-1.5 rounded border hover:bg-gray-50">
               Board
@@ -1240,10 +1343,16 @@ export default function BrandRetailersPage() {
 
                   <div className="flex flex-col items-end gap-2 shrink-0">
                     {authorized ? (
-                      <Badge
-                        label={`${authorized.authorized_item_count} SKUs authorized`}
-                        tone="good"
-                      />
+                      <button
+                        onClick={() => openSkuModal(r.id, r.banner?.trim() ? r.banner : r.name)}
+                        className="cursor-pointer"
+                        title="View authorized SKUs"
+                      >
+                        <Badge
+                          label={`${authorized.authorized_item_count} SKUs authorized`}
+                          tone="good"
+                        />
+                      </button>
                     ) : null}
                     <a
                       className="text-xs underline cursor-pointer"
@@ -2180,6 +2289,122 @@ export default function BrandRetailersPage() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* SKU Modal */}
+      {skuModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={() => { setSkuModal(null); setSkuEditMode(false); }}
+        >
+          <div
+            className="relative w-full max-w-lg mx-4 rounded-xl border border-border bg-card shadow-xl p-6 space-y-4 max-h-[80vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-foreground">Authorized SKUs</h2>
+                <p className="text-sm text-muted-foreground mt-0.5">{skuModal.retailerName}</p>
+              </div>
+              <button
+                onClick={() => { setSkuModal(null); setSkuEditMode(false); }}
+                className="text-muted-foreground hover:text-foreground transition-colors text-xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 min-h-0">
+              {skuModalLoading ? (
+                <p className="text-sm text-muted-foreground">Loading…</p>
+              ) : !skuEditMode ? (
+                <>
+                  {skuModalItems.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No authorized SKUs on record.</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {skuModalItems.map((item, i) => (
+                        <div key={i} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-secondary px-3 py-2 text-sm">
+                          <span className="text-foreground">{item.sku_description}</span>
+                          <span className="text-muted-foreground font-mono text-xs shrink-0">{item.upc}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                // Edit mode: checklist of all brand products
+                <div className="space-y-1.5">
+                  <p className="text-xs text-muted-foreground mb-2">Check SKUs to authorize for this retailer:</p>
+                  {allBrandProducts.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No products in catalog yet. Add products from the Products tab first.</p>
+                  ) : (
+                    allBrandProducts.map((p) => {
+                      const upc = p.retail_upc ?? "";
+                      const checked = skuEditSelected.has(upc);
+                      return (
+                        <label key={p.id} className="flex items-center gap-3 rounded-lg border border-border px-3 py-2 cursor-pointer hover:bg-accent transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              setSkuEditSelected((prev) => {
+                                const next = new Set(prev);
+                                if (checked) next.delete(upc); else next.add(upc);
+                                return next;
+                              });
+                            }}
+                          />
+                          <span className="flex-1 text-sm text-foreground">{p.description}</span>
+                          <span className="text-xs text-muted-foreground font-mono shrink-0">{p.retail_upc ?? "—"}</span>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2 pt-2 border-t border-border">
+              {!skuEditMode ? (
+                <>
+                  {isRepOrAdmin && (
+                    <button
+                      onClick={enterSkuEditMode}
+                      className="px-4 py-2 rounded-lg text-sm font-medium"
+                      style={{ background: "var(--foreground)", color: "var(--background)" }}
+                    >
+                      Edit
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setSkuModal(null)}
+                    className="px-4 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Close
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={saveSkuEdit}
+                    disabled={skuEditSaving}
+                    className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                    style={{ background: "var(--foreground)", color: "var(--background)" }}
+                  >
+                    {skuEditSaving ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    onClick={() => setSkuEditMode(false)}
+                    className="px-4 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

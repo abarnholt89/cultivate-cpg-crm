@@ -243,6 +243,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </Link>
 
           {role !== "client" ? (
+            <Link href="/products" className={linkClass("/products")}>
+              <span className="relative inline-block pb-1">
+                Products
+                {isActive("/products") && (
+                  <span className="absolute -bottom-[17px] left-0 h-[3px] w-full rounded-full bg-primary" />
+                )}
+              </span>
+            </Link>
+          ) : null}
+
+          {role !== "client" ? (
             <Link href="/category-review" className={linkClass("/category-review")}>
               <span className="relative inline-block pb-1">
                 Reviews Universe
