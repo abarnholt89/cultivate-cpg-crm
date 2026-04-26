@@ -85,6 +85,9 @@ const NAME_MAP = {
   "Queen Street Gluten Free Inc": "Queen Street Bakery - Queen Street Gluten Free Inc.",
   "Seven Teas & Lemonade KeHE": "Seven Teas - Tea Horse Rd",
   "Seven Teas & Lemonade UNFI": "Seven Teas - Tea Horse Rd",
+  "American Salmon": "American Tuna",
+  "CON-CRĒT®": "Vireo - Con-Crete/Sanz",
+  "Sanz": "Vireo - Con-Crete/Sanz",
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
