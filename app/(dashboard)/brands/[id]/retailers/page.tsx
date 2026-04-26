@@ -292,6 +292,11 @@ export default function BrandRetailersPage() {
   const [manualMenuOpen, setManualMenuOpen] = useState<string | null>(null);
   const [manualEditingId, setManualEditingId] = useState<string | null>(null);
   const [manualEditDraft, setManualEditDraft] = useState<ManualReviewRow | null>(null);
+  // Task form state
+  const [repProfilesList, setRepProfilesList] = useState<{ id: string; full_name: string }[]>([]);
+  const [taskFormOpen, setTaskFormOpen] = useState<Record<string, boolean>>({});
+  const [taskForms, setTaskForms] = useState<Record<string, { title: string; notes: string; due_date: string; assigned_to: string }>>({});
+  const [taskSaving, setTaskSaving] = useState<Record<string, boolean>>({});
 
   const isRepOrAdmin = role === "admin" || role === "rep";
 
@@ -528,6 +533,19 @@ export default function BrandRetailersPage() {
     load();
   }, [brandId]);
 
+  // Fetch rep profiles for task assignment (admin/rep only)
+  useEffect(() => {
+    if (!isRepOrAdmin) return;
+    supabase
+      .from("profiles")
+      .select("id,full_name")
+      .eq("role", "rep")
+      .order("full_name")
+      .then(({ data }) => {
+        setRepProfilesList((data as { id: string; full_name: string }[]) ?? []);
+      });
+  }, [isRepOrAdmin]);
+
   // Generate signed URLs for all image attachments whenever cardAttachments loads
   useEffect(() => {
     const allAttachments = Object.values(cardAttachments).flatMap((byMsg) =>
@@ -691,6 +709,31 @@ export default function BrandRetailersPage() {
     setPendingManualReviews((prev) => ({ ...prev, [retailerId]: [] }));
 
     setStatus("Saved ✅");
+  }
+
+  async function saveTask(retailerId: string) {
+    const form = taskForms[retailerId];
+    if (!form?.title?.trim()) return;
+    setTaskSaving((prev) => ({ ...prev, [retailerId]: true }));
+    try {
+      await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: form.title.trim(),
+          notes: form.notes || null,
+          due_date: form.due_date || null,
+          assigned_to: form.assigned_to || userId || null,
+          created_by: userId || null,
+          brand_id: brandId,
+          retailer_id: retailerId,
+        }),
+      });
+      setTaskFormOpen((prev) => ({ ...prev, [retailerId]: false }));
+      setTaskForms((prev) => ({ ...prev, [retailerId]: { title: "", notes: "", due_date: "", assigned_to: "" } }));
+    } finally {
+      setTaskSaving((prev) => ({ ...prev, [retailerId]: false }));
+    }
   }
 
   async function openAttachment(storagePath: string) {
@@ -1987,6 +2030,89 @@ export default function BrandRetailersPage() {
                   >
                     Save Changes
                   </button>
+                ) : null}
+
+                {isRepOrAdmin ? (
+                  <div className="border-t border-border pt-4 mt-2">
+                    {!taskFormOpen[r.id] ? (
+                      <button
+                        onClick={() => {
+                          setTaskFormOpen((prev) => ({ ...prev, [r.id]: true }));
+                          if (!taskForms[r.id]) {
+                            setTaskForms((prev) => ({
+                              ...prev,
+                              [r.id]: { title: "", notes: "", due_date: "", assigned_to: userId ?? "" },
+                            }));
+                          }
+                        }}
+                        className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        + Add Task
+                      </button>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="text-sm font-medium text-foreground">New Task</div>
+                        <input
+                          type="text"
+                          placeholder="Task title"
+                          value={taskForms[r.id]?.title ?? ""}
+                          onChange={(e) => setTaskForms((prev) => ({ ...prev, [r.id]: { ...prev[r.id], title: e.target.value } }))}
+                          className="border rounded-lg px-3 py-2 w-full text-sm"
+                          style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                        />
+                        <textarea
+                          placeholder="Notes (optional)"
+                          value={taskForms[r.id]?.notes ?? ""}
+                          onChange={(e) => setTaskForms((prev) => ({ ...prev, [r.id]: { ...prev[r.id], notes: e.target.value } }))}
+                          rows={2}
+                          className="border rounded-lg px-3 py-2 w-full text-sm"
+                          style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                        />
+                        <div className="flex gap-3 flex-wrap">
+                          <div className="flex-1 min-w-0">
+                            <label className="block text-xs text-muted-foreground mb-1">Due Date</label>
+                            <input
+                              type="date"
+                              value={taskForms[r.id]?.due_date ?? ""}
+                              onChange={(e) => setTaskForms((prev) => ({ ...prev, [r.id]: { ...prev[r.id], due_date: e.target.value } }))}
+                              className="border rounded-lg px-3 py-2 w-full text-sm"
+                              style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                            />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <label className="block text-xs text-muted-foreground mb-1">Assign To</label>
+                            <select
+                              value={taskForms[r.id]?.assigned_to ?? ""}
+                              onChange={(e) => setTaskForms((prev) => ({ ...prev, [r.id]: { ...prev[r.id], assigned_to: e.target.value } }))}
+                              className="border rounded-lg px-3 py-2 w-full text-sm"
+                              style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                            >
+                              <option value={userId ?? ""}>Me</option>
+                              {repProfilesList.filter((p) => p.id !== userId).map((p) => (
+                                <option key={p.id} value={p.id}>{p.full_name}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => saveTask(r.id)}
+                            disabled={!taskForms[r.id]?.title?.trim() || taskSaving[r.id]}
+                            className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
+                            style={{ background: "var(--foreground)", color: "var(--background)" }}
+                          >
+                            {taskSaving[r.id] ? "Saving…" : "Save Task"}
+                          </button>
+                          <button
+                            onClick={() => setTaskFormOpen((prev) => ({ ...prev, [r.id]: false }))}
+                            className="px-3 py-1.5 rounded-lg text-sm text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 ) : null}
               </div>
             );

@@ -145,6 +145,10 @@ export default function AllBrandsBoardPage() {
   const [noteText, setNoteText] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<Record<string, string>>({});
+  // Task form state — key is `${brandId}__${retailerId}`
+  const [taskFormKey, setTaskFormKey] = useState<string | null>(null);
+  const [taskForm, setTaskForm] = useState({ title: "", notes: "", due_date: "", assigned_to: "" });
+  const [taskSaving, setTaskSaving] = useState(false);
 
   // Inline status editing — no intermediate edit-mode; select is always visible
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
@@ -431,6 +435,30 @@ export default function AllBrandsBoardPage() {
     setNoteText("");
     setBrandRows((s) => { const next = { ...s }; delete next[brandId]; return next; });
     loadBrandRows(brandId, mode);
+  }
+
+  async function saveBoardTask(brandId: string, retailerId: string) {
+    if (!taskForm.title.trim() || !userId) return;
+    setTaskSaving(true);
+    try {
+      await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: taskForm.title.trim(),
+          notes: taskForm.notes || null,
+          due_date: taskForm.due_date || null,
+          assigned_to: taskForm.assigned_to || userId,
+          created_by: userId,
+          brand_id: brandId,
+          retailer_id: retailerId,
+        }),
+      });
+      setTaskFormKey(null);
+      setTaskForm({ title: "", notes: "", due_date: "", assigned_to: "" });
+    } finally {
+      setTaskSaving(false);
+    }
   }
 
   // ── Inline status update ──────────────────────────────────────────────────
@@ -807,7 +835,7 @@ export default function AllBrandsBoardPage() {
                                         onClick={(e) => e.stopPropagation()}
                                         autoFocus
                                       />
-                                      <div className="flex items-center gap-3">
+                                      <div className="flex items-center gap-3 flex-wrap">
                                         <button
                                           className="px-4 py-1.5 rounded-lg text-sm font-medium"
                                           style={{
@@ -828,12 +856,86 @@ export default function AllBrandsBoardPage() {
                                         >
                                           Cancel
                                         </button>
+                                        <button
+                                          className="text-sm"
+                                          style={{ color: "var(--muted-foreground)" }}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            const tKey = `${brand.id}__${row.retailerId}`;
+                                            setTaskFormKey((prev) => prev === tKey ? null : tKey);
+                                            setTaskForm({ title: "", notes: "", due_date: "", assigned_to: userId ?? "" });
+                                          }}
+                                        >
+                                          + Task
+                                        </button>
                                         {saveStatus[key] && (
                                           <span className="text-sm" style={{ color: "var(--muted-foreground)" }}>
                                             {saveStatus[key]}
                                           </span>
                                         )}
                                       </div>
+                                      {taskFormKey === key && (
+                                        <div
+                                          className="mt-3 space-y-2 rounded-lg p-3"
+                                          style={{ border: "1px solid var(--border)", background: "var(--card)" }}
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          <p className="text-xs font-medium" style={{ color: "var(--muted-foreground)" }}>New Task</p>
+                                          <input
+                                            type="text"
+                                            placeholder="Task title"
+                                            value={taskForm.title}
+                                            onChange={(e) => setTaskForm((prev) => ({ ...prev, title: e.target.value }))}
+                                            className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1"
+                                            style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
+                                          />
+                                          <textarea
+                                            placeholder="Notes (optional)"
+                                            value={taskForm.notes}
+                                            onChange={(e) => setTaskForm((prev) => ({ ...prev, notes: e.target.value }))}
+                                            rows={2}
+                                            className="w-full rounded-lg px-3 py-2 text-sm resize-none focus:outline-none"
+                                            style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
+                                          />
+                                          <div className="flex gap-2">
+                                            <input
+                                              type="date"
+                                              value={taskForm.due_date}
+                                              onChange={(e) => setTaskForm((prev) => ({ ...prev, due_date: e.target.value }))}
+                                              className="flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                                              style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
+                                            />
+                                            <select
+                                              value={taskForm.assigned_to}
+                                              onChange={(e) => setTaskForm((prev) => ({ ...prev, assigned_to: e.target.value }))}
+                                              className="flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                                              style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
+                                            >
+                                              <option value={userId ?? ""}>Me</option>
+                                              {reps.filter((r) => r.id !== userId).map((r) => (
+                                                <option key={r.id} value={r.id}>{r.full_name}</option>
+                                              ))}
+                                            </select>
+                                          </div>
+                                          <div className="flex gap-2">
+                                            <button
+                                              disabled={!taskForm.title.trim() || taskSaving}
+                                              onClick={(e) => { e.stopPropagation(); saveBoardTask(brand.id, row.retailerId); }}
+                                              className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
+                                              style={{ background: "var(--foreground)", color: "var(--background)" }}
+                                            >
+                                              {taskSaving ? "Saving…" : "Save Task"}
+                                            </button>
+                                            <button
+                                              onClick={(e) => { e.stopPropagation(); setTaskFormKey(null); }}
+                                              className="text-sm"
+                                              style={{ color: "var(--muted-foreground)" }}
+                                            >
+                                              Cancel
+                                            </button>
+                                          </div>
+                                        </div>
+                                      )}
                                     </div>
                                   </td>
                                 </tr>

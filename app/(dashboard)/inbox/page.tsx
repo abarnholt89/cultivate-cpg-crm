@@ -8,20 +8,20 @@ import StatusBadge from "@/components/StatusBadge";
 
 type Role = "admin" | "rep" | "client" | null;
 
-type RepTaskRow = {
-  task_id: string;
-  brand_retailer_timing_id: string;
-  retailer_id: string;
-  retailer_name: string;
-  brand_id: string;
+type Task = {
+  id: string;
   title: string;
-  details: string | null;
-  task_type: string;
-  priority: "low" | "medium" | "high";
+  notes: string | null;
+  due_date: string | null;
+  assigned_to: string | null;
+  brand_id: string | null;
+  retailer_id: string | null;
   status: string;
-  due_at: string | null;
   created_at: string;
-  created_by_name: string | null;
+  assigned_profile: { full_name: string | null } | null;
+  created_profile: { full_name: string | null } | null;
+  brand: { name: string } | null;
+  retailer: { name: string; banner: string | null } | null;
 };
 
 type AgingRow = {
@@ -176,7 +176,8 @@ export default function RepInboxPage() {
 
   const [role, setRole] = useState<Role>(null);
   const [authorized, setAuthorized] = useState(false);
-  const [tasks, setTasks] = useState<RepTaskRow[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [taskRepFilter, setTaskRepFilter] = useState("");
   const [agingAccounts, setAgingAccounts] = useState<AgingRow[]>([]);
   const [upcoming, setUpcoming] = useState<UpcomingItem[]>([]);
   const [clientMessages, setClientMessages] = useState<ClientMessageInboxRow[]>([]);
@@ -303,6 +304,17 @@ const calendarPromise =
         .gte("review_date", prev30)
         .lte("review_date", next30);
 
+      const tasksBaseQuery = supabase
+        .from("tasks")
+        .select("id,title,notes,due_date,assigned_to,brand_id,retailer_id,status,created_at,assigned_profile:profiles!assigned_to(full_name),created_profile:profiles!created_by(full_name),brand:brands(name),retailer:retailers(name,banner)")
+        .eq("status", "open")
+        .order("due_date", { ascending: true, nullsFirst: false })
+        .limit(50);
+
+      const tasksQuery = nextRole === "admin"
+        ? tasksBaseQuery
+        : tasksBaseQuery.eq("assigned_to", userId);
+
       const [
         followUpCountResult,
         tasksResult,
@@ -313,11 +325,7 @@ const calendarPromise =
         calendarResult,
       ] = await Promise.all([
         followUpCountPromise,
-        supabase.rpc("get_my_rep_tasks", {
-          p_status: "open",
-          p_limit: 50,
-          p_offset: 0,
-        }),
+        tasksQuery,
         timingPromise,
         clientMessagesPromise,
         supabase.rpc("get_rep_aging_accounts", {
@@ -331,7 +339,7 @@ const calendarPromise =
         calendarPromise,
       ]);
 
-      const taskRows = (tasksResult.data as RepTaskRow[]) ?? [];
+      const taskRows = (tasksResult.data as unknown as Task[]) ?? [];
       const clientMessageRows =
         (clientMessagesResult.data as ClientMessageInboxRow[]) ?? [];
       const agingRows = (agingResult.data as AgingRow[]) ?? [];
@@ -619,6 +627,16 @@ if (clientMessagesResult.error) {
     );
   }, [agingAccounts, agingRepFilter, retailersById]);
 
+  const filteredTasks = useMemo(() => {
+    if (!taskRepFilter) return tasks;
+    return tasks.filter((t) => t.assigned_to === taskRepFilter);
+  }, [tasks, taskRepFilter]);
+
+  async function markTaskDone(id: string) {
+    await fetch(`/api/tasks/${id}/done`, { method: "PATCH" });
+    setTasks((prev) => prev.filter((t) => t.id !== id));
+  }
+
   const counts = useMemo(
     () => ({
       messages: clientMessages.length,
@@ -646,8 +664,7 @@ if (clientMessagesResult.error) {
       <div>
         <h1 className="text-3xl font-bold text-foreground">Rep Inbox</h1>
         <p className="mt-1 text-muted-foreground">
-          Client messages, MacGruber reminders, upcoming milestones, aging
-          accounts, and accounts that need attention.
+          Client messages, open tasks, upcoming milestones, and aging accounts.
         </p>
         {status ? <p className="mt-2 text-sm text-red-600">{status}</p> : null}
       </div>
@@ -661,13 +678,13 @@ if (clientMessagesResult.error) {
           <PulseMetric label="Needs Follow Up" value={pulse.followUps} />
           <PulseMetric label="Stalled Accounts" value={pulse.stalled} />
           <PulseMetric label="Review Activity" value={pulse.upcoming} />
-          <PulseMetric label="Open Reminders" value={pulse.reminders} />
+          <PulseMetric label="Open Tasks" value={pulse.reminders} />
         </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <SummaryCard label="Client Messages" value={counts.messages} highlight />
-        <SummaryCard label="MacGruber Reminders" value={counts.nudges} />
+        <SummaryCard label="Tasks" value={counts.nudges} />
         <SummaryCard label="Review Activity" value={counts.upcoming} />
         <SummaryCard label="Aging Accounts" value={counts.aging} />
       </div>
@@ -712,36 +729,68 @@ if (clientMessagesResult.error) {
         </section>
 
         <section className="space-y-4 rounded-xl border border-border bg-card p-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-foreground">MacGruber Reminders</h2>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold text-foreground">Tasks</h2>
+            {role === "admin" && repProfiles.length > 0 && (
+              <select
+                value={taskRepFilter}
+                onChange={(e) => setTaskRepFilter(e.target.value)}
+                className="text-sm border border-border rounded px-2 py-1 bg-card text-foreground"
+              >
+                <option value="">All Reps</option>
+                {repProfiles.map((rep) => (
+                  <option key={rep.id} value={rep.id}>{rep.full_name}</option>
+                ))}
+              </select>
+            )}
           </div>
 
-          {tasks.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No open reminders.</p>
+          {filteredTasks.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No open tasks.</p>
           ) : (
             <div className="space-y-3">
-              {tasks.map((task) => (
-                <Link
-                  key={task.task_id}
-                  href={`/brands/${task.brand_id}/retailers`}
-                  className="block rounded-lg border border-border bg-card p-3 transition-colors hover:bg-accent"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="font-medium text-foreground">{task.title}</div>
-                    <PriorityBadge priority={task.priority} />
+              {filteredTasks.map((task) => {
+                const today = todayISO();
+                const isPastDue = task.due_date ? task.due_date < today : false;
+                const href =
+                  task.brand_id && task.retailer_id
+                    ? `/brands/${task.brand_id}/retailers#retailer-${task.retailer_id}`
+                    : task.brand_id
+                    ? `/brands/${task.brand_id}/retailers`
+                    : "/inbox";
+
+                return (
+                  <div
+                    key={task.id}
+                    className="flex items-start gap-3 rounded-lg border border-border bg-card p-3"
+                  >
+                    <button
+                      onClick={() => markTaskDone(task.id)}
+                      className="mt-0.5 flex-shrink-0 w-4 h-4 rounded border border-border hover:border-primary hover:bg-primary/10 transition-colors"
+                      title="Mark done"
+                    />
+                    <Link href={href} className="min-w-0 flex-1 hover:opacity-80 transition-opacity">
+                      <div className="font-medium text-foreground">{task.title}</div>
+                      {(task.brand?.name || task.retailer?.name) && (
+                        <div className="mt-1 text-sm text-muted-foreground">
+                          {[task.brand?.name, task.retailer?.name].filter(Boolean).join(" · ")}
+                        </div>
+                      )}
+                      {task.notes ? (
+                        <div className="mt-2 line-clamp-2 text-sm text-foreground/85">
+                          {task.notes}
+                        </div>
+                      ) : null}
+                      {task.due_date && (
+                        <div className={`mt-2 text-xs ${isPastDue ? "text-red-600 font-medium" : "text-muted-foreground"}`}>
+                          Due {prettyDate(task.due_date)}
+                          {isPastDue ? " · Overdue" : ""}
+                        </div>
+                      )}
+                    </Link>
                   </div>
-                  <div className="mt-1 text-sm text-muted-foreground">{task.retailer_name}</div>
-                  {task.details ? (
-                    <div className="mt-2 line-clamp-3 text-sm text-foreground/85">
-                      {task.details}
-                    </div>
-                  ) : null}
-                  <div className="mt-2 text-xs text-muted-foreground">
-                    From {task.created_by_name ?? "Manager"}
-                    {task.due_at ? ` • Due ${prettyDate(task.due_at)}` : ""}
-                  </div>
-                </Link>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>
@@ -895,21 +944,6 @@ function SummaryCard({
       <div className="text-2xl font-bold text-foreground">{value}</div>
       <div className="mt-1 text-sm text-muted-foreground">{label}</div>
     </div>
-  );
-}
-
-function PriorityBadge({
-  priority,
-}: {
-  priority: "low" | "medium" | "high";
-}) {
-  const label =
-    priority === "high" ? "High" : priority === "medium" ? "Medium" : "Low";
-
-  return (
-    <span className="rounded-full border border-border bg-secondary px-2 py-1 text-xs text-foreground">
-      {label}
-    </span>
   );
 }
 
