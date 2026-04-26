@@ -410,29 +410,12 @@ export default function PromotionsPage() {
     setBulkBrandName(brand.name);
     setBulkLoadingStep(true);
 
-    // Look up authorized retailers directly from the view (brand_id → retailer_id mapping)
-    const { data: viewRows } = await supabase
-      .from("authorized_accounts_with_brand_id")
-      .select("retailer_id")
-      .eq("brand_id", brandId);
-
-    const retailerIds = [...new Set(((viewRows ?? []) as { retailer_id: string }[]).map((r) => r.retailer_id).filter(Boolean))];
-
-    if (retailerIds.length > 0) {
-      const { data: retailerRows } = await supabase
-        .from("retailers")
-        .select("id,name,banner,distributor")
-        .in("id", retailerIds)
-        .order("name");
-      setBulkAvailableRetailers((retailerRows as RetailerOption[]) ?? []);
-    } else {
-      setBulkAvailableRetailers([]);
-    }
-
-    // Also get brand UPCs for SKU checklist in step 3
-    const { data: bpData } = await supabase.from("brand_products").select("retail_upc").eq("brand_id", brandId).eq("status", "active");
-    const upcs = ((bpData ?? []) as { retail_upc: string | null }[]).map((p) => p.retail_upc).filter((u): u is string => Boolean(u));
-    setBulkBrandUpcs(upcs);
+    // All retailers — rep picks freely
+    const { data: retailerRows } = await supabase
+      .from("retailers")
+      .select("id,name,banner,distributor")
+      .order("name");
+    setBulkAvailableRetailers((retailerRows as RetailerOption[]) ?? []);
 
     setBulkLoadingStep(false);
     setBulkStep(2);
@@ -445,26 +428,20 @@ export default function PromotionsPage() {
     setBulkRetailerDistributor(retailer.distributor);
     setBulkLoadingStep(true);
 
-    // Fetch authorized SKUs: brand UPCs × this retailer
-    const upcs = bulkBrandUpcs;
-    if (upcs.length > 0) {
-      const { data: authRows } = await supabase
-        .from("authorized_products")
-        .select("upc,sku_description")
-        .eq("retailer_id", retailer.id)
-        .in("upc", upcs);
+    // All active SKUs for this brand — no authorized-only restriction
+    const { data: bpData } = await supabase
+      .from("brand_products")
+      .select("retail_upc,description")
+      .eq("brand_id", bulkBrandId)
+      .eq("status", "active")
+      .order("description");
 
-      const seen = new Set<string>();
-      const skus: SkuOption[] = [];
-      ((authRows ?? []) as SkuOption[]).forEach((r) => {
-        if (!seen.has(r.upc)) { seen.add(r.upc); skus.push(r); }
-      });
-      setBulkSkus(skus.sort((a, b) => a.sku_description.localeCompare(b.sku_description)));
-      setBulkSelected(new Set(skus.map((s) => s.upc))); // default all checked
-    } else {
-      setBulkSkus([]);
-      setBulkSelected(new Set());
-    }
+    const skus: SkuOption[] = ((bpData ?? []) as { retail_upc: string | null; description: string }[])
+      .filter((p) => p.retail_upc)
+      .map((p) => ({ upc: p.retail_upc!, sku_description: p.description }));
+
+    setBulkSkus(skus);
+    setBulkSelected(new Set(skus.map((s) => s.upc)));
 
     setBulkLoadingStep(false);
     setBulkStep(3);
