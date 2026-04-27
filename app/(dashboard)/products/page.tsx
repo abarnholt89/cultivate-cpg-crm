@@ -40,7 +40,33 @@ type EditForm = {
   description: string;
   retail_upc: string;
   size: string;
+  uom: string;
+  kehe_item: string;
+  unfi_east_item: string;
+  unfi_west_item: string;
+  cost: string;
+  case_cost: string;
   srp: string;
+  unit_pack: string;
+  inner_pack: string;
+  master_case_pack: string;
+  ti: string;
+  hi: string;
+  cert_non_gmo: boolean;
+  cert_organic: boolean;
+  cert_gluten_free: boolean;
+  cert_kosher: boolean;
+  cert_vegan: boolean;
+};
+
+const EMPTY_EDIT_FORM: EditForm = {
+  description: "", retail_upc: "", size: "", uom: "",
+  kehe_item: "", unfi_east_item: "", unfi_west_item: "",
+  cost: "", case_cost: "", srp: "",
+  unit_pack: "", inner_pack: "", master_case_pack: "",
+  ti: "", hi: "",
+  cert_non_gmo: false, cert_organic: false, cert_gluten_free: false,
+  cert_kosher: false, cert_vegan: false,
 };
 
 const PRODUCT_SELECT = [
@@ -79,7 +105,7 @@ export default function ProductsLibraryPage() {
   const [query, setQuery] = useState("");
 
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<EditForm>({ description: "", retail_upc: "", size: "", srp: "" });
+  const [editForm, setEditForm] = useState<EditForm>(EMPTY_EDIT_FORM);
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState("");
 
@@ -161,7 +187,23 @@ export default function ProductsLibraryPage() {
       description: product.description,
       retail_upc: product.retail_upc ?? "",
       size: product.size ?? "",
+      uom: product.uom ?? "",
+      kehe_item: product.kehe_item ?? "",
+      unfi_east_item: product.unfi_east_item ?? "",
+      unfi_west_item: product.unfi_west_item ?? "",
+      cost: product.cost != null ? String(product.cost) : "",
+      case_cost: product.case_cost != null ? String(product.case_cost) : "",
       srp: product.srp != null ? String(product.srp) : "",
+      unit_pack: product.unit_pack ?? "",
+      inner_pack: product.inner_pack ?? "",
+      master_case_pack: product.master_case_pack ?? "",
+      ti: product.ti != null ? String(product.ti) : "",
+      hi: product.hi != null ? String(product.hi) : "",
+      cert_non_gmo: product.cert_non_gmo ?? false,
+      cert_organic: product.cert_organic ?? false,
+      cert_gluten_free: product.cert_gluten_free ?? false,
+      cert_kosher: product.cert_kosher ?? false,
+      cert_vegan: product.cert_vegan ?? false,
     });
     setEditError("");
   }
@@ -173,21 +215,31 @@ export default function ProductsLibraryPage() {
     if (!editForm.description.trim()) { setEditError("Description is required"); return; }
     setEditSaving(true);
     setEditError("");
-    const { error } = await supabase
-      .from("brand_products")
-      .update({
-        description: editForm.description.trim(),
-        retail_upc: editForm.retail_upc.trim() || null,
-        size: editForm.size.trim() || null,
-        srp: editForm.srp ? parseFloat(editForm.srp) : null,
-      })
-      .eq("id", editingId);
+    const updates = {
+      description: editForm.description.trim(),
+      retail_upc: editForm.retail_upc.trim() || null,
+      size: editForm.size.trim() || null,
+      uom: editForm.uom.trim() || null,
+      kehe_item: editForm.kehe_item.trim() || null,
+      unfi_east_item: editForm.unfi_east_item.trim() || null,
+      unfi_west_item: editForm.unfi_west_item.trim() || null,
+      cost: editForm.cost ? parseFloat(editForm.cost) : null,
+      case_cost: editForm.case_cost ? parseFloat(editForm.case_cost) : null,
+      srp: editForm.srp ? parseFloat(editForm.srp) : null,
+      unit_pack: editForm.unit_pack.trim() || null,
+      inner_pack: editForm.inner_pack.trim() || null,
+      master_case_pack: editForm.master_case_pack.trim() || null,
+      ti: editForm.ti ? parseFloat(editForm.ti) : null,
+      hi: editForm.hi ? parseFloat(editForm.hi) : null,
+      cert_non_gmo: editForm.cert_non_gmo || null,
+      cert_organic: editForm.cert_organic || null,
+      cert_gluten_free: editForm.cert_gluten_free || null,
+      cert_kosher: editForm.cert_kosher || null,
+      cert_vegan: editForm.cert_vegan || null,
+    };
+    const { error } = await supabase.from("brand_products").update(updates).eq("id", editingId);
     if (error) { setEditError(error.message); setEditSaving(false); return; }
-    setProducts((prev) =>
-      prev.map((p) => p.id === editingId
-        ? { ...p, description: editForm.description.trim(), retail_upc: editForm.retail_upc.trim() || null, size: editForm.size.trim() || null, srp: editForm.srp ? parseFloat(editForm.srp) : null }
-        : p)
-    );
+    setProducts((prev) => prev.map((p) => p.id === editingId ? { ...p, ...updates } : p));
     setEditingId(null);
     setEditSaving(false);
   }
@@ -326,29 +378,95 @@ export default function ProductsLibraryPage() {
                   isEditing && (
                     <tr key={`${product.id}-edit`} className="border-b border-border" style={{ background: "var(--card)" }}>
                       <td colSpan={totalCols} className="px-4 py-3">
-                        <div className="flex flex-wrap gap-3 items-end">
-                          <div>
-                            <label className="block text-xs text-muted-foreground mb-1">Description</label>
-                            <input type="text" value={editForm.description} onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))} className="border rounded px-2 py-1 text-sm w-64" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                        <div className="space-y-3">
+                          {/* Row 1: Identity */}
+                          <div className="grid grid-cols-4 gap-3">
+                            <div className="col-span-2">
+                              <label className="block text-xs text-muted-foreground mb-1">Description *</label>
+                              <input type="text" value={editForm.description} onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-muted-foreground mb-1">UPC</label>
+                              <input type="text" value={editForm.retail_upc} onChange={(e) => setEditForm((f) => ({ ...f, retail_upc: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full font-mono" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-muted-foreground mb-1">Size</label>
+                              <input type="text" value={editForm.size} onChange={(e) => setEditForm((f) => ({ ...f, size: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                            </div>
                           </div>
-                          <div>
-                            <label className="block text-xs text-muted-foreground mb-1">UPC</label>
-                            <input type="text" value={editForm.retail_upc} onChange={(e) => setEditForm((f) => ({ ...f, retail_upc: e.target.value }))} className="border rounded px-2 py-1 text-sm w-40 font-mono" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                          {/* Row 2: Distributor item #s + UOM */}
+                          <div className="grid grid-cols-4 gap-3">
+                            <div>
+                              <label className="block text-xs text-muted-foreground mb-1">UOM</label>
+                              <input type="text" value={editForm.uom} onChange={(e) => setEditForm((f) => ({ ...f, uom: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-muted-foreground mb-1">KeHE Item #</label>
+                              <input type="text" value={editForm.kehe_item} onChange={(e) => setEditForm((f) => ({ ...f, kehe_item: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full font-mono" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-muted-foreground mb-1">UNFI East #</label>
+                              <input type="text" value={editForm.unfi_east_item} onChange={(e) => setEditForm((f) => ({ ...f, unfi_east_item: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full font-mono" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-muted-foreground mb-1">UNFI West #</label>
+                              <input type="text" value={editForm.unfi_west_item} onChange={(e) => setEditForm((f) => ({ ...f, unfi_west_item: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full font-mono" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                            </div>
                           </div>
-                          <div>
-                            <label className="block text-xs text-muted-foreground mb-1">Size</label>
-                            <input type="text" value={editForm.size} onChange={(e) => setEditForm((f) => ({ ...f, size: e.target.value }))} className="border rounded px-2 py-1 text-sm w-24" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                          {/* Row 3: Pricing */}
+                          <div className="grid grid-cols-4 gap-3">
+                            <div>
+                              <label className="block text-xs text-muted-foreground mb-1">Unit Cost ($)</label>
+                              <input type="number" step="0.01" value={editForm.cost} onChange={(e) => setEditForm((f) => ({ ...f, cost: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-muted-foreground mb-1">Case Cost ($)</label>
+                              <input type="number" step="0.01" value={editForm.case_cost} onChange={(e) => setEditForm((f) => ({ ...f, case_cost: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-muted-foreground mb-1">SRP ($)</label>
+                              <input type="number" step="0.01" value={editForm.srp} onChange={(e) => setEditForm((f) => ({ ...f, srp: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                            </div>
                           </div>
-                          <div>
-                            <label className="block text-xs text-muted-foreground mb-1">SRP</label>
-                            <input type="number" step="0.01" value={editForm.srp} onChange={(e) => setEditForm((f) => ({ ...f, srp: e.target.value }))} className="border rounded px-2 py-1 text-sm w-20" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                          {/* Row 4: Pack info */}
+                          <div className="grid grid-cols-5 gap-3">
+                            <div>
+                              <label className="block text-xs text-muted-foreground mb-1">Unit Pack</label>
+                              <input type="text" value={editForm.unit_pack} onChange={(e) => setEditForm((f) => ({ ...f, unit_pack: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-muted-foreground mb-1">Inner Pack</label>
+                              <input type="text" value={editForm.inner_pack} onChange={(e) => setEditForm((f) => ({ ...f, inner_pack: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-muted-foreground mb-1">Master Case</label>
+                              <input type="text" value={editForm.master_case_pack} onChange={(e) => setEditForm((f) => ({ ...f, master_case_pack: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-muted-foreground mb-1">TI</label>
+                              <input type="number" step="1" value={editForm.ti} onChange={(e) => setEditForm((f) => ({ ...f, ti: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-muted-foreground mb-1">HI</label>
+                              <input type="number" step="1" value={editForm.hi} onChange={(e) => setEditForm((f) => ({ ...f, hi: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            {editError && <span className="text-xs text-red-600">{editError}</span>}
-                            <button onClick={saveEdit} disabled={editSaving} className="px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50" style={{ background: "var(--foreground)", color: "var(--background)" }}>
-                              {editSaving ? "Saving…" : "Save"}
-                            </button>
-                            <button onClick={cancelEdit} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                          {/* Row 5: Certifications + actions */}
+                          <div className="flex flex-wrap items-center gap-4">
+                            <span className="text-xs text-muted-foreground font-medium">Certifications:</span>
+                            {(["cert_non_gmo", "cert_organic", "cert_gluten_free", "cert_kosher", "cert_vegan"] as const).map((field) => (
+                              <label key={field} className="flex items-center gap-1.5 text-xs text-foreground cursor-pointer">
+                                <input type="checkbox" checked={editForm[field]} onChange={(e) => setEditForm((f) => ({ ...f, [field]: e.target.checked }))} className="rounded" />
+                                {field === "cert_non_gmo" ? "Non-GMO" : field === "cert_organic" ? "Organic" : field === "cert_gluten_free" ? "GF" : field === "cert_kosher" ? "Kosher" : "Vegan"}
+                              </label>
+                            ))}
+                            <div className="flex items-center gap-2 ml-auto">
+                              {editError && <span className="text-xs text-red-600">{editError}</span>}
+                              <button onClick={saveEdit} disabled={editSaving} className="px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50" style={{ background: "var(--foreground)", color: "var(--background)" }}>
+                                {editSaving ? "Saving…" : "Save"}
+                              </button>
+                              <button onClick={cancelEdit} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                            </div>
                           </div>
                         </div>
                       </td>
