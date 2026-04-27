@@ -248,6 +248,8 @@ export default function BrandProductsPage() {
     ((authRes.data ?? []) as { upc: string; retailer_id: string }[]).forEach((r) => {
       if (r.upc && r.retailer_id) authSet.add(`${r.upc}|${r.retailer_id}`);
     });
+    console.log("[loadApl] brand page — auth set size:", authSet.size, "| first 5 keys:", [...authSet].slice(0, 5));
+    console.log("[loadApl] raw auth rows returned:", authRes.data?.length ?? 0, "| retailers loaded:", dedupedRetailers.length);
     setAplAuthorized(authSet);
     setAplLoaded(true);
     setAplLoading(false);
