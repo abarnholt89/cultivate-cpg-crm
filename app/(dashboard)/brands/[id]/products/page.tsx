@@ -35,6 +35,8 @@ type Product = {
 };
 
 type Brand = { id: string; name: string };
+type Retailer = { id: string; name: string };
+type DcCode = { code: string; name: string };
 
 type EditForm = {
   description: string;
@@ -59,7 +61,12 @@ type EditForm = {
   cert_vegan: boolean;
 };
 
-const EMPTY_FORM = { description: "", retail_upc: "", size: "", uom: "", kehe_item: "", unfi_east_item: "", unfi_west_item: "", cost: "", case_cost: "", srp: "", unit_pack: "", inner_pack: "", master_case_pack: "", ti: "", hi: "", cert_non_gmo: false, cert_organic: false, cert_gluten_free: false, cert_kosher: false, cert_vegan: false };
+const EMPTY_FORM: EditForm = {
+  description: "", retail_upc: "", size: "", uom: "", kehe_item: "", unfi_east_item: "",
+  unfi_west_item: "", cost: "", case_cost: "", srp: "", unit_pack: "", inner_pack: "",
+  master_case_pack: "", ti: "", hi: "", cert_non_gmo: false, cert_organic: false,
+  cert_gluten_free: false, cert_kosher: false, cert_vegan: false,
+};
 
 const PRODUCT_SELECT = [
   "id", "brand_id", "description", "retail_upc", "size", "uom",
@@ -69,18 +76,39 @@ const PRODUCT_SELECT = [
   "cert_non_gmo", "cert_organic", "cert_gluten_free", "cert_kosher", "cert_vegan",
 ].join(",");
 
-function fmt$(n: number | null) {
-  return n == null ? "—" : `$${n.toFixed(2)}`;
-}
-
-function fmtN(n: number | null) {
-  return n == null ? "—" : String(n);
-}
+function fmt$(n: number | null) { return n == null ? "—" : `$${n.toFixed(2)}`; }
+function fmtN(n: number | null) { return n == null ? "—" : String(n); }
 
 function Check({ v }: { v: boolean | null }) {
   if (!v) return <span className="text-muted-foreground text-xs">—</span>;
   return <span className="text-green-600 font-bold text-xs">✓</span>;
 }
+
+// Sticky column offsets (px)
+const FROZEN_DESC_W = 220;
+const FROZEN_UPC_W = 130;
+
+const stickyDescHead = {
+  position: "sticky" as const, left: 0, top: 0, zIndex: 4,
+  minWidth: FROZEN_DESC_W, maxWidth: FROZEN_DESC_W,
+  background: "#1e3a4a", borderRight: "2px solid rgba(255,255,255,0.2)",
+};
+const stickyUpcHead = {
+  position: "sticky" as const, left: FROZEN_DESC_W, top: 0, zIndex: 4,
+  minWidth: FROZEN_UPC_W,
+  background: "#1e3a4a", borderRight: "2px solid rgba(255,255,255,0.2)",
+};
+const stickyDescBody = (bg: string) => ({
+  position: "sticky" as const, left: 0, zIndex: 2,
+  minWidth: FROZEN_DESC_W, maxWidth: FROZEN_DESC_W,
+  background: bg, borderRight: "2px solid var(--border)",
+  whiteSpace: "normal" as const,
+});
+const stickyUpcBody = (bg: string) => ({
+  position: "sticky" as const, left: FROZEN_DESC_W, zIndex: 2,
+  minWidth: FROZEN_UPC_W,
+  background: bg, borderRight: "2px solid var(--border)",
+});
 
 export default function BrandProductsPage() {
   const params = useParams();
@@ -95,7 +123,7 @@ export default function BrandProductsPage() {
   const [showArchived, setShowArchived] = useState(false);
 
   const [addOpen, setAddOpen] = useState(false);
-  const [form, setForm] = useState(EMPTY_FORM);
+  const [form, setForm] = useState<EditForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
 
@@ -109,6 +137,47 @@ export default function BrandProductsPage() {
   const [editForm, setEditForm] = useState<EditForm>(EMPTY_FORM);
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState("");
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState<"products" | "apl" | "dc">("products");
+  const [dcSubTab, setDcSubTab] = useState<"UNFI" | "KeHE">("UNFI");
+
+  // APL state
+  const [aplLoaded, setAplLoaded] = useState(false);
+  const [aplLoading, setAplLoading] = useState(false);
+  const [aplRetailers, setAplRetailers] = useState<Retailer[]>([]);
+  const [aplAuthorized, setAplAuthorized] = useState<Set<string>>(new Set());
+  const [aplSearch, setAplSearch] = useState("");
+  const [aplShowAll, setAplShowAll] = useState(true);
+
+  // DC state
+  const [dcLoaded, setDcLoaded] = useState(false);
+  const [dcLoading, setDcLoading] = useState(false);
+  const [dcListings, setDcListings] = useState<Map<string, boolean>>(new Map());
+  const [unfiCodes, setUnfiCodes] = useState<DcCode[]>([]);
+  const [keheCodes, setKeheCodes] = useState<DcCode[]>([]);
+
+  // APL add-authorization form
+  const [aplAddOpen, setAplAddOpen] = useState(false);
+  const [aplAddRetailerId, setAplAddRetailerId] = useState("");
+  const [aplAddProductId, setAplAddProductId] = useState("");
+  const [aplAddSkuSearch, setAplAddSkuSearch] = useState("");
+  const [aplAddSaving, setAplAddSaving] = useState(false);
+  const [aplAddError, setAplAddError] = useState("");
+
+  // DC add-listing form
+  const [dcAddOpen, setDcAddOpen] = useState(false);
+  const [dcAddDistributor, setDcAddDistributor] = useState<"UNFI" | "KeHE">("UNFI");
+  const [dcAddCode, setDcAddCode] = useState("");
+  const [dcAddCustomCode, setDcAddCustomCode] = useState("");
+  const [dcAddProductId, setDcAddProductId] = useState("");
+  const [dcAddSkuSearch, setDcAddSkuSearch] = useState("");
+  const [dcAddSaving, setDcAddSaving] = useState(false);
+  const [dcAddError, setDcAddError] = useState("");
+
+  // Inline item-number editing (DC grid)
+  const [editItemNum, setEditItemNum] = useState<{ productId: string; field: "unfi_east_item" | "unfi_west_item" | "kehe_item" } | null>(null);
+  const [editItemNumVal, setEditItemNumVal] = useState("");
 
   const isRepOrAdmin = role === "admin" || role === "rep";
 
@@ -160,6 +229,137 @@ export default function BrandProductsPage() {
     setLoading(false);
   }
 
+  async function loadApl() {
+    if (aplLoaded || aplLoading) return;
+    setAplLoading(true);
+    const [retailersRes, authRes] = await Promise.all([
+      supabase.from("retailers").select("id,name").order("name"),
+      supabase.from("authorized_products").select("upc,retailer_id").eq("brand_id", brandId),
+    ]);
+    setAplRetailers((retailersRes.data as Retailer[]) ?? []);
+    const authSet = new Set<string>();
+    ((authRes.data ?? []) as { upc: string; retailer_id: string }[]).forEach((r) => {
+      if (r.upc && r.retailer_id) authSet.add(`${r.upc}|${r.retailer_id}`);
+    });
+    setAplAuthorized(authSet);
+    setAplLoaded(true);
+    setAplLoading(false);
+  }
+
+  async function loadDc(prods: Product[]) {
+    if (dcLoaded || dcLoading) return;
+    if (!prods.length) return;
+    setDcLoading(true);
+    const bpIds = prods.map((p) => p.id);
+    const allRows: { brand_product_id: string; distributor: string; dc_code: string; dc_name: string | null; listed: boolean }[] = [];
+    const PAGE = 1000;
+    for (let i = 0; i < bpIds.length; i += PAGE) {
+      const { data } = await supabase
+        .from("distributor_dc_listings")
+        .select("brand_product_id,distributor,dc_code,dc_name,listed")
+        .in("brand_product_id", bpIds.slice(i, i + PAGE));
+      if (data) allRows.push(...(data as typeof allRows));
+    }
+    const map = new Map<string, boolean>();
+    const unfiMap = new Map<string, string>();
+    const keheMap = new Map<string, string>();
+    allRows.forEach((r) => {
+      map.set(`${r.brand_product_id}|${r.distributor}|${r.dc_code}`, r.listed);
+      if (r.distributor === "UNFI") unfiMap.set(r.dc_code, r.dc_name ?? r.dc_code);
+      else if (r.distributor === "KeHE") keheMap.set(r.dc_code, r.dc_name ?? r.dc_code);
+    });
+    setDcListings(map);
+    setUnfiCodes([...unfiMap.entries()].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code)));
+    setKeheCodes([...keheMap.entries()].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code)));
+    setDcLoaded(true);
+    setDcLoading(false);
+  }
+
+  function switchTab(tab: "products" | "apl" | "dc") {
+    setActiveTab(tab);
+    if (tab === "apl" && !aplLoaded) loadApl();
+    if (tab === "dc" && !dcLoaded) loadDc(products);
+  }
+
+  async function toggleApl(upc: string, retailerId: string) {
+    const key = `${upc}|${retailerId}`;
+    const isAuth = aplAuthorized.has(key);
+    if (isAuth) {
+      await supabase.from("authorized_products")
+        .delete()
+        .eq("brand_id", brandId)
+        .eq("retailer_id", retailerId)
+        .eq("upc", upc);
+      setAplAuthorized((prev) => { const n = new Set(prev); n.delete(key); return n; });
+    } else {
+      await supabase.from("authorized_products")
+        .insert({ brand_id: brandId, retailer_id: retailerId, upc, client_name: brand?.name ?? "" });
+      setAplAuthorized((prev) => { const n = new Set(prev); n.add(key); return n; });
+    }
+  }
+
+  async function toggleDc(bpId: string, distributor: string, dcCode: string) {
+    const key = `${bpId}|${distributor}|${dcCode}`;
+    const current = dcListings.get(key) ?? false;
+    const newVal = !current;
+    const { error: upsertErr } = await supabase.from("distributor_dc_listings").upsert(
+      { brand_product_id: bpId, distributor, dc_code: dcCode, listed: newVal },
+      { onConflict: "brand_product_id,distributor,dc_code" }
+    );
+    if (!upsertErr) {
+      setDcListings((prev) => { const n = new Map(prev); n.set(key, newVal); return n; });
+    }
+  }
+
+  async function addAplAuthorization() {
+    if (!aplAddRetailerId || !aplAddProductId) { setAplAddError("Select both a retailer and a SKU"); return; }
+    const product = products.find((p) => p.id === aplAddProductId);
+    if (!product?.retail_upc) { setAplAddError("Selected SKU has no UPC"); return; }
+    const key = `${product.retail_upc}|${aplAddRetailerId}`;
+    if (aplAuthorized.has(key)) { setAplAddError("Already authorized"); return; }
+    setAplAddSaving(true);
+    setAplAddError("");
+    const { error } = await supabase.from("authorized_products")
+      .insert({ brand_id: brandId, retailer_id: aplAddRetailerId, upc: product.retail_upc, client_name: brand?.name ?? "" });
+    if (error) { setAplAddError(error.message); setAplAddSaving(false); return; }
+    setAplAuthorized((prev) => { const n = new Set(prev); n.add(key); return n; });
+    setAplAddOpen(false);
+    setAplAddRetailerId(""); setAplAddProductId(""); setAplAddSkuSearch("");
+    setAplAddSaving(false);
+  }
+
+  async function addDcListing() {
+    if (!dcAddProductId) { setDcAddError("Select a SKU"); return; }
+    const finalCode = dcAddCode === "__custom__" ? dcAddCustomCode.trim().toUpperCase() : dcAddCode;
+    if (!finalCode) { setDcAddError("Select or enter a DC code"); return; }
+    setDcAddSaving(true);
+    setDcAddError("");
+    const key = `${dcAddProductId}|${dcAddDistributor}|${finalCode}`;
+    const { error } = await supabase.from("distributor_dc_listings").upsert(
+      { brand_product_id: dcAddProductId, distributor: dcAddDistributor, dc_code: finalCode, listed: true },
+      { onConflict: "brand_product_id,distributor,dc_code" }
+    );
+    if (error) { setDcAddError(error.message); setDcAddSaving(false); return; }
+    setDcListings((prev) => { const n = new Map(prev); n.set(key, true); return n; });
+    if (dcAddDistributor === "UNFI" && !unfiCodes.find((c) => c.code === finalCode)) {
+      setUnfiCodes((prev) => [...prev, { code: finalCode, name: finalCode }].sort((a, b) => a.code.localeCompare(b.code)));
+    } else if (dcAddDistributor === "KeHE" && !keheCodes.find((c) => c.code === finalCode)) {
+      setKeheCodes((prev) => [...prev, { code: finalCode, name: finalCode }].sort((a, b) => a.code.localeCompare(b.code)));
+    }
+    setDcAddOpen(false);
+    setDcAddProductId(""); setDcAddCode(""); setDcAddCustomCode(""); setDcAddSkuSearch("");
+    setDcAddSaving(false);
+  }
+
+  async function saveItemNum(productId: string, field: "unfi_east_item" | "unfi_west_item" | "kehe_item", value: string) {
+    const trimmed = value.trim() || null;
+    setEditItemNum(null);
+    const { error } = await supabase.from("brand_products").update({ [field]: trimmed }).eq("id", productId);
+    if (!error) {
+      setProducts((prev) => prev.map((p) => p.id === productId ? { ...p, [field]: trimmed } : p));
+    }
+  }
+
   const displayProducts = useMemo(() => {
     return products
       .filter((p) => showArchived || p.status === "active")
@@ -173,6 +373,23 @@ export default function BrandProductsPage() {
         );
       });
   }, [products, showArchived, query]);
+
+  const aplProducts = useMemo(() => {
+    return products.filter((p) => p.status === "active").filter((p) => {
+      if (!aplSearch) return true;
+      const q = aplSearch.toLowerCase();
+      return p.description.toLowerCase().includes(q) || (p.retail_upc ?? "").includes(q);
+    });
+  }, [products, aplSearch]);
+
+  const aplVisibleRetailers = useMemo(() => {
+    if (aplShowAll) return aplRetailers;
+    return aplRetailers.filter((r) =>
+      aplProducts.some((p) => p.retail_upc && aplAuthorized.has(`${p.retail_upc}|${r.id}`))
+    );
+  }, [aplRetailers, aplShowAll, aplProducts, aplAuthorized]);
+
+  const dcProducts = useMemo(() => products.filter((p) => p.status === "active"), [products]);
 
   async function addProduct() {
     if (!form.description.trim()) { setSaveError("Description is required"); return; }
@@ -308,9 +525,16 @@ export default function BrandProductsPage() {
   const thStyle = "px-3 py-2 font-medium text-muted-foreground whitespace-nowrap text-left text-xs";
   const tdStyle = "px-3 py-2 text-xs whitespace-nowrap";
   const groupTh = "px-3 py-1 text-xs font-semibold text-white/80 text-center";
-
-  // Total cols for the edit expander colspan
   const totalCols = 20 + (isRepOrAdmin ? 1 : 0);
+
+  // Shared tab button style
+  function tabCls(tab: string) {
+    return `px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+      activeTab === tab
+        ? "border-foreground text-foreground"
+        : "border-transparent text-muted-foreground hover:text-foreground"
+    }`;
+  }
 
   return (
     <div className="space-y-6 p-6">
@@ -333,265 +557,716 @@ export default function BrandProductsPage() {
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 
-      <div className="flex flex-wrap items-center gap-3">
-        <input
-          type="text" placeholder="Search description or UPC…" value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="rounded-lg px-3 py-2 text-sm flex-1 min-w-0 focus:outline-none focus:ring-2"
-          style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
-        />
-        <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-          <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
-          Show archived
-        </label>
-        {isRepOrAdmin && (
-          <>
-            <button onClick={() => setAddOpen((v) => !v)} className="px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap" style={{ background: "var(--foreground)", color: "var(--background)" }}>
-              + Add Product
-            </button>
-            <button onClick={() => csvRef.current?.click()} disabled={csvUploading} className="px-4 py-2 rounded-lg text-sm font-medium border border-border text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap disabled:opacity-50">
-              {csvUploading ? "Uploading…" : "CSV Upload"}
-            </button>
-            <input ref={csvRef} type="file" accept=".csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleCsvUpload(f); e.target.value = ""; }} />
-          </>
-        )}
+      {/* Tab bar */}
+      <div className="flex border-b border-border -mb-2">
+        <button onClick={() => switchTab("products")} className={tabCls("products")}>Products</button>
+        <button onClick={() => switchTab("apl")} className={tabCls("apl")}>APL</button>
+        <button onClick={() => switchTab("dc")} className={tabCls("dc")}>DC Assortment</button>
       </div>
 
-      {csvStatus && <p className="text-sm text-muted-foreground">{csvStatus}</p>}
+      {/* ─────────────── PRODUCTS TAB ─────────────── */}
+      {activeTab === "products" && (
+        <>
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              type="text" placeholder="Search description or UPC…" value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="rounded-lg px-3 py-2 text-sm flex-1 min-w-0 focus:outline-none focus:ring-2"
+              style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+            />
+            <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+              <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+              Show archived
+            </label>
+            {isRepOrAdmin && (
+              <>
+                <button onClick={() => setAddOpen((v) => !v)} className="px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap" style={{ background: "var(--foreground)", color: "var(--background)" }}>
+                  + Add Product
+                </button>
+                <button onClick={() => csvRef.current?.click()} disabled={csvUploading} className="px-4 py-2 rounded-lg text-sm font-medium border border-border text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap disabled:opacity-50">
+                  {csvUploading ? "Uploading…" : "CSV Upload"}
+                </button>
+                <input ref={csvRef} type="file" accept=".csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleCsvUpload(f); e.target.value = ""; }} />
+              </>
+            )}
+          </div>
 
-      {addOpen && isRepOrAdmin && (
-        <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-          <div className="text-sm font-semibold text-foreground">New Product</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="md:col-span-2">
-              <label className="block text-xs text-muted-foreground mb-1">Description *</label>
-              <input type="text" value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} placeholder="e.g. Original Flavor 2.2oz" className="border rounded-lg px-3 py-2 w-full text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+          {csvStatus && <p className="text-sm text-muted-foreground">{csvStatus}</p>}
+
+          {addOpen && isRepOrAdmin && (
+            <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+              <div className="text-sm font-semibold text-foreground">New Product</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="md:col-span-2">
+                  <label className="block text-xs text-muted-foreground mb-1">Description *</label>
+                  <input type="text" value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} placeholder="e.g. Original Flavor 2.2oz" className="border rounded-lg px-3 py-2 w-full text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Retail UPC</label>
+                  <input type="text" value={form.retail_upc} onChange={(e) => setForm((p) => ({ ...p, retail_upc: e.target.value }))} placeholder="00000000000000" className="border rounded-lg px-3 py-2 w-full text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Size</label>
+                  <input type="text" value={form.size} onChange={(e) => setForm((p) => ({ ...p, size: e.target.value }))} placeholder="e.g. 2.2 oz" className="border rounded-lg px-3 py-2 w-full text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">SRP</label>
+                  <input type="number" step="0.01" value={form.srp} onChange={(e) => setForm((p) => ({ ...p, srp: e.target.value }))} placeholder="5.99" className="border rounded-lg px-3 py-2 w-full text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Unit Cost</label>
+                  <input type="number" step="0.01" value={form.cost} onChange={(e) => setForm((p) => ({ ...p, cost: e.target.value }))} placeholder="3.20" className="border rounded-lg px-3 py-2 w-full text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                </div>
+              </div>
+              {saveError && <p className="text-sm text-red-600">{saveError}</p>}
+              <div className="flex gap-2">
+                <button onClick={addProduct} disabled={!form.description.trim() || saving} className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50" style={{ background: "var(--foreground)", color: "var(--background)" }}>
+                  {saving ? "Saving…" : "Save Product"}
+                </button>
+                <button onClick={() => { setAddOpen(false); setForm(EMPTY_FORM); setSaveError(""); }} className="px-4 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground transition-colors">Cancel</button>
+              </div>
             </div>
-            <div>
-              <label className="block text-xs text-muted-foreground mb-1">Retail UPC</label>
-              <input type="text" value={form.retail_upc} onChange={(e) => setForm((p) => ({ ...p, retail_upc: e.target.value }))} placeholder="00000000000000" className="border rounded-lg px-3 py-2 w-full text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+          )}
+
+          {displayProducts.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{query ? "No products match your search." : "No products yet. Add one above or upload a CSV."}</p>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-border">
+              <table className="text-sm" style={{ minWidth: "max-content", width: "100%" }}>
+                <thead>
+                  <tr style={{ background: "#1e3a4a" }}>
+                    <th className={groupTh} colSpan={4} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Identity</th>
+                    <th className={groupTh} colSpan={3} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Distributor Items</th>
+                    <th className={groupTh} colSpan={3} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Pricing</th>
+                    <th className={groupTh} colSpan={5} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Pack Info</th>
+                    <th className={groupTh} colSpan={5} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Certifications</th>
+                    <th className={groupTh} colSpan={1}>Auth.</th>
+                    <th className={groupTh} colSpan={1}>Status</th>
+                    {isRepOrAdmin && <th className={groupTh} colSpan={1} />}
+                  </tr>
+                  <tr className="border-b border-border bg-secondary text-left">
+                    <th className={thStyle}>Description</th>
+                    <th className={thStyle}>UPC</th>
+                    <th className={thStyle}>Size</th>
+                    <th className={thStyle} style={{ borderRight: "1px solid var(--border)" }}>UOM</th>
+                    <th className={thStyle}>KeHE</th>
+                    <th className={thStyle}>UNFI East</th>
+                    <th className={thStyle} style={{ borderRight: "1px solid var(--border)" }}>UNFI West</th>
+                    <th className={thStyle}>Unit Cost</th>
+                    <th className={thStyle}>Case Cost</th>
+                    <th className={thStyle} style={{ borderRight: "1px solid var(--border)" }}>SRP</th>
+                    <th className={thStyle}>Unit Pack</th>
+                    <th className={thStyle}>Inner Pack</th>
+                    <th className={thStyle}>Master Case</th>
+                    <th className={thStyle}>TI</th>
+                    <th className={thStyle} style={{ borderRight: "1px solid var(--border)" }}>HI</th>
+                    <th className={thStyle}>Non-GMO</th>
+                    <th className={thStyle}>Organic</th>
+                    <th className={thStyle}>GF</th>
+                    <th className={thStyle}>Kosher</th>
+                    <th className={thStyle} style={{ borderRight: "1px solid var(--border)" }}>Vegan</th>
+                    <th className={thStyle}>Auth.</th>
+                    <th className={thStyle}>Status</th>
+                    {isRepOrAdmin && <th className={thStyle} />}
+                  </tr>
+                </thead>
+                <tbody>
+                  {displayProducts.map((product, idx) => {
+                    const isEven = idx % 2 === 0;
+                    const authCount = product.retail_upc ? (authorizedCounts[product.retail_upc] ?? 0) : 0;
+                    const isEditing = editingId === product.id;
+                    const rowBg = isEven ? "var(--card)" : "var(--secondary)";
+
+                    return [
+                      <tr key={product.id} className="border-b border-border last:border-0" style={{ background: rowBg }}>
+                        <td className={`${tdStyle} text-foreground font-medium max-w-[240px] whitespace-normal`}>{product.description}</td>
+                        <td className={`${tdStyle} font-mono text-muted-foreground`}>{product.retail_upc ?? "—"}</td>
+                        <td className={`${tdStyle} text-muted-foreground`}>{product.size ?? "—"}</td>
+                        <td className={`${tdStyle} text-muted-foreground`} style={{ borderRight: "1px solid var(--border)" }}>{product.uom ?? "—"}</td>
+                        <td className={`${tdStyle} text-muted-foreground`}>{product.kehe_item ?? "—"}</td>
+                        <td className={`${tdStyle} text-muted-foreground`}>{product.unfi_east_item ?? "—"}</td>
+                        <td className={`${tdStyle} text-muted-foreground`} style={{ borderRight: "1px solid var(--border)" }}>{product.unfi_west_item ?? "—"}</td>
+                        <td className={`${tdStyle} text-muted-foreground`}>{fmt$(product.cost)}</td>
+                        <td className={`${tdStyle} text-muted-foreground`}>{fmt$(product.case_cost)}</td>
+                        <td className={`${tdStyle} text-muted-foreground`} style={{ borderRight: "1px solid var(--border)" }}>{fmt$(product.srp)}</td>
+                        <td className={`${tdStyle} text-muted-foreground`}>{product.unit_pack ?? "—"}</td>
+                        <td className={`${tdStyle} text-muted-foreground`}>{product.inner_pack ?? "—"}</td>
+                        <td className={`${tdStyle} text-muted-foreground`}>{product.master_case_pack ?? "—"}</td>
+                        <td className={`${tdStyle} text-muted-foreground`}>{fmtN(product.ti)}</td>
+                        <td className={`${tdStyle} text-muted-foreground`} style={{ borderRight: "1px solid var(--border)" }}>{fmtN(product.hi)}</td>
+                        <td className={`${tdStyle} text-center`}><Check v={product.cert_non_gmo} /></td>
+                        <td className={`${tdStyle} text-center`}><Check v={product.cert_organic} /></td>
+                        <td className={`${tdStyle} text-center`}><Check v={product.cert_gluten_free} /></td>
+                        <td className={`${tdStyle} text-center`}><Check v={product.cert_kosher} /></td>
+                        <td className={`${tdStyle} text-center`} style={{ borderRight: "1px solid var(--border)" }}><Check v={product.cert_vegan} /></td>
+                        <td className={tdStyle}>
+                          {authCount > 0
+                            ? <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">{authCount}</span>
+                            : <span className="text-muted-foreground">—</span>}
+                        </td>
+                        <td className={tdStyle}>
+                          {product.status === "archived"
+                            ? <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">Archived</span>
+                            : <span className="inline-flex items-center rounded-full bg-teal-100 px-2 py-0.5 text-xs text-teal-700">Active</span>}
+                        </td>
+                        {isRepOrAdmin && (
+                          <td className={`${tdStyle} text-right`}>
+                            <button onClick={() => startEdit(product)} className="text-xs text-muted-foreground hover:text-foreground transition-colors mr-3">Edit</button>
+                            {product.status === "active"
+                              ? <button onClick={() => archiveProduct(product.id)} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Archive</button>
+                              : <button onClick={() => restoreProduct(product.id)} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Restore</button>}
+                          </td>
+                        )}
+                      </tr>,
+                      isEditing && (
+                        <tr key={`${product.id}-edit`} className="border-b border-border" style={{ background: "var(--card)" }}>
+                          <td colSpan={totalCols} className="px-4 py-3">
+                            <div className="space-y-3">
+                              <div className="grid grid-cols-4 gap-3">
+                                <div className="col-span-2">
+                                  <label className="block text-xs text-muted-foreground mb-1">Description *</label>
+                                  <input type="text" value={editForm.description} onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-muted-foreground mb-1">UPC</label>
+                                  <input type="text" value={editForm.retail_upc} onChange={(e) => setEditForm((f) => ({ ...f, retail_upc: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full font-mono" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-muted-foreground mb-1">Size</label>
+                                  <input type="text" value={editForm.size} onChange={(e) => setEditForm((f) => ({ ...f, size: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-4 gap-3">
+                                <div>
+                                  <label className="block text-xs text-muted-foreground mb-1">UOM</label>
+                                  <input type="text" value={editForm.uom} onChange={(e) => setEditForm((f) => ({ ...f, uom: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-muted-foreground mb-1">KeHE Item #</label>
+                                  <input type="text" value={editForm.kehe_item} onChange={(e) => setEditForm((f) => ({ ...f, kehe_item: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full font-mono" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-muted-foreground mb-1">UNFI East #</label>
+                                  <input type="text" value={editForm.unfi_east_item} onChange={(e) => setEditForm((f) => ({ ...f, unfi_east_item: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full font-mono" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-muted-foreground mb-1">UNFI West #</label>
+                                  <input type="text" value={editForm.unfi_west_item} onChange={(e) => setEditForm((f) => ({ ...f, unfi_west_item: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full font-mono" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-4 gap-3">
+                                <div>
+                                  <label className="block text-xs text-muted-foreground mb-1">Unit Cost ($)</label>
+                                  <input type="number" step="0.01" value={editForm.cost} onChange={(e) => setEditForm((f) => ({ ...f, cost: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-muted-foreground mb-1">Case Cost ($)</label>
+                                  <input type="number" step="0.01" value={editForm.case_cost} onChange={(e) => setEditForm((f) => ({ ...f, case_cost: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-muted-foreground mb-1">SRP ($)</label>
+                                  <input type="number" step="0.01" value={editForm.srp} onChange={(e) => setEditForm((f) => ({ ...f, srp: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-5 gap-3">
+                                <div>
+                                  <label className="block text-xs text-muted-foreground mb-1">Unit Pack</label>
+                                  <input type="text" value={editForm.unit_pack} onChange={(e) => setEditForm((f) => ({ ...f, unit_pack: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-muted-foreground mb-1">Inner Pack</label>
+                                  <input type="text" value={editForm.inner_pack} onChange={(e) => setEditForm((f) => ({ ...f, inner_pack: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-muted-foreground mb-1">Master Case</label>
+                                  <input type="text" value={editForm.master_case_pack} onChange={(e) => setEditForm((f) => ({ ...f, master_case_pack: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-muted-foreground mb-1">TI</label>
+                                  <input type="number" step="1" value={editForm.ti} onChange={(e) => setEditForm((f) => ({ ...f, ti: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-muted-foreground mb-1">HI</label>
+                                  <input type="number" step="1" value={editForm.hi} onChange={(e) => setEditForm((f) => ({ ...f, hi: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-4">
+                                <span className="text-xs text-muted-foreground font-medium">Certifications:</span>
+                                {(["cert_non_gmo", "cert_organic", "cert_gluten_free", "cert_kosher", "cert_vegan"] as const).map((field) => (
+                                  <label key={field} className="flex items-center gap-1.5 text-xs text-foreground cursor-pointer">
+                                    <input type="checkbox" checked={editForm[field]} onChange={(e) => setEditForm((f) => ({ ...f, [field]: e.target.checked }))} className="rounded" />
+                                    {field === "cert_non_gmo" ? "Non-GMO" : field === "cert_organic" ? "Organic" : field === "cert_gluten_free" ? "GF" : field === "cert_kosher" ? "Kosher" : "Vegan"}
+                                  </label>
+                                ))}
+                                <div className="flex items-center gap-2 ml-auto">
+                                  {editError && <span className="text-xs text-red-600">{editError}</span>}
+                                  <button onClick={saveEdit} disabled={editSaving} className="px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50" style={{ background: "var(--foreground)", color: "var(--background)" }}>
+                                    {editSaving ? "Saving…" : "Save"}
+                                  </button>
+                                  <button onClick={cancelEdit} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      ),
+                    ].filter(Boolean);
+                  })}
+                </tbody>
+              </table>
             </div>
-            <div>
-              <label className="block text-xs text-muted-foreground mb-1">Size</label>
-              <input type="text" value={form.size} onChange={(e) => setForm((p) => ({ ...p, size: e.target.value }))} placeholder="e.g. 2.2 oz" className="border rounded-lg px-3 py-2 w-full text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-            </div>
-            <div>
-              <label className="block text-xs text-muted-foreground mb-1">SRP</label>
-              <input type="number" step="0.01" value={form.srp} onChange={(e) => setForm((p) => ({ ...p, srp: e.target.value }))} placeholder="5.99" className="border rounded-lg px-3 py-2 w-full text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-            </div>
-            <div>
-              <label className="block text-xs text-muted-foreground mb-1">Unit Cost</label>
-              <input type="number" step="0.01" value={form.cost} onChange={(e) => setForm((p) => ({ ...p, cost: e.target.value }))} placeholder="3.20" className="border rounded-lg px-3 py-2 w-full text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-            </div>
+          )}
+          <p className="text-xs text-muted-foreground">CSV format: description, upc, size, srp, cost (header row required)</p>
+        </>
+      )}
+
+      {/* ─────────────── APL TAB ─────────────── */}
+      {activeTab === "apl" && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              type="text" placeholder="Search SKUs…" value={aplSearch}
+              onChange={(e) => setAplSearch(e.target.value)}
+              className="rounded-lg px-3 py-2 text-sm w-64 focus:outline-none focus:ring-2"
+              style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+            />
+            <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+              <input type="checkbox" checked={!aplShowAll} onChange={(e) => setAplShowAll(!e.target.checked)} />
+              Authorized retailers only
+            </label>
+            {aplLoaded && (
+              <span className="text-sm text-muted-foreground">
+                {aplProducts.length} SKU{aplProducts.length !== 1 ? "s" : ""} · {aplVisibleRetailers.length} retailer{aplVisibleRetailers.length !== 1 ? "s" : ""}
+              </span>
+            )}
+            {isRepOrAdmin && aplLoaded && (
+              <button
+                onClick={() => { setAplAddOpen((v) => !v); setAplAddError(""); }}
+                className="ml-auto px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:text-foreground transition-colors"
+              >
+                + Add Authorization
+              </button>
+            )}
           </div>
-          {saveError && <p className="text-sm text-red-600">{saveError}</p>}
-          <div className="flex gap-2">
-            <button onClick={addProduct} disabled={!form.description.trim() || saving} className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50" style={{ background: "var(--foreground)", color: "var(--background)" }}>
-              {saving ? "Saving…" : "Save Product"}
-            </button>
-            <button onClick={() => { setAddOpen(false); setForm(EMPTY_FORM); setSaveError(""); }} className="px-4 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground transition-colors">Cancel</button>
-          </div>
+
+          {/* Add Authorization form */}
+          {aplAddOpen && isRepOrAdmin && (
+            <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+              <div className="text-sm font-semibold text-foreground">Add Authorization</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Retailer</label>
+                  <select
+                    value={aplAddRetailerId} onChange={(e) => setAplAddRetailerId(e.target.value)}
+                    className="rounded-lg px-3 py-2 text-sm w-full"
+                    style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
+                  >
+                    <option value="">— Select retailer —</option>
+                    {aplRetailers.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">SKU</label>
+                  <input
+                    type="text" placeholder="Filter SKUs…" value={aplAddSkuSearch}
+                    onChange={(e) => setAplAddSkuSearch(e.target.value)}
+                    className="rounded-lg px-3 py-2 text-sm w-full mb-1.5"
+                    style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
+                  />
+                  <select
+                    value={aplAddProductId} onChange={(e) => setAplAddProductId(e.target.value)}
+                    className="rounded-lg px-3 py-2 text-sm w-full"
+                    style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
+                  >
+                    <option value="">— Select SKU —</option>
+                    {products
+                      .filter((p) => p.status === "active" && p.retail_upc && (
+                        !aplAddSkuSearch ||
+                        p.description.toLowerCase().includes(aplAddSkuSearch.toLowerCase()) ||
+                        (p.retail_upc ?? "").includes(aplAddSkuSearch)
+                      ))
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>{p.description}{p.retail_upc ? ` (${p.retail_upc})` : ""}</option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+              {aplAddError && <p className="text-xs text-red-600">{aplAddError}</p>}
+              <div className="flex gap-2">
+                <button
+                  onClick={addAplAuthorization} disabled={aplAddSaving}
+                  className="px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50"
+                  style={{ background: "var(--foreground)", color: "var(--background)" }}
+                >
+                  {aplAddSaving ? "Saving…" : "Save"}
+                </button>
+                <button onClick={() => { setAplAddOpen(false); setAplAddError(""); }} className="text-xs text-muted-foreground hover:text-foreground">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {aplLoading && <p className="text-sm text-muted-foreground">Loading APL data…</p>}
+
+          {aplLoaded && aplProducts.length === 0 && (
+            <p className="text-sm text-muted-foreground">No active SKUs found.</p>
+          )}
+
+          {aplLoaded && aplProducts.length > 0 && aplVisibleRetailers.length === 0 && !aplShowAll && (
+            <p className="text-sm text-muted-foreground">No authorized retailers for these SKUs. Toggle &quot;Authorized retailers only&quot; off to see all retailers.</p>
+          )}
+
+          {aplLoaded && aplProducts.length > 0 && aplVisibleRetailers.length > 0 && (
+            <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "72vh", borderRadius: "0.75rem", border: "1px solid var(--border)" }}>
+              <table style={{ borderCollapse: "separate", borderSpacing: 0, fontSize: "0.75rem" }}>
+                <thead>
+                  <tr style={{ background: "#1e3a4a" }}>
+                    <th style={{ ...stickyDescHead, padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>
+                      Description
+                    </th>
+                    <th style={{ ...stickyUpcHead, padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>
+                      UPC
+                    </th>
+                    {aplVisibleRetailers.map((r) => (
+                      <th key={r.id} style={{
+                        position: "sticky", top: 0, zIndex: 1,
+                        background: "#1e3a4a",
+                        writingMode: "vertical-rl",
+                        textOrientation: "mixed",
+                        transform: "rotate(180deg)",
+                        height: 110, width: 30,
+                        whiteSpace: "nowrap",
+                        textAlign: "left",
+                        verticalAlign: "bottom",
+                        padding: "8px 4px",
+                        fontWeight: 400,
+                        color: "rgba(255,255,255,0.75)",
+                        fontSize: "0.7rem",
+                        borderLeft: "1px solid rgba(255,255,255,0.08)",
+                      }}>
+                        {r.name}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {aplProducts.map((p, idx) => {
+                    const rowBg = idx % 2 === 0 ? "var(--card)" : "var(--secondary)";
+                    return (
+                      <tr key={p.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                        <td style={{ ...stickyDescBody(rowBg), padding: "6px 12px", fontWeight: 500, color: "var(--foreground)" }}>
+                          <div style={{ maxWidth: FROZEN_DESC_W - 24, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.description}>
+                            {p.description}
+                          </div>
+                        </td>
+                        <td style={{ ...stickyUpcBody(rowBg), padding: "6px 12px", fontFamily: "monospace", color: "var(--muted-foreground)" }}>
+                          {p.retail_upc ?? "—"}
+                        </td>
+                        {aplVisibleRetailers.map((r) => {
+                          const key = `${p.retail_upc}|${r.id}`;
+                          const isAuth = !!p.retail_upc && aplAuthorized.has(key);
+                          const canToggle = !!p.retail_upc && isRepOrAdmin;
+                          return (
+                            <td
+                              key={r.id}
+                              onClick={() => canToggle && toggleApl(p.retail_upc!, r.id)}
+                              style={{
+                                textAlign: "center",
+                                padding: "6px 4px",
+                                cursor: canToggle ? "pointer" : "default",
+                                background: isAuth ? "rgba(22,163,74,0.12)" : rowBg,
+                                borderLeft: "1px solid var(--border)",
+                                minWidth: 30,
+                                transition: "background 0.1s",
+                              }}
+                              title={`${r.name} — ${isAuth ? "Authorized (click to remove)" : "Not authorized (click to add)"}`}
+                            >
+                              {isAuth
+                                ? <span style={{ color: "#16a34a", fontWeight: 700, fontSize: "0.85rem" }}>✓</span>
+                                : <span style={{ color: "var(--muted-foreground)", fontSize: "0.7rem" }}>·</span>}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {aplLoaded && isRepOrAdmin && (
+            <p className="text-xs text-muted-foreground">Click any cell to toggle authorization for that SKU × retailer.</p>
+          )}
         </div>
       )}
 
-      {displayProducts.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{query ? "No products match your search." : "No products yet. Add one above or upload a CSV."}</p>
-      ) : (
-        <div className="overflow-x-auto rounded-xl border border-border">
-          <table className="text-sm" style={{ minWidth: "max-content", width: "100%" }}>
-            <thead>
-              {/* Group header row */}
-              <tr style={{ background: "#1e3a4a" }}>
-                <th className={groupTh} colSpan={4} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Identity</th>
-                <th className={groupTh} colSpan={3} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Distributor Items</th>
-                <th className={groupTh} colSpan={3} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Pricing</th>
-                <th className={groupTh} colSpan={5} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Pack Info</th>
-                <th className={groupTh} colSpan={5} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Certifications</th>
-                <th className={groupTh} colSpan={1}>Auth.</th>
-                <th className={groupTh} colSpan={1}>Status</th>
-                {isRepOrAdmin && <th className={groupTh} colSpan={1} />}
-              </tr>
-              {/* Column header row */}
-              <tr className="border-b border-border bg-secondary text-left">
-                <th className={thStyle}>Description</th>
-                <th className={thStyle}>UPC</th>
-                <th className={thStyle}>Size</th>
-                <th className={thStyle} style={{ borderRight: "1px solid var(--border)" }}>UOM</th>
-                <th className={thStyle}>KeHE</th>
-                <th className={thStyle}>UNFI East</th>
-                <th className={thStyle} style={{ borderRight: "1px solid var(--border)" }}>UNFI West</th>
-                <th className={thStyle}>Unit Cost</th>
-                <th className={thStyle}>Case Cost</th>
-                <th className={thStyle} style={{ borderRight: "1px solid var(--border)" }}>SRP</th>
-                <th className={thStyle}>Unit Pack</th>
-                <th className={thStyle}>Inner Pack</th>
-                <th className={thStyle}>Master Case</th>
-                <th className={thStyle}>TI</th>
-                <th className={thStyle} style={{ borderRight: "1px solid var(--border)" }}>HI</th>
-                <th className={thStyle}>Non-GMO</th>
-                <th className={thStyle}>Organic</th>
-                <th className={thStyle}>GF</th>
-                <th className={thStyle}>Kosher</th>
-                <th className={thStyle} style={{ borderRight: "1px solid var(--border)" }}>Vegan</th>
-                <th className={thStyle}>Auth.</th>
-                <th className={thStyle}>Status</th>
-                {isRepOrAdmin && <th className={thStyle} />}
-              </tr>
-            </thead>
-            <tbody>
-              {displayProducts.map((product, idx) => {
-                const isEven = idx % 2 === 0;
-                const authCount = product.retail_upc ? (authorizedCounts[product.retail_upc] ?? 0) : 0;
-                const isEditing = editingId === product.id;
-                const rowBg = isEven ? "var(--card)" : "var(--secondary)";
+      {/* ─────────────── DC ASSORTMENT TAB ─────────────── */}
+      {activeTab === "dc" && (
+        <div className="space-y-4">
+          {/* Sub-tabs + Add button */}
+          <div className="flex items-center gap-2">
+            <div className="flex gap-1 border-b border-border flex-1">
+              {(["UNFI", "KeHE"] as const).map((dist) => (
+                <button
+                  key={dist}
+                  onClick={() => setDcSubTab(dist)}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                    dcSubTab === dist ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {dist}
+                </button>
+              ))}
+            </div>
+            {isRepOrAdmin && dcLoaded && (
+              <button
+                onClick={() => { setDcAddOpen((v) => !v); setDcAddDistributor(dcSubTab); setDcAddCode(""); setDcAddCustomCode(""); setDcAddProductId(""); setDcAddSkuSearch(""); setDcAddError(""); }}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
+              >
+                + Add DC Listing
+              </button>
+            )}
+          </div>
 
-                return [
-                  <tr key={product.id} className="border-b border-border last:border-0" style={{ background: rowBg }}>
-                    <td className={`${tdStyle} text-foreground font-medium max-w-[240px] whitespace-normal`}>{product.description}</td>
-                    <td className={`${tdStyle} font-mono text-muted-foreground`}>{product.retail_upc ?? "—"}</td>
-                    <td className={`${tdStyle} text-muted-foreground`}>{product.size ?? "—"}</td>
-                    <td className={`${tdStyle} text-muted-foreground`} style={{ borderRight: "1px solid var(--border)" }}>{product.uom ?? "—"}</td>
-                    <td className={`${tdStyle} text-muted-foreground`}>{product.kehe_item ?? "—"}</td>
-                    <td className={`${tdStyle} text-muted-foreground`}>{product.unfi_east_item ?? "—"}</td>
-                    <td className={`${tdStyle} text-muted-foreground`} style={{ borderRight: "1px solid var(--border)" }}>{product.unfi_west_item ?? "—"}</td>
-                    <td className={`${tdStyle} text-muted-foreground`}>{fmt$(product.cost)}</td>
-                    <td className={`${tdStyle} text-muted-foreground`}>{fmt$(product.case_cost)}</td>
-                    <td className={`${tdStyle} text-muted-foreground`} style={{ borderRight: "1px solid var(--border)" }}>{fmt$(product.srp)}</td>
-                    <td className={`${tdStyle} text-muted-foreground`}>{product.unit_pack ?? "—"}</td>
-                    <td className={`${tdStyle} text-muted-foreground`}>{product.inner_pack ?? "—"}</td>
-                    <td className={`${tdStyle} text-muted-foreground`}>{product.master_case_pack ?? "—"}</td>
-                    <td className={`${tdStyle} text-muted-foreground`}>{fmtN(product.ti)}</td>
-                    <td className={`${tdStyle} text-muted-foreground`} style={{ borderRight: "1px solid var(--border)" }}>{fmtN(product.hi)}</td>
-                    <td className={`${tdStyle} text-center`}><Check v={product.cert_non_gmo} /></td>
-                    <td className={`${tdStyle} text-center`}><Check v={product.cert_organic} /></td>
-                    <td className={`${tdStyle} text-center`}><Check v={product.cert_gluten_free} /></td>
-                    <td className={`${tdStyle} text-center`}><Check v={product.cert_kosher} /></td>
-                    <td className={`${tdStyle} text-center`} style={{ borderRight: "1px solid var(--border)" }}><Check v={product.cert_vegan} /></td>
-                    <td className={tdStyle}>
-                      {authCount > 0
-                        ? <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">{authCount}</span>
-                        : <span className="text-muted-foreground">—</span>}
-                    </td>
-                    <td className={tdStyle}>
-                      {product.status === "archived"
-                        ? <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">Archived</span>
-                        : <span className="inline-flex items-center rounded-full bg-teal-100 px-2 py-0.5 text-xs text-teal-700">Active</span>}
-                    </td>
-                    {isRepOrAdmin && (
-                      <td className={`${tdStyle} text-right`}>
-                        <button onClick={() => startEdit(product)} className="text-xs text-muted-foreground hover:text-foreground transition-colors mr-3">Edit</button>
-                        {product.status === "active"
-                          ? <button onClick={() => archiveProduct(product.id)} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Archive</button>
-                          : <button onClick={() => restoreProduct(product.id)} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Restore</button>}
-                      </td>
-                    )}
-                  </tr>,
-                  // Inline edit expander
-                  isEditing && (
-                    <tr key={`${product.id}-edit`} className="border-b border-border" style={{ background: "var(--card)" }}>
-                      <td colSpan={totalCols} className="px-4 py-3">
-                        <div className="space-y-3">
-                          {/* Row 1: Identity */}
-                          <div className="grid grid-cols-4 gap-3">
-                            <div className="col-span-2">
-                              <label className="block text-xs text-muted-foreground mb-1">Description *</label>
-                              <input type="text" value={editForm.description} onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-muted-foreground mb-1">UPC</label>
-                              <input type="text" value={editForm.retail_upc} onChange={(e) => setEditForm((f) => ({ ...f, retail_upc: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full font-mono" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-muted-foreground mb-1">Size</label>
-                              <input type="text" value={editForm.size} onChange={(e) => setEditForm((f) => ({ ...f, size: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-                            </div>
-                          </div>
-                          {/* Row 2: Distributor item #s + UOM */}
-                          <div className="grid grid-cols-4 gap-3">
-                            <div>
-                              <label className="block text-xs text-muted-foreground mb-1">UOM</label>
-                              <input type="text" value={editForm.uom} onChange={(e) => setEditForm((f) => ({ ...f, uom: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-muted-foreground mb-1">KeHE Item #</label>
-                              <input type="text" value={editForm.kehe_item} onChange={(e) => setEditForm((f) => ({ ...f, kehe_item: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full font-mono" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-muted-foreground mb-1">UNFI East #</label>
-                              <input type="text" value={editForm.unfi_east_item} onChange={(e) => setEditForm((f) => ({ ...f, unfi_east_item: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full font-mono" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-muted-foreground mb-1">UNFI West #</label>
-                              <input type="text" value={editForm.unfi_west_item} onChange={(e) => setEditForm((f) => ({ ...f, unfi_west_item: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full font-mono" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-                            </div>
-                          </div>
-                          {/* Row 3: Pricing */}
-                          <div className="grid grid-cols-4 gap-3">
-                            <div>
-                              <label className="block text-xs text-muted-foreground mb-1">Unit Cost ($)</label>
-                              <input type="number" step="0.01" value={editForm.cost} onChange={(e) => setEditForm((f) => ({ ...f, cost: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-muted-foreground mb-1">Case Cost ($)</label>
-                              <input type="number" step="0.01" value={editForm.case_cost} onChange={(e) => setEditForm((f) => ({ ...f, case_cost: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-muted-foreground mb-1">SRP ($)</label>
-                              <input type="number" step="0.01" value={editForm.srp} onChange={(e) => setEditForm((f) => ({ ...f, srp: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-                            </div>
-                          </div>
-                          {/* Row 4: Pack info */}
-                          <div className="grid grid-cols-5 gap-3">
-                            <div>
-                              <label className="block text-xs text-muted-foreground mb-1">Unit Pack</label>
-                              <input type="text" value={editForm.unit_pack} onChange={(e) => setEditForm((f) => ({ ...f, unit_pack: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-muted-foreground mb-1">Inner Pack</label>
-                              <input type="text" value={editForm.inner_pack} onChange={(e) => setEditForm((f) => ({ ...f, inner_pack: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-muted-foreground mb-1">Master Case</label>
-                              <input type="text" value={editForm.master_case_pack} onChange={(e) => setEditForm((f) => ({ ...f, master_case_pack: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-muted-foreground mb-1">TI</label>
-                              <input type="number" step="1" value={editForm.ti} onChange={(e) => setEditForm((f) => ({ ...f, ti: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-muted-foreground mb-1">HI</label>
-                              <input type="number" step="1" value={editForm.hi} onChange={(e) => setEditForm((f) => ({ ...f, hi: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-                            </div>
-                          </div>
-                          {/* Row 5: Certifications + actions */}
-                          <div className="flex flex-wrap items-center gap-4">
-                            <span className="text-xs text-muted-foreground font-medium">Certifications:</span>
-                            {(["cert_non_gmo", "cert_organic", "cert_gluten_free", "cert_kosher", "cert_vegan"] as const).map((field) => (
-                              <label key={field} className="flex items-center gap-1.5 text-xs text-foreground cursor-pointer">
-                                <input type="checkbox" checked={editForm[field]} onChange={(e) => setEditForm((f) => ({ ...f, [field]: e.target.checked }))} className="rounded" />
-                                {field === "cert_non_gmo" ? "Non-GMO" : field === "cert_organic" ? "Organic" : field === "cert_gluten_free" ? "GF" : field === "cert_kosher" ? "Kosher" : "Vegan"}
-                              </label>
-                            ))}
-                            <div className="flex items-center gap-2 ml-auto">
-                              {editError && <span className="text-xs text-red-600">{editError}</span>}
-                              <button onClick={saveEdit} disabled={editSaving} className="px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50" style={{ background: "var(--foreground)", color: "var(--background)" }}>
-                                {editSaving ? "Saving…" : "Save"}
-                              </button>
-                              <button onClick={cancelEdit} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  ),
-                ].filter(Boolean);
-              })}
-            </tbody>
-          </table>
+          {/* Add DC Listing form */}
+          {dcAddOpen && isRepOrAdmin && (
+            <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+              <div className="text-sm font-semibold text-foreground">Add DC Listing</div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Distributor</label>
+                  <select
+                    value={dcAddDistributor} onChange={(e) => { setDcAddDistributor(e.target.value as "UNFI" | "KeHE"); setDcAddCode(""); }}
+                    className="rounded-lg px-3 py-2 text-sm w-full"
+                    style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
+                  >
+                    <option value="UNFI">UNFI</option>
+                    <option value="KeHE">KeHE</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">DC Code</label>
+                  <select
+                    value={dcAddCode} onChange={(e) => setDcAddCode(e.target.value)}
+                    className="rounded-lg px-3 py-2 text-sm w-full"
+                    style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
+                  >
+                    <option value="">— Select DC —</option>
+                    {(dcAddDistributor === "UNFI" ? unfiCodes : keheCodes).map((dc) => (
+                      <option key={dc.code} value={dc.code}>{dc.code} — {dc.name}</option>
+                    ))}
+                    <option value="__custom__">— Enter new code —</option>
+                  </select>
+                  {dcAddCode === "__custom__" && (
+                    <input
+                      type="text" placeholder="e.g. DEN" value={dcAddCustomCode}
+                      onChange={(e) => setDcAddCustomCode(e.target.value.toUpperCase())}
+                      className="rounded-lg px-3 py-2 text-sm w-full mt-1.5 font-mono"
+                      style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
+                    />
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">SKU</label>
+                  <input
+                    type="text" placeholder="Filter SKUs…" value={dcAddSkuSearch}
+                    onChange={(e) => setDcAddSkuSearch(e.target.value)}
+                    className="rounded-lg px-3 py-2 text-sm w-full mb-1.5"
+                    style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
+                  />
+                  <select
+                    value={dcAddProductId} onChange={(e) => setDcAddProductId(e.target.value)}
+                    className="rounded-lg px-3 py-2 text-sm w-full"
+                    style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
+                  >
+                    <option value="">— Select SKU —</option>
+                    {products
+                      .filter((p) => p.status === "active" && (
+                        !dcAddSkuSearch ||
+                        p.description.toLowerCase().includes(dcAddSkuSearch.toLowerCase()) ||
+                        (p.retail_upc ?? "").includes(dcAddSkuSearch)
+                      ))
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>{p.description}{p.retail_upc ? ` (${p.retail_upc})` : ""}</option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+              {dcAddError && <p className="text-xs text-red-600">{dcAddError}</p>}
+              <div className="flex gap-2">
+                <button
+                  onClick={addDcListing} disabled={dcAddSaving}
+                  className="px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50"
+                  style={{ background: "var(--foreground)", color: "var(--background)" }}
+                >
+                  {dcAddSaving ? "Saving…" : "Save"}
+                </button>
+                <button onClick={() => setDcAddOpen(false)} className="text-xs text-muted-foreground hover:text-foreground">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {dcLoading && <p className="text-sm text-muted-foreground">Loading DC data…</p>}
+
+          {dcLoaded && (() => {
+            const codes = dcSubTab === "UNFI" ? unfiCodes : keheCodes;
+            if (codes.length === 0) {
+              return <p className="text-sm text-muted-foreground">No {dcSubTab} DC listings found for this brand. Use &quot;+ Add DC Listing&quot; to add one.</p>;
+            }
+
+            const itemNumStyle = (bg: string, editable: boolean) => ({
+              padding: "6px 12px", color: "var(--muted-foreground)", fontFamily: "monospace",
+              borderLeft: "1px solid var(--border)", background: bg, whiteSpace: "nowrap" as const,
+              cursor: editable ? "text" : "default",
+              minWidth: 100,
+            });
+
+            return (
+              <>
+                <div className="text-sm text-muted-foreground">
+                  {dcProducts.length} SKU{dcProducts.length !== 1 ? "s" : ""} · {codes.length} {dcSubTab} DC{codes.length !== 1 ? "s" : ""}
+                  {isRepOrAdmin && <span className="ml-2 text-xs">· Click item # cells to edit inline</span>}
+                </div>
+                <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "72vh", borderRadius: "0.75rem", border: "1px solid var(--border)" }}>
+                  <table style={{ borderCollapse: "separate", borderSpacing: 0, fontSize: "0.75rem" }}>
+                    <thead>
+                      <tr style={{ background: "#1e3a4a" }}>
+                        <th style={{ ...stickyDescHead, padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>
+                          Description
+                        </th>
+                        <th style={{ ...stickyUpcHead, padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>
+                          UPC
+                        </th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a", padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left", whiteSpace: "nowrap", minWidth: 110, borderLeft: "1px solid rgba(255,255,255,0.1)" }}>
+                          {dcSubTab === "UNFI" ? "UNFI East #" : "KeHE Item #"}
+                        </th>
+                        {dcSubTab === "UNFI" && (
+                          <th style={{ position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a", padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left", whiteSpace: "nowrap", minWidth: 110, borderLeft: "1px solid rgba(255,255,255,0.1)" }}>
+                            UNFI West #
+                          </th>
+                        )}
+                        {codes.map((dc) => (
+                          <th key={dc.code} style={{
+                            position: "sticky", top: 0, zIndex: 1,
+                            background: "#1e3a4a",
+                            writingMode: "vertical-rl",
+                            textOrientation: "mixed",
+                            transform: "rotate(180deg)",
+                            height: 110, width: 30,
+                            whiteSpace: "nowrap",
+                            textAlign: "left",
+                            verticalAlign: "bottom",
+                            padding: "8px 4px",
+                            fontWeight: 400,
+                            color: "rgba(255,255,255,0.75)",
+                            fontSize: "0.7rem",
+                            borderLeft: "1px solid rgba(255,255,255,0.08)",
+                          }}>
+                            {dc.code} — {dc.name}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dcProducts.map((p, idx) => {
+                        const rowBg = idx % 2 === 0 ? "var(--card)" : "var(--secondary)";
+
+                        // Helper: render an inline-editable item number cell
+                        const ItemNumCell = ({ field, value }: { field: "unfi_east_item" | "unfi_west_item" | "kehe_item"; value: string | null }) => {
+                          const isEditing = editItemNum?.productId === p.id && editItemNum?.field === field;
+                          if (isEditing) {
+                            return (
+                              <td style={itemNumStyle(rowBg, true)}>
+                                <input
+                                  autoFocus
+                                  type="text"
+                                  value={editItemNumVal}
+                                  onChange={(e) => setEditItemNumVal(e.target.value)}
+                                  onBlur={() => saveItemNum(p.id, field, editItemNumVal)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") saveItemNum(p.id, field, editItemNumVal);
+                                    if (e.key === "Escape") setEditItemNum(null);
+                                  }}
+                                  style={{ fontFamily: "monospace", fontSize: "0.75rem", background: "transparent", outline: "1px solid var(--border)", borderRadius: 3, padding: "1px 4px", width: "100%", color: "var(--foreground)" }}
+                                />
+                              </td>
+                            );
+                          }
+                          return (
+                            <td
+                              style={itemNumStyle(rowBg, isRepOrAdmin)}
+                              onClick={() => {
+                                if (!isRepOrAdmin) return;
+                                setEditItemNum({ productId: p.id, field });
+                                setEditItemNumVal(value ?? "");
+                              }}
+                              title={isRepOrAdmin ? "Click to edit" : undefined}
+                            >
+                              {value ?? <span style={{ color: "var(--muted-foreground)", opacity: 0.4 }}>—</span>}
+                            </td>
+                          );
+                        };
+
+                        return (
+                          <tr key={p.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                            <td style={{ ...stickyDescBody(rowBg), padding: "6px 12px", fontWeight: 500, color: "var(--foreground)" }}>
+                              <div style={{ maxWidth: FROZEN_DESC_W - 24, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.description}>
+                                {p.description}
+                              </div>
+                            </td>
+                            <td style={{ ...stickyUpcBody(rowBg), padding: "6px 12px", fontFamily: "monospace", color: "var(--muted-foreground)" }}>
+                              {p.retail_upc ?? "—"}
+                            </td>
+                            <ItemNumCell
+                              field={dcSubTab === "UNFI" ? "unfi_east_item" : "kehe_item"}
+                              value={dcSubTab === "UNFI" ? p.unfi_east_item : p.kehe_item}
+                            />
+                            {dcSubTab === "UNFI" && (
+                              <ItemNumCell field="unfi_west_item" value={p.unfi_west_item} />
+                            )}
+                            {codes.map((dc) => {
+                              const key = `${p.id}|${dcSubTab}|${dc.code}`;
+                              const isListed = dcListings.get(key) ?? false;
+                              const canToggle = isRepOrAdmin;
+                              return (
+                                <td
+                                  key={dc.code}
+                                  onClick={() => canToggle && toggleDc(p.id, dcSubTab, dc.code)}
+                                  style={{
+                                    textAlign: "center",
+                                    padding: "6px 4px",
+                                    cursor: canToggle ? "pointer" : "default",
+                                    background: isListed ? "rgba(22,163,74,0.12)" : rowBg,
+                                    borderLeft: "1px solid var(--border)",
+                                    minWidth: 30,
+                                    transition: "background 0.1s",
+                                  }}
+                                  title={`${dc.code} (${dc.name}) — ${isListed ? "Listed (click to remove)" : "Not listed (click to add)"}`}
+                                >
+                                  {isListed
+                                    ? <span style={{ color: "#16a34a", fontWeight: 700, fontSize: "0.85rem" }}>✓</span>
+                                    : <span style={{ color: "var(--muted-foreground)", fontSize: "0.7rem" }}>·</span>}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {isRepOrAdmin && (
+                  <p className="text-xs text-muted-foreground">Click DC cells to toggle listing · Click item # cells to edit inline</p>
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
-
-      <p className="text-xs text-muted-foreground">CSV format: description, upc, size, srp, cost (header row required)</p>
     </div>
   );
 }
