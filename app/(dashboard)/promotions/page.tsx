@@ -155,7 +155,14 @@ function uniqueSkuCount(rows: PromotionRow[]) {
 
 function isEdlpEdlc(row: PromotionRow) {
   const t = (row.promo_type || "").toUpperCase();
-  return t.includes("EDLP") || t.includes("EDLC");
+  const n = (row.promo_name || "").toUpperCase();
+  return t.includes("EDLP") || t.includes("EDLC") || n.includes("EDLP") || n.includes("EDLC");
+}
+
+function isEdlpEdlcGroup(pg: { promo_type: string; promo_name: string | null }) {
+  const t = (pg.promo_type || "").toUpperCase();
+  const n = (pg.promo_name || "").toUpperCase();
+  return t.includes("EDLP") || t.includes("EDLC") || n.includes("EDLP") || n.includes("EDLC");
 }
 
 async function fetchAllRows<T>(query: any): Promise<T[]> {
@@ -335,7 +342,7 @@ export default function PromotionsPage() {
 
         setPromotions(rows);
         // Do NOT call setFiltered here — the filter useEffect owns that
-        // to ensure hideEdlp and other filters are always applied consistently.
+        // to ensure other filters are always applied consistently.
 
         // Default calYear to most recent year in data
         const mostRecentYear = rows.reduce((max, r) => Math.max(max, r.promo_year), new Date().getFullYear());
@@ -360,9 +367,8 @@ export default function PromotionsPage() {
     if (statusFilter !== "all") rows = rows.filter((r) => r.promo_status === statusFilter);
     if (repFilter !== "all") rows = rows.filter((r) => (r.cultivate_rep || "") === repFilter);
     if (scopeFilter !== "all") rows = rows.filter((r) => r.promo_scope === scopeFilter);
-    if (hideEdlp) rows = rows.filter((r) => !isEdlpEdlc(r)); // Feature 1
     setFiltered(rows);
-  }, [promotions, brandFilter, retailerFilter, monthFilter, yearFilter, statusFilter, repFilter, scopeFilter, hideEdlp]);
+  }, [promotions, brandFilter, retailerFilter, monthFilter, yearFilter, statusFilter, repFilter, scopeFilter]);
 
   // ── Filter options ─────────────────────────────────────────────────────────
 
@@ -540,9 +546,19 @@ export default function PromotionsPage() {
 
   function renderRetailerGroups(groups: RetailerGroup[]) {
     return groups.map((group) => {
-      const promoCount = group.brandGroups.reduce((sum, bg) => sum + bg.promoGroups.length, 0);
-      const skuCount = uniqueSkuCount(group.rows);
-      const brandCount = group.brandGroups.length;
+      // Apply EDLP/EDLC filter at the promo-group level
+      const visibleBrandGroups = group.brandGroups.map((bg) => ({
+        ...bg,
+        promoGroups: hideEdlp ? bg.promoGroups.filter((pg) => !isEdlpEdlcGroup(pg)) : bg.promoGroups,
+      })).filter((bg) => bg.promoGroups.length > 0);
+
+      // If all promo groups are EDLP/EDLC, skip this retailer entirely
+      if (hideEdlp && visibleBrandGroups.length === 0) return null;
+
+      const promoCount = visibleBrandGroups.reduce((sum, bg) => sum + bg.promoGroups.length, 0);
+      const visibleRows = visibleBrandGroups.flatMap((bg) => bg.promoGroups.flatMap((pg) => pg.rows));
+      const skuCount = uniqueSkuCount(visibleRows);
+      const brandCount = visibleBrandGroups.length;
       return (
         <React.Fragment key={group.key}>
           <tr className="border-b cursor-pointer hover:bg-gray-50" onClick={() => setExpandedRetailers((prev) => ({ ...prev, [group.key]: !prev[group.key] }))}>
@@ -555,9 +571,9 @@ export default function PromotionsPage() {
             <tr className="bg-gray-50 border-b">
               <td colSpan={8} className="px-4 py-4">
                 <div className="space-y-3">
-                  {group.brandGroups.map((brandGroup) => {
+                  {visibleBrandGroups.map((brandGroup) => {
                     const brandPromoCount = brandGroup.promoGroups.length;
-                    const brandSkuCount = uniqueSkuCount(brandGroup.rows);
+                    const brandSkuCount = uniqueSkuCount(brandGroup.promoGroups.flatMap((pg) => pg.rows));
                     const hasAnyOiLoaded = brandGroup.promoGroups.some((pg) => pg.rows.some((item) => distributorOiKeys.has([item.brand_id, item.distributor || "", item.promo_year, item.promo_month].join("||"))));
                     return (
                       <div key={brandGroup.key} className="border rounded bg-white">
