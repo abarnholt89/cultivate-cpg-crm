@@ -35,7 +35,7 @@ type Product = {
 };
 
 type Brand = { id: string; name: string };
-type Retailer = { id: string; name: string };
+type Retailer = { id: string; name: string; banner: string | null };
 type DcCode = { code: string; name: string };
 
 type EditForm = {
@@ -105,8 +105,6 @@ const mkBody = (left: number, w: number, bg: string, borderRight = false) => ({
   ...(borderRight ? { borderRight: "2px solid var(--border)" } : {}),
 });
 
-const APL_PAGE_SIZE = 50;
-const DC_PAGE_SIZE = 50;
 
 export default function ProductsLibraryPage() {
   const router = useRouter();
@@ -129,7 +127,6 @@ export default function ProductsLibraryPage() {
 
   // Tab state
   const [activeTab, setActiveTab] = useState<"products" | "apl" | "dc">("products");
-  const [dcSubTab, setDcSubTab] = useState<"UNFI" | "KeHE">("UNFI");
 
   // APL state (global — all brands)
   const [aplLoaded, setAplLoaded] = useState(false);
@@ -138,7 +135,6 @@ export default function ProductsLibraryPage() {
   const [aplAuthorized, setAplAuthorized] = useState<Set<string>>(new Set());
   const [aplSearch, setAplSearch] = useState("");
   const [aplShowAll, setAplShowAll] = useState(true);
-  const [aplPage, setAplPage] = useState(0);
 
   // DC state (global — all brands)
   const [dcLoaded, setDcLoaded] = useState(false);
@@ -146,7 +142,6 @@ export default function ProductsLibraryPage() {
   const [dcListings, setDcListings] = useState<Map<string, boolean>>(new Map());
   const [unfiCodes, setUnfiCodes] = useState<DcCode[]>([]);
   const [keheCodes, setKeheCodes] = useState<DcCode[]>([]);
-  const [dcPage, setDcPage] = useState(0);
 
   // APL add-authorization form
   const [aplAddOpen, setAplAddOpen] = useState(false);
@@ -192,13 +187,11 @@ export default function ProductsLibraryPage() {
     if (nextRole === "client") { router.replace("/brands"); return; }
     setAuthorized(true);
 
-    const [productsRes, brandsRes, authRowsRes] = await Promise.all([
-      supabase.from("brand_products").select(PRODUCT_SELECT).eq("status", "active").order("description"),
+    const [brandsRes, authRowsRes] = await Promise.all([
       supabase.from("brands").select("id,name").order("name"),
       supabase.from("authorized_products").select("upc,retailer_id"),
     ]);
 
-    if (productsRes.error) { setError(productsRes.error.message); setLoading(false); return; }
     if (brandsRes.error) { setError(brandsRes.error.message); setLoading(false); return; }
 
     const brandsData = (brandsRes.data as Brand[]) ?? [];
@@ -206,7 +199,22 @@ export default function ProductsLibraryPage() {
     const byId: Record<string, Brand> = {};
     brandsData.forEach((b) => { byId[b.id] = b; });
     setBrandsById(byId);
-    setProducts((productsRes.data as unknown as Product[]) ?? []);
+
+    // Paginate brand_products to load all SKUs (Supabase default cap is 1000)
+    const PCHUNK = 1000;
+    const allProducts: Product[] = [];
+    let pfrom = 0;
+    while (true) {
+      const { data: pdata, error: perr } = await supabase
+        .from("brand_products").select(PRODUCT_SELECT).eq("status", "active").order("description")
+        .range(pfrom, pfrom + PCHUNK - 1);
+      if (perr) { setError(perr.message); setLoading(false); return; }
+      if (!pdata || pdata.length === 0) break;
+      allProducts.push(...(pdata as unknown as Product[]));
+      if (pdata.length < PCHUNK) break;
+      pfrom += PCHUNK;
+    }
+    setProducts(allProducts);
 
     const counts: Record<string, Set<string>> = {};
     ((authRowsRes.data ?? []) as { upc: string; retailer_id: string }[]).forEach((r) => {
@@ -227,9 +235,17 @@ export default function ProductsLibraryPage() {
     // Fetch retailers + ALL authorized_products (paginated)
     const CHUNK = 1000;
     const [retailersRes] = await Promise.all([
-      supabase.from("retailers").select("id,name").order("name"),
+      supabase.from("retailers").select("id,name,banner").order("name"),
     ]);
-    setAplRetailers((retailersRes.data as Retailer[]) ?? []);
+    // Deduplicate retailers by banner (falling back to name)
+    const rawRetailers = (retailersRes.data as Retailer[]) ?? [];
+    const seenBanners = new Set<string>();
+    const dedupedRetailers: Retailer[] = [];
+    for (const r of rawRetailers) {
+      const key = r.banner ?? r.name;
+      if (!seenBanners.has(key)) { seenBanners.add(key); dedupedRetailers.push(r); }
+    }
+    setAplRetailers(dedupedRetailers);
 
     const authSet = new Set<string>();
     let from = 0;
@@ -289,9 +305,6 @@ export default function ProductsLibraryPage() {
     if (tab === "dc" && !dcLoaded) loadDc();
   }
 
-  // Reset pages when filter/search changes
-  useEffect(() => { setAplPage(0); setDcPage(0); }, [brandFilter]);
-  useEffect(() => { setAplPage(0); }, [aplSearch]);
 
   async function toggleApl(upc: string, retailerId: string) {
     const product = products.find((p) => p.retail_upc === upc);
@@ -397,7 +410,7 @@ export default function ProductsLibraryPage() {
   }, [products, brandFilter, query, brandsById]);
 
   // APL — all active products, optional brand filter + search
-  const aplAllProducts = useMemo(() => {
+  const aplProducts = useMemo(() => {
     return products
       .filter((p) => p.status === "active")
       .filter((p) => !brandFilter || p.brand_id === brandFilter)
@@ -413,20 +426,15 @@ export default function ProductsLibraryPage() {
       });
   }, [products, brandFilter, aplSearch, brandsById]);
 
-  const aplProducts = useMemo(
-    () => aplAllProducts.slice(aplPage * APL_PAGE_SIZE, (aplPage + 1) * APL_PAGE_SIZE),
-    [aplAllProducts, aplPage]
-  );
-
   const aplVisibleRetailers = useMemo(() => {
     if (aplShowAll) return aplRetailers;
     return aplRetailers.filter((r) =>
-      aplAllProducts.some((p) => p.retail_upc && aplAuthorized.has(`${p.retail_upc}|${r.id}`))
+      aplProducts.some((p) => p.retail_upc && aplAuthorized.has(`${p.retail_upc}|${r.id}`))
     );
-  }, [aplRetailers, aplShowAll, aplAllProducts, aplAuthorized]);
+  }, [aplRetailers, aplShowAll, aplProducts, aplAuthorized]);
 
   // DC — all active products, optional brand filter
-  const dcAllProducts = useMemo(() => {
+  const dcProducts = useMemo(() => {
     return products
       .filter((p) => p.status === "active")
       .filter((p) => !brandFilter || p.brand_id === brandFilter)
@@ -435,11 +443,6 @@ export default function ProductsLibraryPage() {
         return bn !== 0 ? bn : a.description.localeCompare(b.description);
       });
   }, [products, brandFilter, brandsById]);
-
-  const dcProducts = useMemo(
-    () => dcAllProducts.slice(dcPage * DC_PAGE_SIZE, (dcPage + 1) * DC_PAGE_SIZE),
-    [dcAllProducts, dcPage]
-  );
 
   function startEdit(product: Product) {
     setEditingId(product.id);
@@ -759,93 +762,256 @@ export default function ProductsLibraryPage() {
       {/* ─────────────── APL TAB ─────────────── */}
       {activeTab === "apl" && (
         <div className="space-y-4">
-          <>
-            <div className="flex flex-wrap items-center gap-3">
-              <input
-                type="text" placeholder="Search SKUs…" value={aplSearch}
-                onChange={(e) => setAplSearch(e.target.value)}
-                className="rounded-lg px-3 py-2 text-sm w-64 focus:outline-none focus:ring-2"
-                style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
-              />
-              <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-                <input type="checkbox" checked={!aplShowAll} onChange={(e) => setAplShowAll(!e.target.checked)} />
-                Authorized retailers only
-              </label>
-              {!aplLoading && aplLoaded && (
-                <span className="text-sm text-muted-foreground">
-                  {aplAllProducts.length} SKU{aplAllProducts.length !== 1 ? "s" : ""} · {aplVisibleRetailers.length} retailer{aplVisibleRetailers.length !== 1 ? "s" : ""}
-                </span>
-              )}
-              {isRepOrAdmin && !aplLoading && aplLoaded && (
-                <button
-                  onClick={() => { setAplAddOpen((v) => !v); setAplAddError(""); }}
-                  className="ml-auto px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  + Add Authorization
-                </button>
-              )}
-            </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              type="text" placeholder="Search SKUs…" value={aplSearch}
+              onChange={(e) => setAplSearch(e.target.value)}
+              className="rounded-lg px-3 py-2 text-sm w-64 focus:outline-none focus:ring-2"
+              style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+            />
+            <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+              <input type="checkbox" checked={!aplShowAll} onChange={(e) => setAplShowAll(!e.target.checked)} />
+              Authorized retailers only
+            </label>
+            {!aplLoading && aplLoaded && (
+              <span className="text-sm text-muted-foreground">
+                {aplProducts.length} SKU{aplProducts.length !== 1 ? "s" : ""} · {aplVisibleRetailers.length} retailer{aplVisibleRetailers.length !== 1 ? "s" : ""}
+              </span>
+            )}
+            {isRepOrAdmin && !aplLoading && aplLoaded && (
+              <button
+                onClick={() => { setAplAddOpen((v) => !v); setAplAddError(""); }}
+                className="ml-auto px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:text-foreground transition-colors"
+              >
+                + Add Authorization
+              </button>
+            )}
+          </div>
 
-            {/* Add Authorization form */}
-            {aplAddOpen && isRepOrAdmin && (
-              <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-                <div className="text-sm font-semibold text-foreground">Add Authorization</div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">Retailer</label>
-                    <select
-                      value={aplAddRetailerId} onChange={(e) => setAplAddRetailerId(e.target.value)}
-                      className="rounded-lg px-3 py-2 text-sm w-full"
-                      style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
-                    >
-                      <option value="">— Select retailer —</option>
-                      {aplRetailers.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">SKU</label>
-                    <input
-                      type="text" placeholder="Filter SKUs…" value={aplAddSkuSearch}
-                      onChange={(e) => setAplAddSkuSearch(e.target.value)}
-                      className="rounded-lg px-3 py-2 text-sm w-full mb-1.5"
-                      style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
-                    />
-                    <select
-                      value={aplAddProductId} onChange={(e) => setAplAddProductId(e.target.value)}
-                      className="rounded-lg px-3 py-2 text-sm w-full"
-                      style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
-                    >
-                      <option value="">— Select SKU —</option>
-                      {aplAllProducts
-                        .filter((p) => !aplAddSkuSearch ||
-                          p.description.toLowerCase().includes(aplAddSkuSearch.toLowerCase()) ||
-                          (p.retail_upc ?? "").includes(aplAddSkuSearch))
-                        .map((p) => (
-                          <option key={p.id} value={p.id}>{(brandsById[p.brand_id]?.name ? `[${brandsById[p.brand_id].name}] ` : "")}{p.description}{p.retail_upc ? ` (${p.retail_upc})` : ""}</option>
-                        ))}
-                    </select>
-                  </div>
+          {/* Add Authorization form */}
+          {aplAddOpen && isRepOrAdmin && (
+            <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+              <div className="text-sm font-semibold text-foreground">Add Authorization</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Retailer</label>
+                  <select
+                    value={aplAddRetailerId} onChange={(e) => setAplAddRetailerId(e.target.value)}
+                    className="rounded-lg px-3 py-2 text-sm w-full"
+                    style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
+                  >
+                    <option value="">— Select retailer —</option>
+                    {aplRetailers.map((r) => <option key={r.id} value={r.id}>{r.banner ?? r.name}</option>)}
+                  </select>
                 </div>
-                {aplAddError && <p className="text-xs text-red-600">{aplAddError}</p>}
-                <div className="flex gap-2">
-                  <button onClick={addAplAuthorization} disabled={aplAddSaving}
-                    className="px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50"
-                    style={{ background: "var(--foreground)", color: "var(--background)" }}>
-                    {aplAddSaving ? "Saving…" : "Save"}
-                  </button>
-                  <button onClick={() => { setAplAddOpen(false); setAplAddError(""); }} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">SKU</label>
+                  <input
+                    type="text" placeholder="Filter SKUs…" value={aplAddSkuSearch}
+                    onChange={(e) => setAplAddSkuSearch(e.target.value)}
+                    className="rounded-lg px-3 py-2 text-sm w-full mb-1.5"
+                    style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
+                  />
+                  <select
+                    value={aplAddProductId} onChange={(e) => setAplAddProductId(e.target.value)}
+                    className="rounded-lg px-3 py-2 text-sm w-full"
+                    style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
+                  >
+                    <option value="">— Select SKU —</option>
+                    {aplProducts
+                      .filter((p) => !aplAddSkuSearch ||
+                        p.description.toLowerCase().includes(aplAddSkuSearch.toLowerCase()) ||
+                        (p.retail_upc ?? "").includes(aplAddSkuSearch))
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>{(brandsById[p.brand_id]?.name ? `[${brandsById[p.brand_id].name}] ` : "")}{p.description}{p.retail_upc ? ` (${p.retail_upc})` : ""}</option>
+                      ))}
+                  </select>
                 </div>
               </div>
-            )}
+              {aplAddError && <p className="text-xs text-red-600">{aplAddError}</p>}
+              <div className="flex gap-2">
+                <button onClick={addAplAuthorization} disabled={aplAddSaving}
+                  className="px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50"
+                  style={{ background: "var(--foreground)", color: "var(--background)" }}>
+                  {aplAddSaving ? "Saving…" : "Save"}
+                </button>
+                <button onClick={() => { setAplAddOpen(false); setAplAddError(""); }} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+              </div>
+            </div>
+          )}
 
-            {aplLoading && <p className="text-sm text-muted-foreground">Loading APL data…</p>}
+          {aplLoading && <p className="text-sm text-muted-foreground">Loading APL data…</p>}
 
-            {!aplLoading && aplLoaded && aplAllProducts.length === 0 && (
-              <p className="text-sm text-muted-foreground">No active SKUs found.</p>
-            )}
+          {!aplLoading && aplLoaded && aplProducts.length === 0 && (
+            <p className="text-sm text-muted-foreground">No active SKUs found.</p>
+          )}
 
-            {!aplLoading && aplLoaded && aplAllProducts.length > 0 && aplVisibleRetailers.length > 0 && (
+          {!aplLoading && aplLoaded && aplProducts.length > 0 && aplVisibleRetailers.length > 0 && (
+            <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "72vh", borderRadius: "0.75rem", border: "1px solid var(--border)" }}>
+              <table style={{ borderCollapse: "separate", borderSpacing: 0, fontSize: "0.75rem" }}>
+                <thead>
+                  <tr style={{ background: "#1e3a4a" }}>
+                    <th style={{ ...mkHead(0, FROZEN_BRAND_W), padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>Brand</th>
+                    <th style={{ ...mkHead(FROZEN_DESC_LEFT, FROZEN_DESC_W), padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>Description</th>
+                    <th style={{ ...mkHead(FROZEN_UPC_LEFT, FROZEN_UPC_W, true), padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>UPC</th>
+                    {aplVisibleRetailers.map((r) => (
+                      <th key={r.id} style={{
+                        position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a",
+                        writingMode: "vertical-rl", textOrientation: "mixed", transform: "rotate(180deg)",
+                        height: 110, width: 30, whiteSpace: "nowrap", textAlign: "left", verticalAlign: "bottom",
+                        padding: "8px 4px", fontWeight: 400, color: "rgba(255,255,255,0.75)", fontSize: "0.7rem",
+                        borderLeft: "1px solid rgba(255,255,255,0.08)",
+                      }}>{r.banner ?? r.name}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {aplProducts.map((p, idx) => {
+                    const rowBg = idx % 2 === 0 ? "var(--card)" : "var(--secondary)";
+                    const brandName = brandsById[p.brand_id]?.name ?? "";
+                    return (
+                      <tr key={p.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                        <td style={{ ...mkBody(0, FROZEN_BRAND_W, rowBg), padding: "6px 12px", color: "var(--muted-foreground)" }}>
+                          <div style={{ maxWidth: FROZEN_BRAND_W - 16, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={brandName}>{brandName}</div>
+                        </td>
+                        <td style={{ ...mkBody(FROZEN_DESC_LEFT, FROZEN_DESC_W, rowBg), padding: "6px 12px", fontWeight: 500, color: "var(--foreground)" }}>
+                          <div style={{ maxWidth: FROZEN_DESC_W - 24, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.description}>{p.description}</div>
+                        </td>
+                        <td style={{ ...mkBody(FROZEN_UPC_LEFT, FROZEN_UPC_W, rowBg, true), padding: "6px 12px", fontFamily: "monospace", color: "var(--muted-foreground)" }}>{p.retail_upc ?? "—"}</td>
+                        {aplVisibleRetailers.map((r) => {
+                          const key = `${p.retail_upc}|${r.id}`;
+                          const isAuth = !!p.retail_upc && aplAuthorized.has(key);
+                          const canToggle = !!p.retail_upc && isRepOrAdmin;
+                          return (
+                            <td key={r.id} onClick={() => canToggle && toggleApl(p.retail_upc!, r.id)}
+                              style={{ textAlign: "center", padding: "6px 4px", cursor: canToggle ? "pointer" : "default", background: isAuth ? "rgba(22,163,74,0.12)" : rowBg, borderLeft: "1px solid var(--border)", minWidth: 30, transition: "background 0.1s" }}
+                              title={`${r.banner ?? r.name} — ${isAuth ? "Authorized" : "Not authorized"}`}>
+                              {isAuth
+                                ? <span style={{ color: "#16a34a", fontWeight: 700, fontSize: "0.85rem" }}>✓</span>
+                                : <span style={{ color: "var(--muted-foreground)", fontSize: "0.7rem" }}>·</span>}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {!aplLoading && aplLoaded && aplProducts.length > 0 && aplVisibleRetailers.length === 0 && !aplShowAll && (
+            <p className="text-sm text-muted-foreground">No authorized retailers. Toggle off the filter to see all retailers.</p>
+          )}
+
+          {!aplLoading && aplLoaded && isRepOrAdmin && aplProducts.length > 0 && (
+            <p className="text-xs text-muted-foreground">Click any cell to toggle authorization for that SKU × retailer.</p>
+          )}
+        </div>
+      )}
+
+      {/* ─────────────── DC ASSORTMENT TAB ─────────────── */}
+      {activeTab === "dc" && (
+        <div className="space-y-4">
+          {/* Add button */}
+          {isRepOrAdmin && !dcLoading && dcLoaded && (
+            <div className="flex justify-end">
+              <button
+                onClick={() => { setDcAddOpen((v) => !v); setDcAddCode(""); setDcAddCustomCode(""); setDcAddProductId(""); setDcAddSkuSearch(""); setDcAddError(""); }}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:text-foreground transition-colors"
+              >
+                + Add DC Listing
+              </button>
+            </div>
+          )}
+
+          {/* Add DC Listing form */}
+          {dcAddOpen && isRepOrAdmin && (
+            <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+              <div className="text-sm font-semibold text-foreground">Add DC Listing</div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Distributor</label>
+                  <select value={dcAddDistributor} onChange={(e) => { setDcAddDistributor(e.target.value as "UNFI" | "KeHE"); setDcAddCode(""); }}
+                    className="rounded-lg px-3 py-2 text-sm w-full"
+                    style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}>
+                    <option value="UNFI">UNFI</option>
+                    <option value="KeHE">KeHE</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">DC Code</label>
+                  <select value={dcAddCode} onChange={(e) => setDcAddCode(e.target.value)}
+                    className="rounded-lg px-3 py-2 text-sm w-full"
+                    style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}>
+                    <option value="">— Select DC —</option>
+                    {(dcAddDistributor === "UNFI" ? unfiCodes : keheCodes).map((dc) => (
+                      <option key={dc.code} value={dc.code}>{dc.code} — {dc.name}</option>
+                    ))}
+                    <option value="__custom__">— Enter new code —</option>
+                  </select>
+                  {dcAddCode === "__custom__" && (
+                    <input type="text" placeholder="e.g. DEN" value={dcAddCustomCode}
+                      onChange={(e) => setDcAddCustomCode(e.target.value.toUpperCase())}
+                      className="rounded-lg px-3 py-2 text-sm w-full mt-1.5 font-mono"
+                      style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">SKU</label>
+                  <input type="text" placeholder="Filter SKUs…" value={dcAddSkuSearch}
+                    onChange={(e) => setDcAddSkuSearch(e.target.value)}
+                    className="rounded-lg px-3 py-2 text-sm w-full mb-1.5"
+                    style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                  <select value={dcAddProductId} onChange={(e) => setDcAddProductId(e.target.value)}
+                    className="rounded-lg px-3 py-2 text-sm w-full"
+                    style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}>
+                    <option value="">— Select SKU —</option>
+                    {dcProducts
+                      .filter((p) => !dcAddSkuSearch ||
+                        p.description.toLowerCase().includes(dcAddSkuSearch.toLowerCase()) ||
+                        (p.retail_upc ?? "").includes(dcAddSkuSearch))
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>{(brandsById[p.brand_id]?.name ? `[${brandsById[p.brand_id].name}] ` : "")}{p.description}{p.retail_upc ? ` (${p.retail_upc})` : ""}</option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+              {dcAddError && <p className="text-xs text-red-600">{dcAddError}</p>}
+              <div className="flex gap-2">
+                <button onClick={addDcListing} disabled={dcAddSaving}
+                  className="px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50"
+                  style={{ background: "var(--foreground)", color: "var(--background)" }}>
+                  {dcAddSaving ? "Saving…" : "Save"}
+                </button>
+                <button onClick={() => setDcAddOpen(false)} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {dcLoading && <p className="text-sm text-muted-foreground">Loading DC data…</p>}
+
+          {!dcLoading && dcLoaded && (() => {
+            const allDcCodes = [
+              ...keheCodes.map((dc) => ({ ...dc, distributor: "KeHE" as const })),
+              ...unfiCodes.map((dc) => ({ ...dc, distributor: "UNFI" as const })),
+            ];
+            if (allDcCodes.length === 0) {
+              return <p className="text-sm text-muted-foreground">No DC listings found. Use &quot;+ Add DC Listing&quot; to add one.</p>;
+            }
+
+            const itemNumStyle = (bg: string, editable: boolean) => ({
+              padding: "6px 12px", color: "var(--muted-foreground)", fontFamily: "monospace",
+              borderLeft: "1px solid var(--border)", background: bg, whiteSpace: "nowrap" as const,
+              cursor: editable ? "text" : "default", minWidth: 110,
+            });
+
+            return (
               <>
+                <div className="text-sm text-muted-foreground">
+                  {dcProducts.length} SKU{dcProducts.length !== 1 ? "s" : ""} · {keheCodes.length} KeHE DC{keheCodes.length !== 1 ? "s" : ""} · {unfiCodes.length} UNFI DC{unfiCodes.length !== 1 ? "s" : ""}
+                  {isRepOrAdmin && <span className="ml-2 text-xs">· Click item # cells to edit inline</span>}
+                </div>
                 <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "72vh", borderRadius: "0.75rem", border: "1px solid var(--border)" }}>
                   <table style={{ borderCollapse: "separate", borderSpacing: 0, fontSize: "0.75rem" }}>
                     <thead>
@@ -853,21 +1019,53 @@ export default function ProductsLibraryPage() {
                         <th style={{ ...mkHead(0, FROZEN_BRAND_W), padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>Brand</th>
                         <th style={{ ...mkHead(FROZEN_DESC_LEFT, FROZEN_DESC_W), padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>Description</th>
                         <th style={{ ...mkHead(FROZEN_UPC_LEFT, FROZEN_UPC_W, true), padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>UPC</th>
-                        {aplVisibleRetailers.map((r) => (
-                          <th key={r.id} style={{
-                            position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a",
-                            writingMode: "vertical-rl", textOrientation: "mixed", transform: "rotate(180deg)",
-                            height: 110, width: 30, whiteSpace: "nowrap", textAlign: "left", verticalAlign: "bottom",
-                            padding: "8px 4px", fontWeight: 400, color: "rgba(255,255,255,0.75)", fontSize: "0.7rem",
-                            borderLeft: "1px solid rgba(255,255,255,0.08)",
-                          }}>{r.name}</th>
-                        ))}
+                        <th style={{ position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a", padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left", whiteSpace: "nowrap", minWidth: 110, borderLeft: "2px solid rgba(16,163,74,0.4)" }}>KeHE Item #</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a", padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left", whiteSpace: "nowrap", minWidth: 110, borderLeft: "1px solid rgba(255,255,255,0.1)" }}>UNFI East #</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a", padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left", whiteSpace: "nowrap", minWidth: 110, borderLeft: "1px solid rgba(255,255,255,0.1)" }}>UNFI West #</th>
+                        {allDcCodes.map((dc, i) => {
+                          const isFirstUnfi = dc.distributor === "UNFI" && (i === 0 || allDcCodes[i - 1].distributor === "KeHE");
+                          return (
+                            <th key={`${dc.distributor}-${dc.code}`} style={{
+                              position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a",
+                              writingMode: "vertical-rl", textOrientation: "mixed", transform: "rotate(180deg)",
+                              height: 110, width: 30, whiteSpace: "nowrap", textAlign: "left", verticalAlign: "bottom",
+                              padding: "8px 4px", fontWeight: 400, fontSize: "0.7rem",
+                              color: dc.distributor === "KeHE" ? "rgba(134,239,172,0.85)" : "rgba(147,197,253,0.85)",
+                              borderLeft: isFirstUnfi ? "2px solid rgba(59,130,246,0.4)" : "1px solid rgba(255,255,255,0.08)",
+                            }}>
+                              {dc.code} — {dc.name}
+                            </th>
+                          );
+                        })}
                       </tr>
                     </thead>
                     <tbody>
-                      {aplProducts.map((p, idx) => {
+                      {dcProducts.map((p, idx) => {
                         const rowBg = idx % 2 === 0 ? "var(--card)" : "var(--secondary)";
                         const brandName = brandsById[p.brand_id]?.name ?? "";
+
+                        const ItemNumCell = ({ field, value }: { field: "unfi_east_item" | "unfi_west_item" | "kehe_item"; value: string | null }) => {
+                          const isEditing = editItemNum?.productId === p.id && editItemNum?.field === field;
+                          if (isEditing) {
+                            return (
+                              <td style={itemNumStyle(rowBg, true)}>
+                                <input autoFocus type="text" value={editItemNumVal}
+                                  onChange={(e) => setEditItemNumVal(e.target.value)}
+                                  onBlur={() => saveItemNum(p.id, field, editItemNumVal)}
+                                  onKeyDown={(e) => { if (e.key === "Enter") saveItemNum(p.id, field, editItemNumVal); if (e.key === "Escape") setEditItemNum(null); }}
+                                  style={{ fontFamily: "monospace", fontSize: "0.75rem", background: "transparent", outline: "1px solid var(--border)", borderRadius: 3, padding: "1px 4px", width: "100%", color: "var(--foreground)" }} />
+                              </td>
+                            );
+                          }
+                          return (
+                            <td style={itemNumStyle(rowBg, isRepOrAdmin)}
+                              onClick={() => { if (!isRepOrAdmin) return; setEditItemNum({ productId: p.id, field }); setEditItemNumVal(value ?? ""); }}
+                              title={isRepOrAdmin ? "Click to edit" : undefined}>
+                              {value ?? <span style={{ color: "var(--muted-foreground)", opacity: 0.4 }}>—</span>}
+                            </td>
+                          );
+                        };
+
                         return (
                           <tr key={p.id} style={{ borderBottom: "1px solid var(--border)" }}>
                             <td style={{ ...mkBody(0, FROZEN_BRAND_W, rowBg), padding: "6px 12px", color: "var(--muted-foreground)" }}>
@@ -877,15 +1075,18 @@ export default function ProductsLibraryPage() {
                               <div style={{ maxWidth: FROZEN_DESC_W - 24, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.description}>{p.description}</div>
                             </td>
                             <td style={{ ...mkBody(FROZEN_UPC_LEFT, FROZEN_UPC_W, rowBg, true), padding: "6px 12px", fontFamily: "monospace", color: "var(--muted-foreground)" }}>{p.retail_upc ?? "—"}</td>
-                            {aplVisibleRetailers.map((r) => {
-                              const key = `${p.retail_upc}|${r.id}`;
-                              const isAuth = !!p.retail_upc && aplAuthorized.has(key);
-                              const canToggle = !!p.retail_upc && isRepOrAdmin;
+                            <ItemNumCell field="kehe_item" value={p.kehe_item} />
+                            <ItemNumCell field="unfi_east_item" value={p.unfi_east_item} />
+                            <ItemNumCell field="unfi_west_item" value={p.unfi_west_item} />
+                            {allDcCodes.map((dc, i) => {
+                              const key = `${p.id}|${dc.distributor}|${dc.code}`;
+                              const isListed = dcListings.get(key) ?? false;
+                              const isFirstUnfi = dc.distributor === "UNFI" && (i === 0 || allDcCodes[i - 1].distributor === "KeHE");
                               return (
-                                <td key={r.id} onClick={() => canToggle && toggleApl(p.retail_upc!, r.id)}
-                                  style={{ textAlign: "center", padding: "6px 4px", cursor: canToggle ? "pointer" : "default", background: isAuth ? "rgba(22,163,74,0.12)" : rowBg, borderLeft: "1px solid var(--border)", minWidth: 30, transition: "background 0.1s" }}
-                                  title={`${r.name} — ${isAuth ? "Authorized" : "Not authorized"}`}>
-                                  {isAuth
+                                <td key={`${dc.distributor}-${dc.code}`} onClick={() => isRepOrAdmin && toggleDc(p.id, dc.distributor, dc.code)}
+                                  style={{ textAlign: "center", padding: "6px 4px", cursor: isRepOrAdmin ? "pointer" : "default", background: isListed ? "rgba(22,163,74,0.12)" : rowBg, borderLeft: isFirstUnfi ? "2px solid rgba(59,130,246,0.2)" : "1px solid var(--border)", minWidth: 30, transition: "background 0.1s" }}
+                                  title={`[${dc.distributor}] ${dc.code} — ${isListed ? "Listed" : "Not listed"}`}>
+                                  {isListed
                                     ? <span style={{ color: "#16a34a", fontWeight: 700, fontSize: "0.85rem" }}>✓</span>
                                     : <span style={{ color: "var(--muted-foreground)", fontSize: "0.7rem" }}>·</span>}
                                 </td>
@@ -897,240 +1098,12 @@ export default function ProductsLibraryPage() {
                     </tbody>
                   </table>
                 </div>
-                {/* Pagination */}
-                {aplAllProducts.length > APL_PAGE_SIZE && (
-                  <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                    <button onClick={() => setAplPage((p) => Math.max(0, p - 1))} disabled={aplPage === 0}
-                      className="px-3 py-1 rounded border border-border disabled:opacity-40 hover:text-foreground transition-colors">← Prev</button>
-                    <span>Page {aplPage + 1} of {Math.ceil(aplAllProducts.length / APL_PAGE_SIZE)} ({aplAllProducts.length} SKUs)</span>
-                    <button onClick={() => setAplPage((p) => Math.min(Math.ceil(aplAllProducts.length / APL_PAGE_SIZE) - 1, p + 1))} disabled={aplPage >= Math.ceil(aplAllProducts.length / APL_PAGE_SIZE) - 1}
-                      className="px-3 py-1 rounded border border-border disabled:opacity-40 hover:text-foreground transition-colors">Next →</button>
-                  </div>
+                {isRepOrAdmin && (
+                  <p className="text-xs text-muted-foreground">Click DC cells to toggle listing · Click item # cells to edit inline</p>
                 )}
               </>
-            )}
-
-            {!aplLoading && aplLoaded && aplAllProducts.length > 0 && aplVisibleRetailers.length === 0 && !aplShowAll && (
-              <p className="text-sm text-muted-foreground">No authorized retailers. Toggle off the filter to see all retailers.</p>
-            )}
-
-            {!aplLoading && aplLoaded && isRepOrAdmin && aplAllProducts.length > 0 && (
-              <p className="text-xs text-muted-foreground">Click any cell to toggle authorization for that SKU × retailer.</p>
-            )}
-          </>
-        </div>
-      )}
-
-      {/* ─────────────── DC ASSORTMENT TAB ─────────────── */}
-      {activeTab === "dc" && (
-        <div className="space-y-4">
-          <>
-            {/* Sub-tabs + Add button */}
-            <div className="flex items-center gap-2">
-              <div className="flex gap-1 border-b border-border flex-1">
-                {(["UNFI", "KeHE"] as const).map((dist) => (
-                  <button key={dist} onClick={() => setDcSubTab(dist)}
-                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${dcSubTab === dist ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
-                    {dist}
-                  </button>
-                ))}
-              </div>
-              {isRepOrAdmin && !dcLoading && dcLoaded && (
-                <button
-                  onClick={() => { setDcAddOpen((v) => !v); setDcAddDistributor(dcSubTab); setDcAddCode(""); setDcAddCustomCode(""); setDcAddProductId(""); setDcAddSkuSearch(""); setDcAddError(""); }}
-                  className="px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
-                >
-                  + Add DC Listing
-                </button>
-              )}
-            </div>
-
-            {/* Add DC Listing form */}
-            {dcAddOpen && isRepOrAdmin && (
-              <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-                <div className="text-sm font-semibold text-foreground">Add DC Listing</div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">Distributor</label>
-                    <select value={dcAddDistributor} onChange={(e) => { setDcAddDistributor(e.target.value as "UNFI" | "KeHE"); setDcAddCode(""); }}
-                      className="rounded-lg px-3 py-2 text-sm w-full"
-                      style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}>
-                      <option value="UNFI">UNFI</option>
-                      <option value="KeHE">KeHE</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">DC Code</label>
-                    <select value={dcAddCode} onChange={(e) => setDcAddCode(e.target.value)}
-                      className="rounded-lg px-3 py-2 text-sm w-full"
-                      style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}>
-                      <option value="">— Select DC —</option>
-                      {(dcAddDistributor === "UNFI" ? unfiCodes : keheCodes).map((dc) => (
-                        <option key={dc.code} value={dc.code}>{dc.code} — {dc.name}</option>
-                      ))}
-                      <option value="__custom__">— Enter new code —</option>
-                    </select>
-                    {dcAddCode === "__custom__" && (
-                      <input type="text" placeholder="e.g. DEN" value={dcAddCustomCode}
-                        onChange={(e) => setDcAddCustomCode(e.target.value.toUpperCase())}
-                        className="rounded-lg px-3 py-2 text-sm w-full mt-1.5 font-mono"
-                        style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-                    )}
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">SKU</label>
-                    <input type="text" placeholder="Filter SKUs…" value={dcAddSkuSearch}
-                      onChange={(e) => setDcAddSkuSearch(e.target.value)}
-                      className="rounded-lg px-3 py-2 text-sm w-full mb-1.5"
-                      style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-                    <select value={dcAddProductId} onChange={(e) => setDcAddProductId(e.target.value)}
-                      className="rounded-lg px-3 py-2 text-sm w-full"
-                      style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}>
-                      <option value="">— Select SKU —</option>
-                      {dcAllProducts
-                        .filter((p) => !dcAddSkuSearch ||
-                          p.description.toLowerCase().includes(dcAddSkuSearch.toLowerCase()) ||
-                          (p.retail_upc ?? "").includes(dcAddSkuSearch))
-                        .map((p) => (
-                          <option key={p.id} value={p.id}>{(brandsById[p.brand_id]?.name ? `[${brandsById[p.brand_id].name}] ` : "")}{p.description}{p.retail_upc ? ` (${p.retail_upc})` : ""}</option>
-                        ))}
-                    </select>
-                  </div>
-                </div>
-                {dcAddError && <p className="text-xs text-red-600">{dcAddError}</p>}
-                <div className="flex gap-2">
-                  <button onClick={addDcListing} disabled={dcAddSaving}
-                    className="px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50"
-                    style={{ background: "var(--foreground)", color: "var(--background)" }}>
-                    {dcAddSaving ? "Saving…" : "Save"}
-                  </button>
-                  <button onClick={() => setDcAddOpen(false)} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
-                </div>
-              </div>
-            )}
-
-            {dcLoading && <p className="text-sm text-muted-foreground">Loading DC data…</p>}
-
-            {!dcLoading && dcLoaded && (() => {
-              const codes = dcSubTab === "UNFI" ? unfiCodes : keheCodes;
-              if (codes.length === 0) {
-                return <p className="text-sm text-muted-foreground">No {dcSubTab} DC listings found. Use &quot;+ Add DC Listing&quot; to add one.</p>;
-              }
-
-              const itemNumStyle = (bg: string, editable: boolean) => ({
-                padding: "6px 12px", color: "var(--muted-foreground)", fontFamily: "monospace",
-                borderLeft: "1px solid var(--border)", background: bg, whiteSpace: "nowrap" as const,
-                cursor: editable ? "text" : "default", minWidth: 110,
-              });
-
-              return (
-                <>
-                  <div className="text-sm text-muted-foreground">
-                    {dcAllProducts.length} SKU{dcAllProducts.length !== 1 ? "s" : ""} · {codes.length} {dcSubTab} DC{codes.length !== 1 ? "s" : ""}
-                    {isRepOrAdmin && <span className="ml-2 text-xs">· Click item # cells to edit inline</span>}
-                  </div>
-                  <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "72vh", borderRadius: "0.75rem", border: "1px solid var(--border)" }}>
-                    <table style={{ borderCollapse: "separate", borderSpacing: 0, fontSize: "0.75rem" }}>
-                      <thead>
-                        <tr style={{ background: "#1e3a4a" }}>
-                          <th style={{ ...mkHead(0, FROZEN_BRAND_W), padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>Brand</th>
-                          <th style={{ ...mkHead(FROZEN_DESC_LEFT, FROZEN_DESC_W), padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>Description</th>
-                          <th style={{ ...mkHead(FROZEN_UPC_LEFT, FROZEN_UPC_W, true), padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>UPC</th>
-                          <th style={{ position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a", padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left", whiteSpace: "nowrap", minWidth: 110, borderLeft: "1px solid rgba(255,255,255,0.1)" }}>
-                            {dcSubTab === "UNFI" ? "UNFI East #" : "KeHE Item #"}
-                          </th>
-                          {dcSubTab === "UNFI" && (
-                            <th style={{ position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a", padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left", whiteSpace: "nowrap", minWidth: 110, borderLeft: "1px solid rgba(255,255,255,0.1)" }}>
-                              UNFI West #
-                            </th>
-                          )}
-                          {codes.map((dc) => (
-                            <th key={dc.code} style={{
-                              position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a",
-                              writingMode: "vertical-rl", textOrientation: "mixed", transform: "rotate(180deg)",
-                              height: 110, width: 30, whiteSpace: "nowrap", textAlign: "left", verticalAlign: "bottom",
-                              padding: "8px 4px", fontWeight: 400, color: "rgba(255,255,255,0.75)", fontSize: "0.7rem",
-                              borderLeft: "1px solid rgba(255,255,255,0.08)",
-                            }}>
-                              {dc.code} — {dc.name}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {dcProducts.map((p, idx) => {
-                            const rowBg = idx % 2 === 0 ? "var(--card)" : "var(--secondary)";
-                            const brandName = brandsById[p.brand_id]?.name ?? "";
-
-                            const ItemNumCell = ({ field, value }: { field: "unfi_east_item" | "unfi_west_item" | "kehe_item"; value: string | null }) => {
-                              const isEditing = editItemNum?.productId === p.id && editItemNum?.field === field;
-                              if (isEditing) {
-                                return (
-                                  <td style={itemNumStyle(rowBg, true)}>
-                                    <input autoFocus type="text" value={editItemNumVal}
-                                      onChange={(e) => setEditItemNumVal(e.target.value)}
-                                      onBlur={() => saveItemNum(p.id, field, editItemNumVal)}
-                                      onKeyDown={(e) => { if (e.key === "Enter") saveItemNum(p.id, field, editItemNumVal); if (e.key === "Escape") setEditItemNum(null); }}
-                                      style={{ fontFamily: "monospace", fontSize: "0.75rem", background: "transparent", outline: "1px solid var(--border)", borderRadius: 3, padding: "1px 4px", width: "100%", color: "var(--foreground)" }} />
-                                  </td>
-                                );
-                              }
-                              return (
-                                <td style={itemNumStyle(rowBg, isRepOrAdmin)}
-                                  onClick={() => { if (!isRepOrAdmin) return; setEditItemNum({ productId: p.id, field }); setEditItemNumVal(value ?? ""); }}
-                                  title={isRepOrAdmin ? "Click to edit" : undefined}>
-                                  {value ?? <span style={{ color: "var(--muted-foreground)", opacity: 0.4 }}>—</span>}
-                                </td>
-                              );
-                            };
-
-                            return (
-                              <tr key={p.id} style={{ borderBottom: "1px solid var(--border)" }}>
-                                <td style={{ ...mkBody(0, FROZEN_BRAND_W, rowBg), padding: "6px 12px", color: "var(--muted-foreground)" }}>
-                                  <div style={{ maxWidth: FROZEN_BRAND_W - 16, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={brandName}>{brandName}</div>
-                                </td>
-                                <td style={{ ...mkBody(FROZEN_DESC_LEFT, FROZEN_DESC_W, rowBg), padding: "6px 12px", fontWeight: 500, color: "var(--foreground)" }}>
-                                  <div style={{ maxWidth: FROZEN_DESC_W - 24, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.description}>{p.description}</div>
-                                </td>
-                                <td style={{ ...mkBody(FROZEN_UPC_LEFT, FROZEN_UPC_W, rowBg, true), padding: "6px 12px", fontFamily: "monospace", color: "var(--muted-foreground)" }}>{p.retail_upc ?? "—"}</td>
-                                <ItemNumCell field={dcSubTab === "UNFI" ? "unfi_east_item" : "kehe_item"} value={dcSubTab === "UNFI" ? p.unfi_east_item : p.kehe_item} />
-                                {dcSubTab === "UNFI" && <ItemNumCell field="unfi_west_item" value={p.unfi_west_item} />}
-                                {codes.map((dc) => {
-                                  const key = `${p.id}|${dcSubTab}|${dc.code}`;
-                                  const isListed = dcListings.get(key) ?? false;
-                                  return (
-                                    <td key={dc.code} onClick={() => isRepOrAdmin && toggleDc(p.id, dcSubTab, dc.code)}
-                                      style={{ textAlign: "center", padding: "6px 4px", cursor: isRepOrAdmin ? "pointer" : "default", background: isListed ? "rgba(22,163,74,0.12)" : rowBg, borderLeft: "1px solid var(--border)", minWidth: 30, transition: "background 0.1s" }}
-                                      title={`${dc.code} — ${isListed ? "Listed" : "Not listed"}`}>
-                                      {isListed
-                                        ? <span style={{ color: "#16a34a", fontWeight: 700, fontSize: "0.85rem" }}>✓</span>
-                                        : <span style={{ color: "var(--muted-foreground)", fontSize: "0.7rem" }}>·</span>}
-                                    </td>
-                                  );
-                                })}
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                    {/* Pagination */}
-                    {dcAllProducts.length > DC_PAGE_SIZE && (
-                      <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                        <button onClick={() => setDcPage((p) => Math.max(0, p - 1))} disabled={dcPage === 0}
-                          className="px-3 py-1 rounded border border-border disabled:opacity-40 hover:text-foreground transition-colors">← Prev</button>
-                        <span>Page {dcPage + 1} of {Math.ceil(dcAllProducts.length / DC_PAGE_SIZE)} ({dcAllProducts.length} SKUs)</span>
-                        <button onClick={() => setDcPage((p) => Math.min(Math.ceil(dcAllProducts.length / DC_PAGE_SIZE) - 1, p + 1))} disabled={dcPage >= Math.ceil(dcAllProducts.length / DC_PAGE_SIZE) - 1}
-                          className="px-3 py-1 rounded border border-border disabled:opacity-40 hover:text-foreground transition-colors">Next →</button>
-                      </div>
-                    )}
-                    {isRepOrAdmin && (
-                      <p className="text-xs text-muted-foreground">Click DC cells to toggle listing · Click item # cells to edit inline</p>
-                    )}
-                  </>
-                );
-              })()}
-          </>
+            );
+          })()}
         </div>
       )}
     </div>

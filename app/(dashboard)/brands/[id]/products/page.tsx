@@ -35,7 +35,7 @@ type Product = {
 };
 
 type Brand = { id: string; name: string };
-type Retailer = { id: string; name: string };
+type Retailer = { id: string; name: string; banner: string | null };
 type DcCode = { code: string; name: string };
 
 type EditForm = {
@@ -140,7 +140,6 @@ export default function BrandProductsPage() {
 
   // Tab state
   const [activeTab, setActiveTab] = useState<"products" | "apl" | "dc">("products");
-  const [dcSubTab, setDcSubTab] = useState<"UNFI" | "KeHE">("UNFI");
 
   // APL state
   const [aplLoaded, setAplLoaded] = useState(false);
@@ -233,10 +232,18 @@ export default function BrandProductsPage() {
     if (aplLoaded || aplLoading) return;
     setAplLoading(true);
     const [retailersRes, authRes] = await Promise.all([
-      supabase.from("retailers").select("id,name").order("name"),
+      supabase.from("retailers").select("id,name,banner").order("name"),
       supabase.from("authorized_products").select("upc,retailer_id").eq("brand_id", brandId),
     ]);
-    setAplRetailers((retailersRes.data as Retailer[]) ?? []);
+    // Deduplicate retailers by banner (falling back to name)
+    const rawRetailers = (retailersRes.data as Retailer[]) ?? [];
+    const seenBanners = new Set<string>();
+    const dedupedRetailers: Retailer[] = [];
+    for (const r of rawRetailers) {
+      const key = r.banner ?? r.name;
+      if (!seenBanners.has(key)) { seenBanners.add(key); dedupedRetailers.push(r); }
+    }
+    setAplRetailers(dedupedRetailers);
     const authSet = new Set<string>();
     ((authRes.data ?? []) as { upc: string; retailer_id: string }[]).forEach((r) => {
       if (r.upc && r.retailer_id) authSet.add(`${r.upc}|${r.retailer_id}`);
@@ -862,7 +869,7 @@ export default function BrandProductsPage() {
                     style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}
                   >
                     <option value="">— Select retailer —</option>
-                    {aplRetailers.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                    {aplRetailers.map((r) => <option key={r.id} value={r.id}>{r.banner ?? r.name}</option>)}
                   </select>
                 </div>
                 <div>
@@ -945,7 +952,7 @@ export default function BrandProductsPage() {
                         fontSize: "0.7rem",
                         borderLeft: "1px solid rgba(255,255,255,0.08)",
                       }}>
-                        {r.name}
+                        {r.banner ?? r.name}
                       </th>
                     ))}
                   </tr>
@@ -980,7 +987,7 @@ export default function BrandProductsPage() {
                                 minWidth: 30,
                                 transition: "background 0.1s",
                               }}
-                              title={`${r.name} — ${isAuth ? "Authorized (click to remove)" : "Not authorized (click to add)"}`}
+                              title={`${r.banner ?? r.name} — ${isAuth ? "Authorized (click to remove)" : "Not authorized (click to add)"}`}
                             >
                               {isAuth
                                 ? <span style={{ color: "#16a34a", fontWeight: 700, fontSize: "0.85rem" }}>✓</span>
@@ -1005,30 +1012,17 @@ export default function BrandProductsPage() {
       {/* ─────────────── DC ASSORTMENT TAB ─────────────── */}
       {activeTab === "dc" && (
         <div className="space-y-4">
-          {/* Sub-tabs + Add button */}
-          <div className="flex items-center gap-2">
-            <div className="flex gap-1 border-b border-border flex-1">
-              {(["UNFI", "KeHE"] as const).map((dist) => (
-                <button
-                  key={dist}
-                  onClick={() => setDcSubTab(dist)}
-                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                    dcSubTab === dist ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {dist}
-                </button>
-              ))}
-            </div>
-            {isRepOrAdmin && dcLoaded && (
+          {/* Add button */}
+          {isRepOrAdmin && dcLoaded && (
+            <div className="flex justify-end">
               <button
-                onClick={() => { setDcAddOpen((v) => !v); setDcAddDistributor(dcSubTab); setDcAddCode(""); setDcAddCustomCode(""); setDcAddProductId(""); setDcAddSkuSearch(""); setDcAddError(""); }}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
+                onClick={() => { setDcAddOpen((v) => !v); setDcAddCode(""); setDcAddCustomCode(""); setDcAddProductId(""); setDcAddSkuSearch(""); setDcAddError(""); }}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:text-foreground transition-colors"
               >
                 + Add DC Listing
               </button>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Add DC Listing form */}
           {dcAddOpen && isRepOrAdmin && (
@@ -1113,99 +1107,73 @@ export default function BrandProductsPage() {
           {dcLoading && <p className="text-sm text-muted-foreground">Loading DC data…</p>}
 
           {dcLoaded && (() => {
-            const codes = dcSubTab === "UNFI" ? unfiCodes : keheCodes;
-            if (codes.length === 0) {
-              return <p className="text-sm text-muted-foreground">No {dcSubTab} DC listings found for this brand. Use &quot;+ Add DC Listing&quot; to add one.</p>;
+            const allDcCodes = [
+              ...keheCodes.map((dc) => ({ ...dc, distributor: "KeHE" as const })),
+              ...unfiCodes.map((dc) => ({ ...dc, distributor: "UNFI" as const })),
+            ];
+            if (allDcCodes.length === 0) {
+              return <p className="text-sm text-muted-foreground">No DC listings found for this brand. Use &quot;+ Add DC Listing&quot; to add one.</p>;
             }
 
             const itemNumStyle = (bg: string, editable: boolean) => ({
               padding: "6px 12px", color: "var(--muted-foreground)", fontFamily: "monospace",
               borderLeft: "1px solid var(--border)", background: bg, whiteSpace: "nowrap" as const,
-              cursor: editable ? "text" : "default",
-              minWidth: 100,
+              cursor: editable ? "text" : "default", minWidth: 100,
             });
 
             return (
               <>
                 <div className="text-sm text-muted-foreground">
-                  {dcProducts.length} SKU{dcProducts.length !== 1 ? "s" : ""} · {codes.length} {dcSubTab} DC{codes.length !== 1 ? "s" : ""}
+                  {dcProducts.length} SKU{dcProducts.length !== 1 ? "s" : ""} · {keheCodes.length} KeHE DC{keheCodes.length !== 1 ? "s" : ""} · {unfiCodes.length} UNFI DC{unfiCodes.length !== 1 ? "s" : ""}
                   {isRepOrAdmin && <span className="ml-2 text-xs">· Click item # cells to edit inline</span>}
                 </div>
                 <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "72vh", borderRadius: "0.75rem", border: "1px solid var(--border)" }}>
                   <table style={{ borderCollapse: "separate", borderSpacing: 0, fontSize: "0.75rem" }}>
                     <thead>
                       <tr style={{ background: "#1e3a4a" }}>
-                        <th style={{ ...stickyDescHead, padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>
-                          Description
-                        </th>
-                        <th style={{ ...stickyUpcHead, padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>
-                          UPC
-                        </th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a", padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left", whiteSpace: "nowrap", minWidth: 110, borderLeft: "1px solid rgba(255,255,255,0.1)" }}>
-                          {dcSubTab === "UNFI" ? "UNFI East #" : "KeHE Item #"}
-                        </th>
-                        {dcSubTab === "UNFI" && (
-                          <th style={{ position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a", padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left", whiteSpace: "nowrap", minWidth: 110, borderLeft: "1px solid rgba(255,255,255,0.1)" }}>
-                            UNFI West #
-                          </th>
-                        )}
-                        {codes.map((dc) => (
-                          <th key={dc.code} style={{
-                            position: "sticky", top: 0, zIndex: 1,
-                            background: "#1e3a4a",
-                            writingMode: "vertical-rl",
-                            textOrientation: "mixed",
-                            transform: "rotate(180deg)",
-                            height: 110, width: 30,
-                            whiteSpace: "nowrap",
-                            textAlign: "left",
-                            verticalAlign: "bottom",
-                            padding: "8px 4px",
-                            fontWeight: 400,
-                            color: "rgba(255,255,255,0.75)",
-                            fontSize: "0.7rem",
-                            borderLeft: "1px solid rgba(255,255,255,0.08)",
-                          }}>
-                            {dc.code} — {dc.name}
-                          </th>
-                        ))}
+                        <th style={{ ...stickyDescHead, padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>Description</th>
+                        <th style={{ ...stickyUpcHead, padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>UPC</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a", padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left", whiteSpace: "nowrap", minWidth: 100, borderLeft: "2px solid rgba(16,163,74,0.4)" }}>KeHE Item #</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a", padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left", whiteSpace: "nowrap", minWidth: 100, borderLeft: "1px solid rgba(255,255,255,0.1)" }}>UNFI East #</th>
+                        <th style={{ position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a", padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left", whiteSpace: "nowrap", minWidth: 100, borderLeft: "1px solid rgba(255,255,255,0.1)" }}>UNFI West #</th>
+                        {allDcCodes.map((dc, i) => {
+                          const isFirstUnfi = dc.distributor === "UNFI" && (i === 0 || allDcCodes[i - 1].distributor === "KeHE");
+                          return (
+                            <th key={`${dc.distributor}-${dc.code}`} style={{
+                              position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a",
+                              writingMode: "vertical-rl", textOrientation: "mixed", transform: "rotate(180deg)",
+                              height: 110, width: 30, whiteSpace: "nowrap", textAlign: "left", verticalAlign: "bottom",
+                              padding: "8px 4px", fontWeight: 400, fontSize: "0.7rem",
+                              color: dc.distributor === "KeHE" ? "rgba(134,239,172,0.85)" : "rgba(147,197,253,0.85)",
+                              borderLeft: isFirstUnfi ? "2px solid rgba(59,130,246,0.4)" : "1px solid rgba(255,255,255,0.08)",
+                            }}>
+                              {dc.code} — {dc.name}
+                            </th>
+                          );
+                        })}
                       </tr>
                     </thead>
                     <tbody>
                       {dcProducts.map((p, idx) => {
                         const rowBg = idx % 2 === 0 ? "var(--card)" : "var(--secondary)";
 
-                        // Helper: render an inline-editable item number cell
                         const ItemNumCell = ({ field, value }: { field: "unfi_east_item" | "unfi_west_item" | "kehe_item"; value: string | null }) => {
                           const isEditing = editItemNum?.productId === p.id && editItemNum?.field === field;
                           if (isEditing) {
                             return (
                               <td style={itemNumStyle(rowBg, true)}>
-                                <input
-                                  autoFocus
-                                  type="text"
-                                  value={editItemNumVal}
+                                <input autoFocus type="text" value={editItemNumVal}
                                   onChange={(e) => setEditItemNumVal(e.target.value)}
                                   onBlur={() => saveItemNum(p.id, field, editItemNumVal)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") saveItemNum(p.id, field, editItemNumVal);
-                                    if (e.key === "Escape") setEditItemNum(null);
-                                  }}
-                                  style={{ fontFamily: "monospace", fontSize: "0.75rem", background: "transparent", outline: "1px solid var(--border)", borderRadius: 3, padding: "1px 4px", width: "100%", color: "var(--foreground)" }}
-                                />
+                                  onKeyDown={(e) => { if (e.key === "Enter") saveItemNum(p.id, field, editItemNumVal); if (e.key === "Escape") setEditItemNum(null); }}
+                                  style={{ fontFamily: "monospace", fontSize: "0.75rem", background: "transparent", outline: "1px solid var(--border)", borderRadius: 3, padding: "1px 4px", width: "100%", color: "var(--foreground)" }} />
                               </td>
                             );
                           }
                           return (
-                            <td
-                              style={itemNumStyle(rowBg, isRepOrAdmin)}
-                              onClick={() => {
-                                if (!isRepOrAdmin) return;
-                                setEditItemNum({ productId: p.id, field });
-                                setEditItemNumVal(value ?? "");
-                              }}
-                              title={isRepOrAdmin ? "Click to edit" : undefined}
-                            >
+                            <td style={itemNumStyle(rowBg, isRepOrAdmin)}
+                              onClick={() => { if (!isRepOrAdmin) return; setEditItemNum({ productId: p.id, field }); setEditItemNumVal(value ?? ""); }}
+                              title={isRepOrAdmin ? "Click to edit" : undefined}>
                               {value ?? <span style={{ color: "var(--muted-foreground)", opacity: 0.4 }}>—</span>}
                             </td>
                           );
@@ -1214,39 +1182,21 @@ export default function BrandProductsPage() {
                         return (
                           <tr key={p.id} style={{ borderBottom: "1px solid var(--border)" }}>
                             <td style={{ ...stickyDescBody(rowBg), padding: "6px 12px", fontWeight: 500, color: "var(--foreground)" }}>
-                              <div style={{ maxWidth: FROZEN_DESC_W - 24, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.description}>
-                                {p.description}
-                              </div>
+                              <div style={{ maxWidth: FROZEN_DESC_W - 24, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.description}>{p.description}</div>
                             </td>
-                            <td style={{ ...stickyUpcBody(rowBg), padding: "6px 12px", fontFamily: "monospace", color: "var(--muted-foreground)" }}>
-                              {p.retail_upc ?? "—"}
-                            </td>
-                            <ItemNumCell
-                              field={dcSubTab === "UNFI" ? "unfi_east_item" : "kehe_item"}
-                              value={dcSubTab === "UNFI" ? p.unfi_east_item : p.kehe_item}
-                            />
-                            {dcSubTab === "UNFI" && (
-                              <ItemNumCell field="unfi_west_item" value={p.unfi_west_item} />
-                            )}
-                            {codes.map((dc) => {
-                              const key = `${p.id}|${dcSubTab}|${dc.code}`;
+                            <td style={{ ...stickyUpcBody(rowBg), padding: "6px 12px", fontFamily: "monospace", color: "var(--muted-foreground)" }}>{p.retail_upc ?? "—"}</td>
+                            <ItemNumCell field="kehe_item" value={p.kehe_item} />
+                            <ItemNumCell field="unfi_east_item" value={p.unfi_east_item} />
+                            <ItemNumCell field="unfi_west_item" value={p.unfi_west_item} />
+                            {allDcCodes.map((dc, i) => {
+                              const key = `${p.id}|${dc.distributor}|${dc.code}`;
                               const isListed = dcListings.get(key) ?? false;
-                              const canToggle = isRepOrAdmin;
+                              const isFirstUnfi = dc.distributor === "UNFI" && (i === 0 || allDcCodes[i - 1].distributor === "KeHE");
                               return (
-                                <td
-                                  key={dc.code}
-                                  onClick={() => canToggle && toggleDc(p.id, dcSubTab, dc.code)}
-                                  style={{
-                                    textAlign: "center",
-                                    padding: "6px 4px",
-                                    cursor: canToggle ? "pointer" : "default",
-                                    background: isListed ? "rgba(22,163,74,0.12)" : rowBg,
-                                    borderLeft: "1px solid var(--border)",
-                                    minWidth: 30,
-                                    transition: "background 0.1s",
-                                  }}
-                                  title={`${dc.code} (${dc.name}) — ${isListed ? "Listed (click to remove)" : "Not listed (click to add)"}`}
-                                >
+                                <td key={`${dc.distributor}-${dc.code}`}
+                                  onClick={() => isRepOrAdmin && toggleDc(p.id, dc.distributor, dc.code)}
+                                  style={{ textAlign: "center", padding: "6px 4px", cursor: isRepOrAdmin ? "pointer" : "default", background: isListed ? "rgba(22,163,74,0.12)" : rowBg, borderLeft: isFirstUnfi ? "2px solid rgba(59,130,246,0.2)" : "1px solid var(--border)", minWidth: 30, transition: "background 0.1s" }}
+                                  title={`[${dc.distributor}] ${dc.code} (${dc.name}) — ${isListed ? "Listed (click to remove)" : "Not listed (click to add)"}`}>
                                   {isListed
                                     ? <span style={{ color: "#16a34a", fontWeight: 700, fontSize: "0.85rem" }}>✓</span>
                                     : <span style={{ color: "var(--muted-foreground)", fontSize: "0.7rem" }}>·</span>}
