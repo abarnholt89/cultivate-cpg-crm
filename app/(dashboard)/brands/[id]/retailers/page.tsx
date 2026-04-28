@@ -370,6 +370,7 @@ export default function BrandRetailersPage() {
       const { data: retailerData, error: retailerError } = await supabase
         .from("retailers")
         .select("id,name,banner,channel,hq_region,store_count,team_owner,rep_owner_user_id")
+        .not("rep_owner_user_id", "is", null)
         .order("banner", { ascending: true });
 
       if (retailerError) {
