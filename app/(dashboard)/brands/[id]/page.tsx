@@ -591,7 +591,7 @@ export default function BrandDashboardPage() {
                   <div className="text-xs text-gray-500 mt-0.5">{statusLabel(row.account_status)}</div>
 
                   {/* attribution */}
-                  <div className="text-xs mt-1" style={{ color: isRecent ? "#0F6E56" : "#9ca3af" }}>
+                  <div className="text-xs font-medium mt-1" style={{ color: isRecent ? "#0F6E56" : "#9ca3af" }}>
                     {latestSender && latestAt
                       ? `Updated by ${latestSender} · ${relativeTime(latestAt)}`
                       : row.submitted_date
@@ -615,7 +615,7 @@ export default function BrandDashboardPage() {
 
                   {/* latest message preview */}
                   {msgInfo?.latest_body ? (
-                    <div className="text-xs text-gray-400 mt-1 truncate">
+                    <div className="text-xs font-medium text-gray-400 mt-1 truncate">
                       {msgInfo.latest_body.length > 80
                         ? msgInfo.latest_body.slice(0, 80) + "…"
                         : msgInfo.latest_body}
