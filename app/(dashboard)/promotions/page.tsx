@@ -219,19 +219,41 @@ function groupDistributorSupport(rows: PromotionRow[]): DistributorGroup[] {
   });
 }
 
+// Distributor values that should not be shown as sub-detail labels
+const JUNK_DISTRIBUTORS = new Set([
+  "TBD", "WHSE", "GMI", "Renaissance", "Winebow", "Chex", "Chex Finer Foods",
+  "Carmela Foods", "Fortune", "Rain Forest", "Rainforest", "Threshold",
+]);
+
+function isRealDistributor(d: string): boolean {
+  if (!d || JUNK_DISTRIBUTORS.has(d)) return false;
+  if (/^\d+$/.test(d.trim())) return false; // purely numeric = account number
+  return true;
+}
+
 function groupRetailerActivations(rows: PromotionRow[]): RetailerGroup[] {
   const retailerMap = new Map<string, RetailerGroup>();
   for (const row of rows) {
-    // Key on retailer_name only so rows with/without retailer_id merge into one card
-    const retailerKey = row.retailer_name || "Unknown Retailer";
+    // Key on retailer_id when present so all raw name variants (e.g. "Whole Foods Market",
+    // "Whole Foods (SoCal, NorCal, NE)") that share the same DB retailer merge into one card.
+    // Fall back to retailer_name for rows where retailer_id is null.
+    const retailerKey = row.retailer_id ?? row.retailer_name ?? "Unknown Retailer";
     if (!retailerMap.has(retailerKey)) {
-      retailerMap.set(retailerKey, { key: retailerKey, retailer_name: retailerKey, retailer_banner: row.retailer_banner ?? null, distributors: [], rows: [], brandGroups: [] });
+      // Use banner as the display name (clean DB name); fall back to retailer_name
+      const displayName = row.retailer_banner || row.retailer_name || "Unknown Retailer";
+      retailerMap.set(retailerKey, { key: retailerKey, retailer_name: displayName, retailer_banner: row.retailer_banner ?? null, distributors: [], rows: [], brandGroups: [] });
     }
     const rg = retailerMap.get(retailerKey)!;
     rg.rows.push(row);
-    // Use the first non-null banner we encounter
-    if (!rg.retailer_banner && row.retailer_banner) rg.retailer_banner = row.retailer_banner;
-    if (row.distributor && !rg.distributors.includes(row.distributor)) rg.distributors.push(row.distributor);
+    // Pick up the first non-null banner
+    if (!rg.retailer_banner && row.retailer_banner) {
+      rg.retailer_banner = row.retailer_banner;
+      rg.retailer_name = row.retailer_banner;
+    }
+    // Collect real distributor names only
+    if (row.distributor && isRealDistributor(row.distributor) && !rg.distributors.includes(row.distributor)) {
+      rg.distributors.push(row.distributor);
+    }
   }
   const retailerGroups = Array.from(retailerMap.values());
   for (const retailerGroup of retailerGroups) {
