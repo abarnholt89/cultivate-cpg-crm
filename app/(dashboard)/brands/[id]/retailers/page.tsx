@@ -43,6 +43,7 @@ type PipelineRow = {
   submitted_notes: string | null;
   notes: string | null;
   authorized_items_note: string | null;
+  universal_category: string | null;
 };
 
 type CategoryReviewRow = {
@@ -265,7 +266,7 @@ export default function BrandRetailersPage() {
 
   const [brand, setBrand] = useState<Brand | null>(null);
   const [retailers, setRetailers] = useState<Retailer[]>([]);
-  const [pipelineMap, setPipelineMap] = useState<Record<string, PipelineRow>>({});
+  const [pipelineMap, setPipelineMap] = useState<Record<string, PipelineRow[]>>({});
   const [calendarMap, setCalendarMap] = useState<Record<string, CategoryReviewRow[]>>({});
   const [authorizedMap, setAuthorizedMap] = useState<Record<string, AuthorizedRow>>({});
   const [inlineMessages, setInlineMessages] = useState<Record<string, { client: MessageRow[]; internal: MessageRow[] }>>({});
@@ -381,7 +382,7 @@ export default function BrandRetailersPage() {
 
       const { data: pipelineData, error: pipelineError } = await supabase
         .from("brand_retailer_timing")
-        .select("id,brand_id,retailer_id,account_status,schedule_mode,submitted_date,submitted_notes,notes,authorized_items_note")
+        .select("id,brand_id,retailer_id,account_status,schedule_mode,submitted_date,submitted_notes,notes,authorized_items_note,universal_category")
         .eq("brand_id", brandId);
 
       if (pipelineError) {
@@ -389,9 +390,10 @@ export default function BrandRetailersPage() {
         return;
       }
 
-      const nextPipelineMap: Record<string, PipelineRow> = {};
+      const nextPipelineMap: Record<string, PipelineRow[]> = {};
       (pipelineData ?? []).forEach((row: any) => {
-        nextPipelineMap[row.retailer_id] = {
+        if (!nextPipelineMap[row.retailer_id]) nextPipelineMap[row.retailer_id] = [];
+        nextPipelineMap[row.retailer_id].push({
           id: row.id,
           brand_id: row.brand_id,
           retailer_id: row.retailer_id,
@@ -401,7 +403,16 @@ export default function BrandRetailersPage() {
           submitted_notes: row.submitted_notes ?? null,
           notes: row.notes ?? null,
           authorized_items_note: row.authorized_items_note ?? null,
-        };
+          universal_category: row.universal_category ?? null,
+        });
+      });
+      // Sort: null/primary category first, then alphabetical
+      Object.keys(nextPipelineMap).forEach((rid) => {
+        nextPipelineMap[rid].sort((a, b) => {
+          if (!a.universal_category && b.universal_category) return -1;
+          if (a.universal_category && !b.universal_category) return 1;
+          return (a.universal_category ?? "").localeCompare(b.universal_category ?? "");
+        });
       });
       setPipelineMap(nextPipelineMap);
 
@@ -620,13 +631,26 @@ export default function BrandRetailersPage() {
       submitted_notes: null,
       notes: null,
       authorized_items_note: null,
+      universal_category: null,
     };
   }
 
+  // Update a field on the primary (first) row — used for authorized_items_note
   function updateLocal(retailerId: string, patch: Partial<PipelineRow>) {
     setPipelineMap((prev) => {
-      const current = prev[retailerId] ?? defaultPipelineRow(retailerId);
-      return { ...prev, [retailerId]: { ...current, ...patch } };
+      const rows = prev[retailerId] ?? [defaultPipelineRow(retailerId)];
+      return { ...prev, [retailerId]: rows.map((r, i) => i === 0 ? { ...r, ...patch } : r) };
+    });
+  }
+
+  // Update a specific row by id
+  function updateLocalRow(retailerId: string, rowId: string | undefined, patch: Partial<PipelineRow>) {
+    setPipelineMap((prev) => {
+      const rows = prev[retailerId] ?? [defaultPipelineRow(retailerId)];
+      return {
+        ...prev,
+        [retailerId]: rows.map((r) => r.id === rowId ? { ...r, ...patch } : r),
+      };
     });
   }
 
@@ -637,29 +661,75 @@ export default function BrandRetailersPage() {
     }));
   }
 
-  async function save(retailerId: string) {
-    const row = pipelineMap[retailerId] ?? defaultPipelineRow(retailerId);
+  // Save a single brand_retailer_timing row (account_status, submitted_date, etc.)
+  async function saveRow(retailerId: string, pRow: PipelineRow) {
     setStatus("Saving…");
 
-    const payload = {
-      brand_id: brandId,
-      retailer_id: retailerId,
-      account_status: row.account_status,
-      schedule_mode: row.schedule_mode,
-      submitted_date: row.submitted_date,
-      submitted_notes: row.submitted_notes,
-      notes: row.notes,
-      authorized_items_note: row.authorized_items_note,
-      last_activity_at: new Date().toISOString(),
-    };
+    // Also save authorized_items_note from the primary row whenever any row is saved
+    const primaryRow = (pipelineMap[retailerId] ?? [defaultPipelineRow(retailerId)])[0];
 
-    const { error } = await supabase
-      .from("brand_retailer_timing")
-      .upsert(payload, { onConflict: "brand_id,retailer_id" });
+    if (pRow.id) {
+      const { error } = await supabase
+        .from("brand_retailer_timing")
+        .update({
+          account_status: pRow.account_status,
+          schedule_mode: pRow.schedule_mode,
+          submitted_date: pRow.submitted_date,
+          submitted_notes: pRow.submitted_notes,
+          notes: pRow.notes,
+          authorized_items_note: pRow.id === primaryRow.id ? primaryRow.authorized_items_note : undefined,
+          last_activity_at: new Date().toISOString(),
+        })
+        .eq("id", pRow.id);
+      if (error) { setStatus(error.message); return; }
+    } else {
+      const { data: inserted, error } = await supabase
+        .from("brand_retailer_timing")
+        .upsert({
+          brand_id: brandId,
+          retailer_id: retailerId,
+          account_status: pRow.account_status,
+          schedule_mode: pRow.schedule_mode,
+          submitted_date: pRow.submitted_date,
+          submitted_notes: pRow.submitted_notes,
+          notes: pRow.notes,
+          authorized_items_note: pRow.authorized_items_note,
+          universal_category: pRow.universal_category,
+          last_activity_at: new Date().toISOString(),
+        }, { onConflict: "brand_id,retailer_id,universal_category" })
+        .select("id")
+        .single();
+      if (error) { setStatus(error.message); return; }
+      if (inserted?.id) {
+        setPipelineMap((prev) => {
+          const rows = prev[retailerId] ?? [];
+          return {
+            ...prev,
+            [retailerId]: rows.map((r) =>
+              r.id === undefined && r.universal_category === pRow.universal_category
+                ? { ...r, id: inserted.id }
+                : r
+            ),
+          };
+        });
+      }
+    }
 
-    if (error) {
-      setStatus(error.message);
-      return;
+    setStatus("Saved ✅");
+  }
+
+  // Save authorized_items_note + date overrides + manual reviews (non-pipeline fields)
+  async function save(retailerId: string) {
+    setStatus("Saving…");
+
+    // Save authorized_items_note on the primary row
+    const primaryRow = (pipelineMap[retailerId] ?? [defaultPipelineRow(retailerId)])[0];
+    if (primaryRow.id) {
+      const { error } = await supabase
+        .from("brand_retailer_timing")
+        .update({ authorized_items_note: primaryRow.authorized_items_note })
+        .eq("id", primaryRow.id);
+      if (error) { setStatus(error.message); return; }
     }
 
     // Save any pending date overrides for this retailer's category review rows
@@ -1136,30 +1206,35 @@ export default function BrandRetailersPage() {
     const q = query.trim().toLowerCase();
 
     function matchesFilter(r: Retailer): boolean {
-      const row = pipelineMap[r.id] ?? defaultPipelineRow(r.id);
+      const rows = pipelineMap[r.id] ?? [defaultPipelineRow(r.id)];
+      const primaryRow = rows[0];
       const calendarRows = calendarMap[r.id] ?? [];
       const nextReview = calendarRows.find((entry) => !!entry.review_date);
 
       if (selectedFilter === "all") return true;
+
       if (selectedFilter === "in_motion") {
-  return (
-    row.account_status === "open_review" ||
-    row.account_status === "under_review" ||
-    row.account_status === "waiting_for_retailer_to_publish_review"
-  );
-}
+        return rows.some(
+          (row) =>
+            row.account_status === "open_review" ||
+            row.account_status === "under_review" ||
+            row.account_status === "waiting_for_retailer_to_publish_review"
+        );
+      }
 
       if (selectedFilter === "upcoming") {
         return (
-          row.schedule_mode === "scheduled" &&
-          !row.submitted_date &&
+          primaryRow.schedule_mode === "scheduled" &&
+          !primaryRow.submitted_date &&
           !!nextReview?.review_date &&
           isBetweenInclusive(nextReview.review_date, t, next30)
         );
       }
 
       if (selectedFilter === "submitted_recent") {
-        return !!row.submitted_date && isBetweenInclusive(row.submitted_date, prev30, t);
+        return rows.some(
+          (row) => !!row.submitted_date && isBetweenInclusive(row.submitted_date, prev30, t)
+        );
       }
 
       if (selectedFilter === "authorized") {
@@ -1177,7 +1252,7 @@ export default function BrandRetailersPage() {
         selectedFilter === "working_to_secure_anchor_account" ||
         selectedFilter === "upcoming_review"
       ) {
-        return row.account_status === selectedFilter;
+        return rows.some((row) => row.account_status === selectedFilter);
       }
 
       return true;
@@ -1287,7 +1362,9 @@ export default function BrandRetailersPage() {
       ) : (
         <div className="space-y-4">
           {filteredRetailers.map((r) => {
-            const row = pipelineMap[r.id] ?? defaultPipelineRow(r.id);
+            const pipelineRows = pipelineMap[r.id] ?? [defaultPipelineRow(r.id)];
+            const row = pipelineRows[0]; // primary row — used for header badge, border, legacy fields
+            const isMultiCategory = pipelineRows.length > 1;
             const headline = r.banner?.trim() ? r.banner : r.name;
             const allReviewRows = calendarMap[r.id] ?? [];
             const reviewRows = allReviewRows.filter(
@@ -1392,30 +1469,72 @@ export default function BrandRetailersPage() {
                   </div>
                 </div>
 
-                {/* Account status dropdown (rep/admin only) */}
+                {/* Account status — one section per category row (rep/admin only) */}
                 {isRepOrAdmin && (
-                  <div>
-                    <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Change Account Status</div>
-                    <select
-                      className="border rounded-lg px-3 py-2 w-full text-sm"
-                      style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
-                      value={row.account_status}
-                      onChange={(e) =>
-                        updateLocal(r.id, {
-                          account_status: e.target.value as AccountStatus,
-                        })
-                      }
-                    >
-                      <option value="active_account">Active Account</option>
-                      <option value="open_review">In Progress</option>
-                      <option value="under_review">Under Review</option>
-                      <option value="working_to_secure_anchor_account">Distributor Required</option>
-                      <option value="waiting_for_retailer_to_publish_review">Waiting for Retailer to Publish Review</option>
-                      <option value="upcoming_review">Upcoming Review</option>
-                      <option value="cultivate_does_not_rep">Not Managed by Cultivate</option>
-                      <option value="not_a_target_account">Not a Target</option>
-                      <option value="retailer_declined">Retailer Declined</option>
-                    </select>
+                  <div className="space-y-3">
+                    {pipelineRows.map((pRow) => (
+                      <div
+                        key={pRow.id ?? `default-${r.id}-${pRow.universal_category ?? "none"}`}
+                        className="rounded-lg p-3 space-y-3"
+                        style={{ border: "1px solid var(--border)", background: "var(--card)" }}
+                      >
+                        {isMultiCategory && (
+                          <div className="text-xs font-semibold" style={{ color: "var(--foreground)" }}>
+                            {pRow.universal_category ?? "Primary"}
+                          </div>
+                        )}
+                        <div>
+                          <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Account Status</div>
+                          <select
+                            className="border rounded-lg px-3 py-2 w-full text-sm"
+                            style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                            value={pRow.account_status}
+                            onChange={(e) => updateLocalRow(r.id, pRow.id, { account_status: e.target.value as AccountStatus })}
+                          >
+                            <option value="active_account">Active Account</option>
+                            <option value="open_review">In Progress</option>
+                            <option value="under_review">Under Review</option>
+                            <option value="working_to_secure_anchor_account">Distributor Required</option>
+                            <option value="waiting_for_retailer_to_publish_review">Waiting for Retailer to Publish Review</option>
+                            <option value="upcoming_review">Upcoming Review</option>
+                            <option value="cultivate_does_not_rep">Not Managed by Cultivate</option>
+                            <option value="not_a_target_account">Not a Target</option>
+                            <option value="retailer_declined">Retailer Declined</option>
+                          </select>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div>
+                            <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Submitted Date</div>
+                            <input
+                              type="date"
+                              className="border rounded-lg px-3 py-2 w-full text-sm"
+                              style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                              value={pRow.submitted_date ?? ""}
+                              onChange={(e) => updateLocalRow(r.id, pRow.id, { submitted_date: e.target.value || null })}
+                            />
+                          </div>
+                          <div>
+                            <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Submitted Notes</div>
+                            <input
+                              className="border rounded-lg px-3 py-2 w-full text-sm"
+                              style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                              value={pRow.submitted_notes ?? ""}
+                              onChange={(e) => updateLocalRow(r.id, pRow.id, { submitted_notes: e.target.value || null })}
+                              placeholder="Optional"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex justify-end">
+                          <button
+                            className="px-3 py-1.5 rounded-lg text-sm font-medium"
+                            style={{ background: "var(--foreground)", color: "var(--background)" }}
+                            onClick={() => saveRow(r.id, pRow)}
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
 
@@ -2101,58 +2220,6 @@ export default function BrandRetailersPage() {
                   </div>
                 </div>
 
-                {/* Submission tracking (rep/admin only) */}
-                {isRepOrAdmin && (
-                  <div
-                    className="rounded-lg p-3"
-                    style={{ border: "1px solid var(--border)" }}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <label className="text-sm font-medium flex items-center gap-2" style={{ color: "var(--foreground)" }}>
-                        <input
-                          type="checkbox"
-                          checked={!!row.submitted_date}
-                          onChange={(e) =>
-                            updateLocal(r.id, {
-                              submitted_date: e.target.checked ? todayISO() : null,
-                            })
-                          }
-                        />
-                        Submitted to retailer
-                      </label>
-                      <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>
-                        {row.submitted_date ? `Date: ${prettyDate(row.submitted_date)}` : "Not submitted"}
-                      </div>
-                    </div>
-
-                    <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div>
-                        <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Submitted Date</div>
-                        <input
-                          type="date"
-                          className="border rounded-lg px-3 py-2 w-full text-sm"
-                          style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
-                          value={row.submitted_date ?? ""}
-                          onChange={(e) =>
-                            updateLocal(r.id, { submitted_date: e.target.value || null })
-                          }
-                        />
-                      </div>
-                      <div>
-                        <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Submitted Notes</div>
-                        <input
-                          className="border rounded-lg px-3 py-2 w-full text-sm"
-                          style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
-                          value={row.submitted_notes ?? ""}
-                          onChange={(e) =>
-                            updateLocal(r.id, { submitted_notes: e.target.value || null })
-                          }
-                          placeholder="Optional"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
 
                 {hasLegacyNotes ? (
                   <div>
@@ -2162,7 +2229,7 @@ export default function BrandRetailersPage() {
                       style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
                       rows={3}
                       value={row.notes ?? ""}
-                      onChange={(e) => updateLocal(r.id, { notes: e.target.value || null })}
+                      onChange={(e) => updateLocalRow(r.id, row.id, { notes: e.target.value || null })}
                     />
                   </div>
                 ) : null}
@@ -2173,7 +2240,7 @@ export default function BrandRetailersPage() {
                     style={{ background: "var(--foreground)", color: "var(--background)" }}
                     onClick={() => save(r.id)}
                   >
-                    Save Changes
+                    Save Calendar Changes
                   </button>
                 ) : null}
 
