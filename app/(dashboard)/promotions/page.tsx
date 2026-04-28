@@ -222,19 +222,22 @@ function groupDistributorSupport(rows: PromotionRow[]): DistributorGroup[] {
 function groupRetailerActivations(rows: PromotionRow[]): RetailerGroup[] {
   const retailerMap = new Map<string, RetailerGroup>();
   for (const row of rows) {
-    const retailerKey = [row.retailer_name || "Unknown Retailer", row.retailer_banner || ""].join("||");
+    // Key on retailer_name only so rows with/without retailer_id merge into one card
+    const retailerKey = row.retailer_name || "Unknown Retailer";
     if (!retailerMap.has(retailerKey)) {
-      retailerMap.set(retailerKey, { key: retailerKey, retailer_name: row.retailer_name || "Unknown Retailer", retailer_banner: row.retailer_banner, distributors: [], rows: [], brandGroups: [] });
+      retailerMap.set(retailerKey, { key: retailerKey, retailer_name: retailerKey, retailer_banner: row.retailer_banner ?? null, distributors: [], rows: [], brandGroups: [] });
     }
     const rg = retailerMap.get(retailerKey)!;
     rg.rows.push(row);
+    // Use the first non-null banner we encounter
+    if (!rg.retailer_banner && row.retailer_banner) rg.retailer_banner = row.retailer_banner;
     if (row.distributor && !rg.distributors.includes(row.distributor)) rg.distributors.push(row.distributor);
   }
   const retailerGroups = Array.from(retailerMap.values());
   for (const retailerGroup of retailerGroups) {
     const brandMap = new Map<string, RetailerBrandGroup>();
     for (const row of retailerGroup.rows) {
-      const brandKey = `${retailerGroup.key}||${row.brand_id}`;
+      const brandKey = `${retailerGroup.key}||${row.brand_name || row.brand_id || "unknown"}`;
       if (!brandMap.has(brandKey)) {
         brandMap.set(brandKey, { key: brandKey, brand_id: row.brand_id, brand_name: row.brand_name, rows: [], promoGroups: [] });
       }
