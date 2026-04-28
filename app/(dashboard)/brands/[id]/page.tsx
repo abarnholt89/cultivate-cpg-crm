@@ -61,6 +61,7 @@ type MsgSummary = {
   count: number;
   latest_at: string | null;
   latest_sender: string | null;
+  latest_body: string | null;
 };
 
 // ─── helpers ───────────────────────────────────────────────────────────────
@@ -195,7 +196,7 @@ export default function BrandDashboardPage() {
             .eq("brand_id", brandId),
           supabase
             .from("brand_retailer_messages")
-            .select("id,retailer_id,created_at,sender_name,visibility")
+            .select("id,retailer_id,created_at,sender_name,visibility,body")
             .eq("brand_id", brandId)
             .eq("visibility", "client")
             .order("created_at", { ascending: false }),
@@ -219,6 +220,7 @@ export default function BrandDashboardPage() {
         created_at: string;
         sender_name: string | null;
         visibility: string;
+        body: string | null;
       }[];
 
       setPipelineRows(nextPipelineRows);
@@ -250,13 +252,14 @@ export default function BrandDashboardPage() {
       const byRetailer: Record<string, MsgSummary> = {};
       allMsgs.forEach((m) => {
         if (!byRetailer[m.retailer_id]) {
-          byRetailer[m.retailer_id] = { count: 0, latest_at: null, latest_sender: null };
+          byRetailer[m.retailer_id] = { count: 0, latest_at: null, latest_sender: null, latest_body: null };
         }
         byRetailer[m.retailer_id].count += 1;
         // messages are already ordered newest-first, so first one encountered is latest
         if (!byRetailer[m.retailer_id].latest_at) {
           byRetailer[m.retailer_id].latest_at = m.created_at;
           byRetailer[m.retailer_id].latest_sender = m.sender_name;
+          byRetailer[m.retailer_id].latest_body = m.body ?? null;
         }
       });
       setMessagesByRetailer(byRetailer);
@@ -609,6 +612,15 @@ export default function BrandDashboardPage() {
                     </span>
                     <span className="text-xs underline text-gray-500">Open retailer →</span>
                   </div>
+
+                  {/* latest message preview */}
+                  {msgInfo?.latest_body ? (
+                    <div className="text-xs text-gray-400 mt-1 truncate">
+                      {msgInfo.latest_body.length > 80
+                        ? msgInfo.latest_body.slice(0, 80) + "…"
+                        : msgInfo.latest_body}
+                    </div>
+                  ) : null}
                 </Link>
               );
             })}
