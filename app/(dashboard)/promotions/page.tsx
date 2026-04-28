@@ -71,7 +71,7 @@ type RetailerGroup = {
   key: string;
   retailer_name: string;
   retailer_banner: string | null;
-  distributor: string | null;
+  distributors: string[];
   rows: PromotionRow[];
   brandGroups: RetailerBrandGroup[];
 };
@@ -222,11 +222,13 @@ function groupDistributorSupport(rows: PromotionRow[]): DistributorGroup[] {
 function groupRetailerActivations(rows: PromotionRow[]): RetailerGroup[] {
   const retailerMap = new Map<string, RetailerGroup>();
   for (const row of rows) {
-    const retailerKey = [row.retailer_name || "Unknown Retailer", row.retailer_banner || "", row.distributor || ""].join("||");
+    const retailerKey = [row.retailer_name || "Unknown Retailer", row.retailer_banner || ""].join("||");
     if (!retailerMap.has(retailerKey)) {
-      retailerMap.set(retailerKey, { key: retailerKey, retailer_name: row.retailer_name || "Unknown Retailer", retailer_banner: row.retailer_banner, distributor: row.distributor, rows: [], brandGroups: [] });
+      retailerMap.set(retailerKey, { key: retailerKey, retailer_name: row.retailer_name || "Unknown Retailer", retailer_banner: row.retailer_banner, distributors: [], rows: [], brandGroups: [] });
     }
-    retailerMap.get(retailerKey)!.rows.push(row);
+    const rg = retailerMap.get(retailerKey)!;
+    rg.rows.push(row);
+    if (row.distributor && !rg.distributors.includes(row.distributor)) rg.distributors.push(row.distributor);
   }
   const retailerGroups = Array.from(retailerMap.values());
   for (const retailerGroup of retailerGroups) {
@@ -562,7 +564,7 @@ export default function PromotionsPage() {
       return (
         <React.Fragment key={group.key}>
           <tr className="border-b cursor-pointer hover:bg-gray-50" onClick={() => setExpandedRetailers((prev) => ({ ...prev, [group.key]: !prev[group.key] }))}>
-            <td className="px-4 py-3"><div className="font-medium">{group.retailer_banner || group.retailer_name}</div>{group.distributor ? <div className="text-xs text-gray-500">{group.distributor}</div> : null}</td>
+            <td className="px-4 py-3"><div className="font-medium">{group.retailer_banner || group.retailer_name}</div>{group.distributors.length > 0 ? <div className="text-xs text-gray-500">{group.distributors.join(" · ")}</div> : null}</td>
             <td className="px-4 py-3"><div className="font-medium">{promoCount} Promotion{promoCount === 1 ? "" : "s"}</div><div className="text-xs text-gray-500">{skuCount} SKU{skuCount === 1 ? "" : "s"} total</div></td>
             <td className="px-4 py-3"><div className="font-medium">{brandCount} Brand{brandCount === 1 ? "" : "s"}</div><div className="text-xs text-gray-500">Click to view brands on deal</div></td>
             <td className="px-4 py-3">—</td><td className="px-4 py-3">—</td><td className="px-4 py-3">—</td><td className="px-4 py-3">—</td><td className="px-4 py-3">—</td>
@@ -754,9 +756,11 @@ export default function PromotionsPage() {
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Status</label>
                 <select value={bulkForm.promo_status} onChange={(e) => setBulkForm((f) => ({ ...f, promo_status: e.target.value }))} className={inputCls} style={inputStyle}>
-                  <option value="confirmed">Confirmed</option>
                   <option value="planned">Planned</option>
                   <option value="submitted">Submitted</option>
+                  <option value="approved">Approved</option>
+                  <option value="live">Live</option>
+                  <option value="completed">Completed</option>
                   <option value="cancelled">Cancelled</option>
                 </select>
               </div>
@@ -891,6 +895,7 @@ export default function PromotionsPage() {
               {groupRetailerActivations(drillRows).map((rg) => (
                 <div key={rg.key} className="border border-border rounded-lg p-3 text-sm">
                   <div className="font-medium text-foreground">{rg.retailer_banner || rg.retailer_name}</div>
+                  {rg.distributors.length > 0 && <div className="text-xs text-muted-foreground">{rg.distributors.join(" · ")}</div>}
                   <div className="text-xs text-muted-foreground mt-1">{uniqueSkuCount(rg.rows)} SKU{uniqueSkuCount(rg.rows) !== 1 ? "s" : ""} on deal</div>
                   {rg.brandGroups.flatMap((bg) => bg.promoGroups).map((pg) => (
                     <div key={pg.key} className="mt-2 text-xs text-muted-foreground border-t border-border pt-2">

@@ -447,7 +447,8 @@ export default function EditPromotionPage() {
               <option value="submitted">submitted</option>
               <option value="approved">approved</option>
               <option value="live">live</option>
-              <option value="complete">complete</option>
+              <option value="completed">completed</option>
+              <option value="cancelled">cancelled</option>
             </select>
           </div>
 
