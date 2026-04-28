@@ -300,6 +300,9 @@ export default function BrandRetailersPage() {
   const [manualMenuOpen, setManualMenuOpen] = useState<string | null>(null);
   const [manualEditingId, setManualEditingId] = useState<string | null>(null);
   const [manualEditDraft, setManualEditDraft] = useState<ManualReviewRow | null>(null);
+  // Per-row "More" toggle (submitted date/notes)
+  const [rowMoreOpen, setRowMoreOpen] = useState<Record<string, boolean>>({});
+
   // SKU modal state
   const [skuModal, setSkuModal] = useState<{ retailerId: string; retailerName: string } | null>(null);
   const [skuModalItems, setSkuModalItems] = useState<{ sku_description: string; upc: string }[]>([]);
@@ -1469,24 +1472,27 @@ export default function BrandRetailersPage() {
                   </div>
                 </div>
 
-                {/* Account status — one section per category row (rep/admin only) */}
+                {/* Account status — compact horizontal grid, one cell per category */}
                 {isRepOrAdmin && (
-                  <div className="space-y-3">
-                    {pipelineRows.map((pRow) => (
-                      <div
-                        key={pRow.id ?? `default-${r.id}-${pRow.universal_category ?? "none"}`}
-                        className="rounded-lg p-3 space-y-3"
-                        style={{ border: "1px solid var(--border)", background: "var(--card)" }}
-                      >
-                        {isMultiCategory && (
-                          <div className="text-xs font-semibold" style={{ color: "var(--foreground)" }}>
-                            {pRow.universal_category ?? "Primary"}
-                          </div>
-                        )}
-                        <div>
-                          <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Account Status</div>
+                  <div className={`grid gap-2 ${pipelineRows.length === 1 ? "grid-cols-1" : pipelineRows.length === 2 ? "grid-cols-2" : "grid-cols-2 md:grid-cols-3"}`}>
+                    {pipelineRows.map((pRow) => {
+                      const pRowKey = pRow.id ?? `default-${r.id}-${pRow.universal_category ?? "none"}`;
+                      const moreOpen = rowMoreOpen[pRowKey] ?? false;
+                      return (
+                        <div
+                          key={pRowKey}
+                          className="rounded-lg p-2.5 space-y-2"
+                          style={{ border: "1px solid var(--border)", background: "var(--muted)" }}
+                        >
+                          {isMultiCategory ? (
+                            <div className="text-xs font-semibold truncate" style={{ color: "var(--foreground)" }}>
+                              {pRow.universal_category ?? "Primary"}
+                            </div>
+                          ) : (
+                            <div className="text-xs" style={{ color: "var(--muted-foreground)" }}>Account Status</div>
+                          )}
                           <select
-                            className="border rounded-lg px-3 py-2 w-full text-sm"
+                            className="border rounded px-2 py-1 w-full text-xs"
                             style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
                             value={pRow.account_status}
                             onChange={(e) => updateLocalRow(r.id, pRow.id, { account_status: e.target.value as AccountStatus })}
@@ -1495,46 +1501,57 @@ export default function BrandRetailersPage() {
                             <option value="open_review">In Progress</option>
                             <option value="under_review">Under Review</option>
                             <option value="working_to_secure_anchor_account">Distributor Required</option>
-                            <option value="waiting_for_retailer_to_publish_review">Waiting for Retailer to Publish Review</option>
+                            <option value="waiting_for_retailer_to_publish_review">Waiting for Retailer</option>
                             <option value="upcoming_review">Upcoming Review</option>
                             <option value="cultivate_does_not_rep">Not Managed by Cultivate</option>
                             <option value="not_a_target_account">Not a Target</option>
                             <option value="retailer_declined">Retailer Declined</option>
                           </select>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          <div>
-                            <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Submitted Date</div>
-                            <input
-                              type="date"
-                              className="border rounded-lg px-3 py-2 w-full text-sm"
-                              style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
-                              value={pRow.submitted_date ?? ""}
-                              onChange={(e) => updateLocalRow(r.id, pRow.id, { submitted_date: e.target.value || null })}
-                            />
+
+                          {moreOpen && (
+                            <div className="space-y-1.5 pt-0.5">
+                              <div>
+                                <div className="text-xs mb-0.5" style={{ color: "var(--muted-foreground)" }}>Submitted Date</div>
+                                <input
+                                  type="date"
+                                  className="border rounded px-2 py-1 w-full text-xs"
+                                  style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                                  value={pRow.submitted_date ?? ""}
+                                  onChange={(e) => updateLocalRow(r.id, pRow.id, { submitted_date: e.target.value || null })}
+                                />
+                              </div>
+                              <div>
+                                <div className="text-xs mb-0.5" style={{ color: "var(--muted-foreground)" }}>Submitted Notes</div>
+                                <input
+                                  className="border rounded px-2 py-1 w-full text-xs"
+                                  style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                                  value={pRow.submitted_notes ?? ""}
+                                  onChange={(e) => updateLocalRow(r.id, pRow.id, { submitted_notes: e.target.value || null })}
+                                  placeholder="Optional"
+                                />
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="flex items-center justify-between gap-1 pt-0.5">
+                            <button
+                              className="text-xs"
+                              style={{ color: "var(--muted-foreground)" }}
+                              onClick={() => setRowMoreOpen((prev) => ({ ...prev, [pRowKey]: !moreOpen }))}
+                            >
+                              {moreOpen ? "▴ Less" : "▾ More"}
+                            </button>
+                            <button
+                              className="px-2.5 py-1 rounded text-xs font-medium"
+                              style={{ background: "var(--foreground)", color: "var(--background)" }}
+                              onClick={() => saveRow(r.id, pRow)}
+                            >
+                              Save
+                            </button>
                           </div>
-                          <div>
-                            <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Submitted Notes</div>
-                            <input
-                              className="border rounded-lg px-3 py-2 w-full text-sm"
-                              style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
-                              value={pRow.submitted_notes ?? ""}
-                              onChange={(e) => updateLocalRow(r.id, pRow.id, { submitted_notes: e.target.value || null })}
-                              placeholder="Optional"
-                            />
-                          </div>
                         </div>
-                        <div className="flex justify-end">
-                          <button
-                            className="px-3 py-1.5 rounded-lg text-sm font-medium"
-                            style={{ background: "var(--foreground)", color: "var(--background)" }}
-                            onClick={() => saveRow(r.id, pRow)}
-                          >
-                            Save
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 
