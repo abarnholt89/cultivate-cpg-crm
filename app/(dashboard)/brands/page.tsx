@@ -3,15 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
-import StatusBadge from "@/components/StatusBadge";
-
 type Brand = { id: string; name: string };
 type Role = "admin" | "rep" | "client" | null;
 
 type TimingSummary = {
-  retailerCount: number;
   lastActivity: string | null;
-  topStatus: string | null; // most "active" status across retailers
 };
 
 function initials(name: string) {
@@ -23,25 +19,6 @@ function initials(name: string) {
     .join("");
 }
 
-// Rough priority order for "top status" display — lower index = higher priority to surface
-const STATUS_PRIORITY = [
-  "open_review",
-  "under_review",
-  "waiting_for_retailer_to_publish_review",
-  "upcoming_review",
-  "working_to_secure_anchor_account",
-  "active_account",
-  "retailer_declined",
-  "not_a_target_account",
-  "cultivate_does_not_rep",
-];
-
-function topStatus(statuses: string[]): string | null {
-  for (const s of STATUS_PRIORITY) {
-    if (statuses.includes(s)) return s;
-  }
-  return statuses[0] ?? null;
-}
 
 function prettyDate(value: string | null) {
   if (!value) return null;
@@ -114,31 +91,20 @@ export default function BrandsPage() {
       const brandIds = loadedBrands.map((b) => b.id);
       const { data: timingData } = await supabase
         .from("brand_retailer_timing")
-        .select("brand_id, account_status, submitted_date")
+        .select("brand_id, submitted_date")
         .in("brand_id", brandIds);
 
       const summaries: Record<string, TimingSummary> = {};
       (timingData ?? []).forEach((row: any) => {
         if (!summaries[row.brand_id]) {
-          summaries[row.brand_id] = { retailerCount: 0, lastActivity: null, topStatus: null };
+          summaries[row.brand_id] = { lastActivity: null };
         }
         const s = summaries[row.brand_id];
-        s.retailerCount += 1;
         if (row.submitted_date) {
           if (!s.lastActivity || row.submitted_date > s.lastActivity) {
             s.lastActivity = row.submitted_date;
           }
         }
-      });
-
-      // Compute topStatus per brand
-      const statusesByBrand: Record<string, string[]> = {};
-      (timingData ?? []).forEach((row: any) => {
-        if (!statusesByBrand[row.brand_id]) statusesByBrand[row.brand_id] = [];
-        statusesByBrand[row.brand_id].push(row.account_status);
-      });
-      Object.entries(statusesByBrand).forEach(([brandId, statuses]) => {
-        if (summaries[brandId]) summaries[brandId].topStatus = topStatus(statuses);
       });
 
       setTimingByBrand(summaries);
@@ -226,22 +192,12 @@ export default function BrandsPage() {
                     <span className="truncate text-base font-semibold text-foreground">
                       {b.name}
                     </span>
-                    {summary?.topStatus && (
-                      <StatusBadge status={summary.topStatus} />
-                    )}
                   </div>
-                  <div className="mt-1 flex items-center gap-3 text-sm text-muted-foreground flex-wrap">
-                    {summary ? (
-                      <>
-                        <span>{summary.retailerCount} retailer{summary.retailerCount !== 1 ? "s" : ""}</span>
-                        {lastActivityStr && (
-                          <span>Last activity: {lastActivityStr}</span>
-                        )}
-                      </>
-                    ) : (
-                      <span>Open brand record</span>
-                    )}
-                  </div>
+                  {lastActivityStr && (
+                    <div className="mt-1 text-sm text-muted-foreground">
+                      Last activity: {lastActivityStr}
+                    </div>
+                  )}
                 </div>
 
                 <div className="ml-2 text-sm font-medium text-muted-foreground transition-colors group-hover:text-foreground shrink-0">
