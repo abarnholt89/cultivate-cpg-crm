@@ -907,44 +907,34 @@ export default function BrandRetailersPage() {
     setSkuModalLoading(true);
     setSkuModalItems([]);
 
-    console.log(`[openSkuModal] brandId=${brandId} brand.name="${brand?.name}" retailerId=${retailerId}`);
+    const brandName = brand?.name ?? "";
 
-    // Fetch authorized SKUs for this brand+retailer directly
-    // Also match legacy rows where brand_id is null but client_name matches
-    const { data: authData, error: authError } = await supabase
-      .from("authorized_products")
-      .select("upc")
-      .or(`brand_id.eq.${brandId},client_name.ilike.%${brand?.name ?? ""}%`)
-      .eq("retailer_id", retailerId)
-      .order("upc");
+    // Two separate queries to avoid PostgREST .or() issues with ilike percent signs:
+    // Query 1: rows with brand_id set; Query 2: legacy rows with brand_id null matched by client_name
+    const [byIdRes, byNameRes, bpRes] = await Promise.all([
+      supabase.from("authorized_products").select("upc").eq("brand_id", brandId).eq("retailer_id", retailerId),
+      supabase.from("authorized_products").select("upc").is("brand_id", null).ilike("client_name", `%${brandName}%`).eq("retailer_id", retailerId),
+      supabase.from("brand_products").select("id,description,retail_upc").eq("brand_id", brandId).order("description"),
+    ]);
 
-    console.log(`[openSkuModal] authorized_products rows: ${authData?.length ?? 0} | error: ${authError?.message ?? "none"}`);
-    console.log(`[openSkuModal] first 3 auth rows:`, (authData ?? []).slice(0, 3));
+    // Merge and deduplicate by UPC
+    const seenUpcs = new Set<string>();
+    const mergedUpcs: { upc: string }[] = [];
+    for (const r of [...(byIdRes.data ?? []), ...(byNameRes.data ?? [])] as { upc: string }[]) {
+      if (r.upc && !seenUpcs.has(r.upc)) { seenUpcs.add(r.upc); mergedUpcs.push(r); }
+    }
+    mergedUpcs.sort((a, b) => a.upc.localeCompare(b.upc));
 
-    // Fetch full brand catalog for edit-mode checklist (no status filter)
-    const { data: bpData, error: bpError } = await supabase
-      .from("brand_products")
-      .select("id,description,retail_upc")
-      .eq("brand_id", brandId)
-      .order("description");
+    const bpData = (bpRes.data ?? []) as { id: string; description: string; retail_upc: string | null }[];
 
-    console.log(`[openSkuModal] brand_products rows: ${bpData?.length ?? 0} | error: ${bpError?.message ?? "none"}`);
-    console.log(`[openSkuModal] first 3 brand_products:`, (bpData ?? []).slice(0, 3));
-
-    // Join UPCs from authorized_products with descriptions from brand_products
+    // Join descriptions from brand_products by UPC
     const bpByUpc: Record<string, string> = {};
-    ((bpData ?? []) as { id: string; description: string; retail_upc: string | null }[]).forEach((p) => {
-      if (p.retail_upc) bpByUpc[p.retail_upc] = p.description;
-    });
+    bpData.forEach((p) => { if (p.retail_upc) bpByUpc[p.retail_upc] = p.description; });
 
-    const items = (authData ?? []).map((r: { upc: string }) => ({
-      sku_description: bpByUpc[r.upc] ?? r.upc,
-      upc: r.upc,
-    }));
-    console.log(`[openSkuModal] final skuModalItems (${items.length}):`, items.slice(0, 3));
-
-    setAllBrandProducts((bpData ?? []) as { id: string; description: string; retail_upc: string | null }[]);
-    setSkuModalItems(items);
+    setAllBrandProducts(bpData);
+    setSkuModalItems(
+      mergedUpcs.map((r) => ({ sku_description: bpByUpc[r.upc] ?? r.upc, upc: r.upc }))
+    );
     setSkuModalLoading(false);
   }
 

@@ -231,10 +231,11 @@ export default function BrandProductsPage() {
   async function loadApl() {
     if (aplLoaded || aplLoading) return;
     setAplLoading(true);
-    const [retailersRes, authRes] = await Promise.all([
+    const brandName = brand?.name ?? "";
+    const [retailersRes, byIdRes, byNameRes] = await Promise.all([
       supabase.from("retailers").select("id,name,banner").order("name"),
-      supabase.from("authorized_products").select("upc,retailer_id")
-        .or(`brand_id.eq.${brandId},client_name.ilike.%${brand?.name ?? ""}%`),
+      supabase.from("authorized_products").select("upc,retailer_id").eq("brand_id", brandId),
+      supabase.from("authorized_products").select("upc,retailer_id").is("brand_id", null).ilike("client_name", `%${brandName}%`),
     ]);
     // Deduplicate retailers by banner (falling back to name)
     const rawRetailers = (retailersRes.data as Retailer[]) ?? [];
@@ -245,12 +246,14 @@ export default function BrandProductsPage() {
       if (!seenBanners.has(key)) { seenBanners.add(key); dedupedRetailers.push(r); }
     }
     setAplRetailers(dedupedRetailers);
+    // Merge both result sets, deduplicate by upc|retailer_id
     const authSet = new Set<string>();
-    ((authRes.data ?? []) as { upc: string; retailer_id: string }[]).forEach((r) => {
-      if (r.upc && r.retailer_id) authSet.add(`${r.upc}|${r.retailer_id}`);
-    });
-    console.log("[loadApl] brand page — auth set size:", authSet.size, "| first 5 keys:", [...authSet].slice(0, 5));
-    console.log("[loadApl] raw auth rows returned:", authRes.data?.length ?? 0, "| retailers loaded:", dedupedRetailers.length);
+    const seen = new Set<string>();
+    for (const r of [...(byIdRes.data ?? []), ...(byNameRes.data ?? [])] as { upc: string; retailer_id: string }[]) {
+      if (!r.upc || !r.retailer_id) continue;
+      const k = `${r.upc}|${r.retailer_id}`;
+      if (!seen.has(k)) { seen.add(k); authSet.add(k); }
+    }
     setAplAuthorized(authSet);
     setAplLoaded(true);
     setAplLoading(false);
