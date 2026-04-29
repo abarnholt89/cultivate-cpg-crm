@@ -253,7 +253,6 @@ export default function ProductsLibraryPage() {
       const { data } = await supabase
         .from("authorized_products")
         .select("upc,retailer_id")
-        .not("brand_id", "is", null)
         .range(from, from + CHUNK - 1);
       if (!data || data.length === 0) break;
       (data as { upc: string; retailer_id: string }[]).forEach((r) => {

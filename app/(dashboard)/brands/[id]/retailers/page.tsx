@@ -908,12 +908,13 @@ export default function BrandRetailersPage() {
     setSkuModalItems([]);
 
     // Fetch authorized SKUs for this brand+retailer directly
+    // Also match legacy rows where brand_id is null but client_name matches
     const { data: authData } = await supabase
       .from("authorized_products")
-      .select("sku_description,upc")
-      .eq("brand_id", brandId)
+      .select("upc")
+      .or(`brand_id.eq.${brandId},client_name.ilike.%${brand?.name ?? ""}%`)
       .eq("retailer_id", retailerId)
-      .order("sku_description");
+      .order("upc");
 
     // Fetch full brand catalog for edit-mode checklist (no status filter)
     const { data: bpData } = await supabase
@@ -922,8 +923,19 @@ export default function BrandRetailersPage() {
       .eq("brand_id", brandId)
       .order("description");
 
+    // Join UPCs from authorized_products with descriptions from brand_products
+    const bpByUpc: Record<string, string> = {};
+    ((bpData ?? []) as { id: string; description: string; retail_upc: string | null }[]).forEach((p) => {
+      if (p.retail_upc) bpByUpc[p.retail_upc] = p.description;
+    });
+
     setAllBrandProducts((bpData ?? []) as { id: string; description: string; retail_upc: string | null }[]);
-    setSkuModalItems((authData ?? []) as { sku_description: string; upc: string }[]);
+    setSkuModalItems(
+      (authData ?? []).map((r: { upc: string }) => ({
+        sku_description: bpByUpc[r.upc] ?? r.upc,
+        upc: r.upc,
+      }))
+    );
     setSkuModalLoading(false);
   }
 

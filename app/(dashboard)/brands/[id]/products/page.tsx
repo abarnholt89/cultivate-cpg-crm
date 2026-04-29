@@ -233,7 +233,8 @@ export default function BrandProductsPage() {
     setAplLoading(true);
     const [retailersRes, authRes] = await Promise.all([
       supabase.from("retailers").select("id,name,banner").order("name"),
-      supabase.from("authorized_products").select("upc,retailer_id").eq("brand_id", brandId),
+      supabase.from("authorized_products").select("upc,retailer_id")
+        .or(`brand_id.eq.${brandId},client_name.ilike.%${brand?.name ?? ""}%`),
     ]);
     // Deduplicate retailers by banner (falling back to name)
     const rawRetailers = (retailersRes.data as Retailer[]) ?? [];
