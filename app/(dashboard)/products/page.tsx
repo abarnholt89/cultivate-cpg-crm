@@ -249,18 +249,26 @@ export default function ProductsLibraryPage() {
 
     const authSet = new Set<string>();
     let from = 0;
+    let totalFetched = 0;
+    let firstBatch: any[] = [];
     while (true) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("authorized_products")
         .select("upc,retailer_id")
         .range(from, from + CHUNK - 1);
+      console.log(`[loadApl] page ${from}-${from + CHUNK - 1}: rows=${data?.length ?? 0} error=${error?.message ?? "none"}`);
       if (!data || data.length === 0) break;
+      if (from === 0) firstBatch = data.slice(0, 3);
+      totalFetched += data.length;
       (data as { upc: string; retailer_id: string }[]).forEach((r) => {
         if (r.upc && r.retailer_id) authSet.add(`${r.upc}|${r.retailer_id}`);
       });
       if (data.length < CHUNK) break;
       from += CHUNK;
     }
+    console.log(`[loadApl] TOTAL rows fetched: ${totalFetched} | auth set size: ${authSet.size}`);
+    console.log(`[loadApl] first 3 rows:`, firstBatch);
+    console.log(`[loadApl] sample auth keys:`, [...authSet].slice(0, 5));
     setAplAuthorized(authSet);
     setAplLoaded(true);
     setAplLoading(false);

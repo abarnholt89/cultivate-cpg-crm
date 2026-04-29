@@ -907,21 +907,29 @@ export default function BrandRetailersPage() {
     setSkuModalLoading(true);
     setSkuModalItems([]);
 
+    console.log(`[openSkuModal] brandId=${brandId} brand.name="${brand?.name}" retailerId=${retailerId}`);
+
     // Fetch authorized SKUs for this brand+retailer directly
     // Also match legacy rows where brand_id is null but client_name matches
-    const { data: authData } = await supabase
+    const { data: authData, error: authError } = await supabase
       .from("authorized_products")
       .select("upc")
       .or(`brand_id.eq.${brandId},client_name.ilike.%${brand?.name ?? ""}%`)
       .eq("retailer_id", retailerId)
       .order("upc");
 
+    console.log(`[openSkuModal] authorized_products rows: ${authData?.length ?? 0} | error: ${authError?.message ?? "none"}`);
+    console.log(`[openSkuModal] first 3 auth rows:`, (authData ?? []).slice(0, 3));
+
     // Fetch full brand catalog for edit-mode checklist (no status filter)
-    const { data: bpData } = await supabase
+    const { data: bpData, error: bpError } = await supabase
       .from("brand_products")
       .select("id,description,retail_upc")
       .eq("brand_id", brandId)
       .order("description");
+
+    console.log(`[openSkuModal] brand_products rows: ${bpData?.length ?? 0} | error: ${bpError?.message ?? "none"}`);
+    console.log(`[openSkuModal] first 3 brand_products:`, (bpData ?? []).slice(0, 3));
 
     // Join UPCs from authorized_products with descriptions from brand_products
     const bpByUpc: Record<string, string> = {};
@@ -929,13 +937,14 @@ export default function BrandRetailersPage() {
       if (p.retail_upc) bpByUpc[p.retail_upc] = p.description;
     });
 
+    const items = (authData ?? []).map((r: { upc: string }) => ({
+      sku_description: bpByUpc[r.upc] ?? r.upc,
+      upc: r.upc,
+    }));
+    console.log(`[openSkuModal] final skuModalItems (${items.length}):`, items.slice(0, 3));
+
     setAllBrandProducts((bpData ?? []) as { id: string; description: string; retail_upc: string | null }[]);
-    setSkuModalItems(
-      (authData ?? []).map((r: { upc: string }) => ({
-        sku_description: bpByUpc[r.upc] ?? r.upc,
-        upc: r.upc,
-      }))
-    );
+    setSkuModalItems(items);
     setSkuModalLoading(false);
   }
 
