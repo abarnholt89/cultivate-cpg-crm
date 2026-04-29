@@ -36,6 +36,7 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
 }
 
 const INSERT = process.argv.includes("--insert");
+const INSERTS_ONLY = process.argv.includes("--inserts-only");
 
 // ── Step 0 ────────────────────────────────────────────────────────────────────
 
@@ -58,7 +59,7 @@ const CATEGORY_MAP = {
   "Baked by Sticky":        "Pastries & Desserts",
   "Blue Mountain Pecans":   "Deli Cheese",
   "Bonfire Burritos":       "Frozen Breakfast",
-  "Bunky Popcorn":          "Popcorn & Puffs",
+  "Bunky Protein Popcorn":  "Popcorn & Puffs",
   "Cooler Co":              "RTD Coffee & Tea",
   "Cravings by Chrissy":    "Baking Mixes & Ingredients",
   "Dean & Peeler":          "Packaged Deli Meals",
@@ -175,6 +176,38 @@ if (misses.length) {
   console.log(`\nUnmatched brand names (${misses.length}): ${misses.join(", ")}`);
 }
 
+// ── Load brand_category_access for all matched brands ─────────────────────────
+
+const matchedBrandIds = [...brandCategories.keys()];
+let categoryAccessRows = [];
+if (matchedBrandIds.length > 0) {
+  const { data: caData, error: caErr } = await supabase
+    .from("brand_category_access")
+    .select("brand_id,universal_category")
+    .in("brand_id", matchedBrandIds);
+  if (caErr) { console.error("brand_category_access fetch:", caErr.message); process.exit(1); }
+  categoryAccessRows = caData ?? [];
+}
+
+// Build map: brandId → Set of all categories from brand_category_access
+const categoryAccessByBrand = new Map();
+for (const row of categoryAccessRows) {
+  if (!categoryAccessByBrand.has(row.brand_id)) categoryAccessByBrand.set(row.brand_id, new Set());
+  categoryAccessByBrand.get(row.brand_id).add(row.universal_category);
+}
+
+// Merge CATEGORY_MAP extras + brand_category_access extras into brandCategories
+for (const [brandId, entry] of brandCategories) {
+  const primary = entry.cats[0];
+  const mapExtras = entry.cats.slice(1);
+  const accessCats = categoryAccessByBrand.get(brandId) ?? new Set();
+  // All extras: union of map extras + access extras, excluding primary
+  const allExtras = [
+    ...new Set([...mapExtras, ...[...accessCats].filter((c) => c !== primary)]),
+  ];
+  entry.cats = [primary, ...allExtras];
+}
+
 // ── Plan: updates + inserts ───────────────────────────────────────────────────
 
 // Group timing rows by brand_id
@@ -182,6 +215,14 @@ const timingByBrand = new Map();
 for (const row of allTiming) {
   if (!timingByBrand.has(row.brand_id)) timingByBrand.set(row.brand_id, []);
   timingByBrand.get(row.brand_id).push(row);
+}
+
+// Index existing timing rows by brand_id+retailer_id+universal_category to avoid duplicates
+const existingCombos = new Set();
+for (const row of allTiming) {
+  if (row.universal_category) {
+    existingCombos.add(`${row.brand_id}||${row.retailer_id}||${row.universal_category}`);
+  }
 }
 
 const updates = []; // { id, universal_category }
@@ -201,9 +242,15 @@ for (const [brandId, { brandName, cats }] of brandCategories) {
     updates.push({ id: row.id, universal_category: primary });
   }
 
-  // INSERT new rows for each extra category, one per existing retailer_id
+  // INSERT new rows for each extra category, one per existing retailer_id (skip existing combos)
   for (const extraCat of extras) {
+    // Deduplicate by retailer_id — one insert per retailer, not per timing row
+    const seenRetailers = new Set();
     for (const row of timingRows) {
+      if (seenRetailers.has(row.retailer_id)) continue;
+      seenRetailers.add(row.retailer_id);
+      const comboKey = `${brandId}||${row.retailer_id}||${extraCat}`;
+      if (existingCombos.has(comboKey)) continue; // already exists
       inserts.push({
         brand_id: brandId,
         retailer_id: row.retailer_id,
@@ -229,7 +276,7 @@ console.log("\nPer-brand breakdown:");
 for (const [brandId, { brandName, cats }] of brandCategories) {
   const rows = timingByBrand.get(brandId) ?? [];
   const [primary, ...extras] = cats;
-  const extraInserts = extras.length * rows.length;
+  const extraInserts = inserts.filter((r) => r.brand_id === brandId).length;
   console.log(`  "${brandName}": ${rows.length} rows → UPDATE to "${primary}"${extras.length ? ` + INSERT ${extraInserts} rows for [${extras.join(", ")}]` : ""}`);
 }
 
@@ -243,7 +290,7 @@ if (!colExists) {
   console.log("\n⚠ Column universal_category does not exist yet — run the ALTER TABLE SQL above first.");
 }
 
-if (!INSERT) {
+if (!INSERT && !INSERTS_ONLY) {
   console.log("\n[DRY RUN] Pass --insert to apply these changes.\n");
   process.exit(0);
 }
@@ -255,25 +302,30 @@ if (!colExists) {
 
 // ── Execute ───────────────────────────────────────────────────────────────────
 
-console.log(`\nUpdating ${updates.length} rows…`);
 const BATCH = 50;
-let updatedCount = 0;
-let updateErrors = 0;
 
-for (let i = 0; i < updates.length; i += BATCH) {
-  const batch = updates.slice(i, i + BATCH);
-  const results = await Promise.all(
-    batch.map(({ id, universal_category }) =>
-      supabase.from("brand_retailer_timing").update({ universal_category }).eq("id", id)
-    )
-  );
-  for (const { error } of results) {
-    if (error) { console.error("  Update error:", error.message); updateErrors++; }
-    else updatedCount++;
+if (!INSERTS_ONLY) {
+  console.log(`\nUpdating ${updates.length} rows…`);
+  let updatedCount = 0;
+  let updateErrors = 0;
+
+  for (let i = 0; i < updates.length; i += BATCH) {
+    const batch = updates.slice(i, i + BATCH);
+    const results = await Promise.all(
+      batch.map(({ id, universal_category }) =>
+        supabase.from("brand_retailer_timing").update({ universal_category }).eq("id", id)
+      )
+    );
+    for (const { error } of results) {
+      if (error) { console.error("  Update error:", error.message); updateErrors++; }
+      else updatedCount++;
+    }
+    process.stdout.write(`\r  Updated ${updatedCount} / ${updates.length}…`);
   }
-  process.stdout.write(`\r  Updated ${updatedCount} / ${updates.length}…`);
+  console.log(`\n  Done. Updated: ${updatedCount}, Errors: ${updateErrors}`);
+} else {
+  console.log("\n[Skipping UPDATEs — --inserts-only flag set]");
 }
-console.log(`\n  Done. Updated: ${updatedCount}, Errors: ${updateErrors}`);
 
 if (inserts.length > 0) {
   console.log(`\nInserting ${inserts.length} extra-category rows…`);
