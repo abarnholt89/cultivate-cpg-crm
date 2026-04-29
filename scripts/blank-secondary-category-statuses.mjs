@@ -135,7 +135,7 @@ for (const row of allTiming) {
   if (!row.universal_category) continue; // null category = primary row, skip
   if (row.universal_category === primary) continue; // is primary category, skip
   // It's a secondary category row
-  if (row.account_status && row.account_status !== "") {
+  if (row.account_status !== "" && row.account_status !== null) {
     toBlank.push(row.id);
   }
 }
@@ -154,7 +154,7 @@ for (let i = 0; i < toBlank.length; i += BATCH) {
   const batch = toBlank.slice(i, i + BATCH);
   const { error } = await supabase
     .from("brand_retailer_timing")
-    .update({ account_status: null })
+    .update({ account_status: "" })
     .in("id", batch);
   if (error) { console.error("  Update error:", error.message); }
   else { updated += batch.length; }
