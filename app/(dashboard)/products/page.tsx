@@ -230,6 +230,7 @@ export default function ProductsLibraryPage() {
   }
 
   async function loadApl() {
+    console.log("[loadApl] called — aplLoaded:", aplLoaded, "aplLoading:", aplLoading);
     if (aplLoaded || aplLoading) return;
     setAplLoading(true);
     // Fetch retailers + ALL authorized_products (paginated)
@@ -245,22 +246,40 @@ export default function ProductsLibraryPage() {
       const key = r.banner ?? r.name;
       if (!seenBanners.has(key)) { seenBanners.add(key); dedupedRetailers.push(r); }
     }
+    console.log("[loadApl] rawRetailers:", rawRetailers.length, "→ deduped:", dedupedRetailers.length);
+    console.log("[loadApl] first 3 deduped retailers:", dedupedRetailers.slice(0, 3).map(r => ({ id: r.id, banner: r.banner, name: r.name })));
     setAplRetailers(dedupedRetailers);
 
     const authSet = new Set<string>();
     let from = 0;
+    let totalAuthRows = 0;
+    let sampleAuthRows: any[] = [];
     while (true) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("authorized_products")
         .select("upc,retailer_id")
         .range(from, from + CHUNK - 1);
+      console.log(`[loadApl] auth fetch page ${from}: rows=${data?.length ?? 0} error=${error?.message ?? "none"}`);
       if (!data || data.length === 0) break;
+      if (from === 0) sampleAuthRows = data.slice(0, 5);
+      totalAuthRows += data.length;
       (data as { upc: string; retailer_id: string }[]).forEach((r) => {
         if (r.upc && r.retailer_id) authSet.add(`${r.upc}|${r.retailer_id}`);
       });
       if (data.length < CHUNK) break;
       from += CHUNK;
     }
+    console.log("[loadApl] total auth rows:", totalAuthRows, "| auth set size:", authSet.size);
+    console.log("[loadApl] first 5 auth rows from DB:", sampleAuthRows);
+    console.log("[loadApl] first 5 auth SET keys:", [...authSet].slice(0, 5));
+
+    // Cross-check: do any auth retailer_ids match deduped retailer ids?
+    const dedupedIds = new Set(dedupedRetailers.map(r => r.id));
+    const authRetailerIds = new Set(sampleAuthRows.map((r: any) => r.retailer_id));
+    console.log("[loadApl] sample auth retailer_ids:", [...authRetailerIds]);
+    console.log("[loadApl] any sample auth retailer_id in deduped list?",
+      [...authRetailerIds].some(id => dedupedIds.has(id)));
+
     setAplAuthorized(authSet);
     setAplLoaded(true);
     setAplLoading(false);
@@ -868,6 +887,12 @@ export default function ProductsLibraryPage() {
                   {aplProducts.map((p, idx) => {
                     const rowBg = idx % 2 === 0 ? "var(--card)" : "var(--secondary)";
                     const brandName = brandsById[p.brand_id]?.name ?? "";
+                    if (idx === 0 && aplVisibleRetailers.length > 0) {
+                      const sampleKey = `${p.retail_upc}|${aplVisibleRetailers[0].id}`;
+                      console.log("[APL grid] first cell key:", sampleKey, "| in authSet?", aplAuthorized.has(sampleKey));
+                      console.log("[APL grid] product retail_upc:", p.retail_upc, "| retailer id:", aplVisibleRetailers[0].id, "banner:", aplVisibleRetailers[0].banner);
+                      console.log("[APL grid] auth set size:", aplAuthorized.size);
+                    }
                     return (
                       <tr key={p.id} style={{ borderBottom: "1px solid var(--border)" }}>
                         <td style={{ ...mkBody(0, FROZEN_BRAND_W, rowBg), padding: "6px 12px", color: "var(--muted-foreground)" }}>
