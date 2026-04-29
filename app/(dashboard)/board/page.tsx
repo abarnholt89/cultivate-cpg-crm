@@ -67,27 +67,21 @@ const MANAGER_MAP: Record<string, string[]> = {
 };
 
 const STATUS_OPTIONS = [
-  { value: "upcoming_review", label: "Upcoming Review" },
-  { value: "waiting_for_retailer_to_publish_review", label: "Waiting for Retailer to Publish Review" },
-  { value: "under_review", label: "Under Review" },
-  { value: "active_account", label: "Active Account" },
-  { value: "working_to_secure_anchor_account", label: "Distributor Required" },
-  { value: "not_a_target_account", label: "Not a Target" },
-  { value: "cultivate_does_not_rep", label: "Not Managed by Cultivate" },
+  { value: "", label: "— No Status —" },
+  { value: "awaiting_submission_opportunity", label: "Awaiting Submission Opportunity" },
+  { value: "in_process", label: "In Process" },
   { value: "retailer_declined", label: "Retailer Declined" },
+  { value: "not_a_target_account", label: "Not a Target Account" },
+  { value: "working_to_secure_anchor_account", label: "Distributor Required" },
 ];
 
 function statusLeftBorderColor(status: string | undefined): string {
   switch (status) {
-    case "active_account":       return "#14b8a6"; // teal
-    case "upcoming_review":
-    case "open_review":
-    case "waiting_for_retailer_to_publish_review": return "#f59e0b"; // amber
-    case "under_review":
-    case "working_to_secure_anchor_account": return "#3b82f6"; // blue
+    case "awaiting_submission_opportunity": return "#f59e0b"; // amber
+    case "in_process":           return "#3b82f6"; // blue
     case "retailer_declined":    return "#f43f5e"; // rose
     case "not_a_target_account":
-    case "cultivate_does_not_rep": return "#94a3b8"; // slate
+    case "working_to_secure_anchor_account": return "#94a3b8"; // slate
     default:                     return "#e2e8f0"; // light gray
   }
 }

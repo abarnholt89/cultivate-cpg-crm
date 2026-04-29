@@ -5,7 +5,6 @@ import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 import { logActivity } from "@/lib/logActivity";
-import StatusBadge from "@/components/StatusBadge";
 
 type Brand = { id: string; name: string; message_notifications_enabled: boolean };
 
@@ -23,14 +22,18 @@ type Retailer = {
 type Role = "admin" | "rep" | "client" | null;
 
 type AccountStatus =
-  | "active_account"
-  | "cultivate_does_not_rep"
+  | ""
+  | "awaiting_submission_opportunity"
+  | "in_process"
   | "not_a_target_account"
   | "retailer_declined"
+  | "working_to_secure_anchor_account"
+  // legacy values (kept for rows not yet migrated)
+  | "active_account"
+  | "cultivate_does_not_rep"
   | "waiting_for_retailer_to_publish_review"
   | "under_review"
   | "open_review"
-  | "working_to_secure_anchor_account"
   | "upcoming_review";
 
 type PipelineRow = {
@@ -109,6 +112,16 @@ type RetailerTask = {
   assigned_profile: { full_name: string | null } | null;
 };
 
+type SubmissionRow = {
+  id: string;
+  brand_id: string;
+  retailer_id: string;
+  category: string | null;
+  submitted_at: string;
+  notes: string | null;
+  created_by: string | null;
+};
+
 function rowKey(
   retailerName: string,
   universalCategory: string,
@@ -164,26 +177,19 @@ function timeAgo(iso: string): string {
 
 function accountStatusLabel(status: AccountStatus | undefined) {
   switch (status) {
-    case "active_account":
-      return "Active Account";
-    case "open_review":
-      return "In Progress";
-    case "under_review":
-      return "Under Review";
-    case "upcoming_review":
-      return "Upcoming Review";
-    case "waiting_for_retailer_to_publish_review":
-      return "Waiting for Retailer to Publish Review";
-    case "working_to_secure_anchor_account":
-      return "Distributor Required";
-    case "not_a_target_account":
-      return "Not a Target";
-    case "cultivate_does_not_rep":
-      return "Not Managed by Cultivate";
-    case "retailer_declined":
-      return "Retailer Declined";
-    default:
-      return "Upcoming Review";
+    case "awaiting_submission_opportunity": return "Awaiting Submission Opportunity";
+    case "in_process":                     return "In Process";
+    case "retailer_declined":              return "Retailer Declined";
+    case "not_a_target_account":           return "Not a Target Account";
+    case "working_to_secure_anchor_account": return "Distributor Required";
+    // legacy
+    case "active_account":                 return "Active Account";
+    case "open_review":                    return "In Progress";
+    case "under_review":                   return "Under Review";
+    case "upcoming_review":                return "Upcoming Review";
+    case "waiting_for_retailer_to_publish_review": return "Awaiting Retailer Decision";
+    case "cultivate_does_not_rep":         return "Not Managed by Cultivate";
+    default:                               return "";
   }
 }
 
@@ -216,12 +222,15 @@ function workedBadgeStyle(workedAt: string | null): { bg: string; fg: string } {
 
 function statusLeftBorderColor(status: string | undefined): string {
   switch (status) {
+    case "awaiting_submission_opportunity":
+    // legacy
     case "active_account":
-      return "#14b8a6"; // teal
     case "upcoming_review":
-    case "open_review":
     case "waiting_for_retailer_to_publish_review":
       return "#f59e0b"; // amber
+    case "in_process":
+    // legacy
+    case "open_review":
     case "under_review":
     case "working_to_secure_anchor_account":
       return "#3b82f6"; // blue
@@ -256,16 +265,11 @@ function Badge({
 
 const STATUS_FILTERS: Array<{ value: string; label: string }> = [
   { value: "all", label: "All Accounts" },
-  { value: "in_motion", label: "In Motion" },
-  { value: "active_account", label: "Active Accounts" },
-  { value: "open_review", label: "In Progress" },
-  { value: "under_review", label: "Under Review" },
-  { value: "upcoming_review", label: "Upcoming Review" },
-  { value: "waiting_for_retailer_to_publish_review", label: "Waiting for Retailer to Publish Review" },
-  { value: "working_to_secure_anchor_account", label: "Distributor Required" },
-  { value: "not_a_target_account", label: "Not a Target" },
-  { value: "cultivate_does_not_rep", label: "Not Managed by Cultivate" },
+  { value: "awaiting_submission_opportunity", label: "Awaiting Submission Opportunity" },
+  { value: "in_process", label: "In Process" },
   { value: "retailer_declined", label: "Retailer Declined" },
+  { value: "not_a_target_account", label: "Not a Target Account" },
+  { value: "working_to_secure_anchor_account", label: "Distributor Required" },
   { value: "upcoming", label: "Upcoming Reviews (30d)" },
   { value: "submitted_recent", label: "Recently Submitted" },
   { value: "authorized", label: "Authorized" },
@@ -320,6 +324,14 @@ export default function BrandRetailersPage() {
   // Date Worked (brand-level, for the logged-in rep)
   const [dateWorked, setDateWorked] = useState<string | null>(null);
   const [dateWorkedSaving, setDateWorkedSaving] = useState(false);
+
+  // Submissions per retailer
+  const [submissionsMap, setSubmissionsMap] = useState<Record<string, SubmissionRow[]>>({});
+  const [submissionFormOpen, setSubmissionFormOpen] = useState<Record<string, boolean>>({});
+  const [submissionForms, setSubmissionForms] = useState<Record<string, { submitted_at: string; category: string; notes: string }>>({});
+  const [submissionSaving, setSubmissionSaving] = useState<Record<string, boolean>>({});
+  // brand categories (for submission category dropdown)
+  const [brandCategories, setBrandCategories] = useState<string[]>([]);
 
   // SKU modal state
   const [skuModal, setSkuModal] = useState<{ retailerId: string; retailerName: string } | null>(null);
@@ -591,6 +603,28 @@ export default function BrandRetailersPage() {
         setDateWorked(workedData?.worked_at ?? null);
       }
 
+      // Fetch submissions for this brand
+      const { data: submissionsData } = await supabase
+        .from("submissions")
+        .select("id,brand_id,retailer_id,category,submitted_at,notes,created_by")
+        .eq("brand_id", brandId)
+        .order("submitted_at", { ascending: false });
+
+      const nextSubmissionsMap: Record<string, SubmissionRow[]> = {};
+      ((submissionsData ?? []) as SubmissionRow[]).forEach((s) => {
+        if (!nextSubmissionsMap[s.retailer_id]) nextSubmissionsMap[s.retailer_id] = [];
+        nextSubmissionsMap[s.retailer_id].push(s);
+      });
+      setSubmissionsMap(nextSubmissionsMap);
+
+      // Fetch brand categories for submission dropdown
+      const { data: catData } = await supabase
+        .from("brand_category_access")
+        .select("universal_category")
+        .eq("brand_id", brandId)
+        .order("universal_category");
+      setBrandCategories(((catData ?? []) as { universal_category: string }[]).map((c) => c.universal_category));
+
       // Scroll to hashed retailer card after all data is loaded and rendered.
       // We defer with setTimeout so React has flushed all the state updates above
       // into the DOM before we attempt getElementById.
@@ -659,7 +693,7 @@ export default function BrandRetailersPage() {
     return {
       brand_id: brandId,
       retailer_id: retailerId,
-      account_status: "upcoming_review",
+      account_status: "",
       schedule_mode: "open",
       submitted_date: null,
       submitted_notes: null,
@@ -886,6 +920,43 @@ export default function BrandRetailersPage() {
     } finally {
       setTaskSaving((prev) => ({ ...prev, [retailerId]: false }));
     }
+  }
+
+  async function saveSubmission(retailerId: string) {
+    const form = submissionForms[retailerId];
+    if (!form?.submitted_at) return;
+    setSubmissionSaving((prev) => ({ ...prev, [retailerId]: true }));
+    const { data: inserted, error } = await supabase
+      .from("submissions")
+      .insert({
+        brand_id: brandId,
+        retailer_id: retailerId,
+        category: form.category || null,
+        submitted_at: form.submitted_at,
+        notes: form.notes || null,
+        created_by: userId || null,
+      })
+      .select("id,brand_id,retailer_id,category,submitted_at,notes,created_by")
+      .single();
+    setSubmissionSaving((prev) => ({ ...prev, [retailerId]: false }));
+    if (error) { setStatus(error.message); return; }
+    if (inserted) {
+      setSubmissionsMap((prev) => ({
+        ...prev,
+        [retailerId]: [inserted as SubmissionRow, ...(prev[retailerId] ?? [])],
+      }));
+    }
+    setSubmissionFormOpen((prev) => ({ ...prev, [retailerId]: false }));
+    setSubmissionForms((prev) => ({ ...prev, [retailerId]: { submitted_at: todayISO(), category: "", notes: "" } }));
+  }
+
+  async function deleteSubmission(retailerId: string, submissionId: string) {
+    const { error } = await supabase.from("submissions").delete().eq("id", submissionId);
+    if (error) { setStatus(error.message); return; }
+    setSubmissionsMap((prev) => ({
+      ...prev,
+      [retailerId]: (prev[retailerId] ?? []).filter((s) => s.id !== submissionId),
+    }));
   }
 
   async function markWorkedBrand() {
@@ -1274,6 +1345,8 @@ export default function BrandRetailersPage() {
       if (selectedFilter === "in_motion") {
         return rows.some(
           (row) =>
+            row.account_status === "in_process" ||
+            // legacy
             row.account_status === "open_review" ||
             row.account_status === "under_review" ||
             row.account_status === "waiting_for_retailer_to_publish_review"
@@ -1299,21 +1372,8 @@ export default function BrandRetailersPage() {
         return !!authorizedMap[r.id];
       }
 
-      if (
-        selectedFilter === "active_account" ||
-        selectedFilter === "cultivate_does_not_rep" ||
-        selectedFilter === "not_a_target_account" ||
-        selectedFilter === "retailer_declined" ||
-        selectedFilter === "waiting_for_retailer_to_publish_review" ||
-        selectedFilter === "under_review" ||
-        selectedFilter === "open_review" ||
-        selectedFilter === "working_to_secure_anchor_account" ||
-        selectedFilter === "upcoming_review"
-      ) {
-        return rows.some((row) => row.account_status === selectedFilter);
-      }
-
-      return true;
+      // Direct status match (new + legacy values)
+      return rows.some((row) => row.account_status === selectedFilter);
     }
 
     function matchesSearch(r: Retailer): boolean {
@@ -1461,7 +1521,6 @@ export default function BrandRetailersPage() {
                       <span className="font-bold text-xl" style={{ color: "var(--foreground)" }}>
                         {headline}
                       </span>
-                      <StatusBadge status={row.account_status} />
                     </div>
                     {r.banner ? (
                       <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>{r.name}</div>
@@ -1552,15 +1611,12 @@ export default function BrandRetailersPage() {
                             value={pRow.account_status}
                             onChange={(e) => updateLocalRow(r.id, pRow.id, { account_status: e.target.value as AccountStatus })}
                           >
-                            <option value="active_account">Active Account</option>
-                            <option value="open_review">In Progress</option>
-                            <option value="under_review">Under Review</option>
-                            <option value="working_to_secure_anchor_account">Distributor Required</option>
-                            <option value="waiting_for_retailer_to_publish_review">Waiting for Retailer</option>
-                            <option value="upcoming_review">Upcoming Review</option>
-                            <option value="cultivate_does_not_rep">Not Managed by Cultivate</option>
-                            <option value="not_a_target_account">Not a Target</option>
+                            <option value="">— No Status —</option>
+                            <option value="awaiting_submission_opportunity">Awaiting Submission Opportunity</option>
+                            <option value="in_process">In Process</option>
                             <option value="retailer_declined">Retailer Declined</option>
+                            <option value="not_a_target_account">Not a Target Account</option>
+                            <option value="working_to_secure_anchor_account">Distributor Required</option>
                           </select>
 
                           {moreOpen && (
@@ -2423,6 +2479,122 @@ export default function BrandRetailersPage() {
                     )}
                   </div>
                 ) : null}
+
+                {/* Submissions — rep/admin only */}
+                {isRepOrAdmin && (() => {
+                  const retailerSubmissions = submissionsMap[r.id] ?? [];
+                  const formOpen = submissionFormOpen[r.id] ?? false;
+                  const form = submissionForms[r.id] ?? { submitted_at: todayISO(), category: "", notes: "" };
+                  return (
+                    <div className="border rounded-lg p-3 space-y-2" style={{ border: "1px solid var(--border)" }}>
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm font-medium" style={{ color: "var(--foreground)" }}>Submissions</div>
+                        {!formOpen && (
+                          <button
+                            onClick={() => {
+                              setSubmissionFormOpen((prev) => ({ ...prev, [r.id]: true }));
+                              setSubmissionForms((prev) => ({
+                                ...prev,
+                                [r.id]: prev[r.id] ?? { submitted_at: todayISO(), category: "", notes: "" },
+                              }));
+                            }}
+                            className="text-xs font-medium"
+                            style={{ color: "var(--foreground)" }}
+                          >
+                            + Add Submission
+                          </button>
+                        )}
+                      </div>
+
+                      {retailerSubmissions.length === 0 && !formOpen && (
+                        <div className="text-xs" style={{ color: "var(--muted-foreground)" }}>No submissions yet.</div>
+                      )}
+
+                      {retailerSubmissions.length > 0 && (
+                        <div className="space-y-1.5">
+                          {retailerSubmissions.map((s) => (
+                            <div key={s.id} className="flex items-start justify-between gap-2 rounded-lg px-2 py-1.5" style={{ background: "var(--muted)" }}>
+                              <div className="min-w-0">
+                                <div className="text-xs font-medium" style={{ color: "var(--foreground)" }}>
+                                  {prettyDate(s.submitted_at)}{s.category ? ` · ${s.category}` : ""}
+                                </div>
+                                {s.notes && (
+                                  <div className="text-xs mt-0.5 truncate" style={{ color: "var(--muted-foreground)" }}>{s.notes}</div>
+                                )}
+                              </div>
+                              <button
+                                onClick={() => deleteSubmission(r.id, s.id)}
+                                className="text-xs shrink-0"
+                                style={{ color: "var(--muted-foreground)" }}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {formOpen && (
+                        <div className="space-y-2 pt-1">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-xs mb-0.5" style={{ color: "var(--muted-foreground)" }}>Date Submitted</label>
+                              <input
+                                type="date"
+                                value={form.submitted_at}
+                                onChange={(e) => setSubmissionForms((prev) => ({ ...prev, [r.id]: { ...prev[r.id] ?? { submitted_at: todayISO(), category: "", notes: "" }, submitted_at: e.target.value } }))}
+                                className="border rounded px-2 py-1 w-full text-xs"
+                                style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs mb-0.5" style={{ color: "var(--muted-foreground)" }}>Category</label>
+                              <select
+                                value={form.category}
+                                onChange={(e) => setSubmissionForms((prev) => ({ ...prev, [r.id]: { ...prev[r.id] ?? { submitted_at: todayISO(), category: "", notes: "" }, category: e.target.value } }))}
+                                className="border rounded px-2 py-1 w-full text-xs"
+                                style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                              >
+                                <option value="">— Select Category —</option>
+                                {brandCategories.map((cat) => (
+                                  <option key={cat} value={cat}>{cat}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-xs mb-0.5" style={{ color: "var(--muted-foreground)" }}>Notes</label>
+                            <textarea
+                              value={form.notes}
+                              onChange={(e) => setSubmissionForms((prev) => ({ ...prev, [r.id]: { ...prev[r.id] ?? { submitted_at: todayISO(), category: "", notes: "" }, notes: e.target.value } }))}
+                              rows={2}
+                              className="border rounded px-2 py-1 w-full text-xs resize-none"
+                              style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                              placeholder="Optional notes"
+                            />
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => saveSubmission(r.id)}
+                              disabled={!form.submitted_at || submissionSaving[r.id]}
+                              className="px-3 py-1 rounded text-xs font-medium disabled:opacity-50"
+                              style={{ background: "var(--foreground)", color: "var(--background)" }}
+                            >
+                              {submissionSaving[r.id] ? "Saving…" : "Save Submission"}
+                            </button>
+                            <button
+                              onClick={() => setSubmissionFormOpen((prev) => ({ ...prev, [r.id]: false }))}
+                              className="px-3 py-1 rounded text-xs"
+                              style={{ color: "var(--muted-foreground)" }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Mark Worked Today — rep/admin only */}
                 {isRepOrAdmin && (() => {
