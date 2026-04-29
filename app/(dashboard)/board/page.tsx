@@ -7,7 +7,6 @@ import { supabase } from "@/lib/supabaseClient";
 import StatusBadge from "@/components/StatusBadge";
 
 type Role = "admin" | "rep" | "client" | null;
-type NoteMode = "client" | "internal";
 
 type Brand = { id: string; name: string };
 
@@ -38,8 +37,10 @@ type BoardRetailerRow = {
   banner: string;
   accountStatus: string;
   submittedDate: string | null;
-  latestNote: string | null;
-  latestNoteDate: string | null;
+  latestClientNote: string | null;
+  latestClientNoteDate: string | null;
+  latestInternalNote: string | null;
+  latestInternalNoteDate: string | null;
 };
 
 type BrandSummary = {
@@ -129,9 +130,6 @@ export default function AllBrandsBoardPage() {
   const [retailerRepMap, setRetailerRepMap] = useState<Record<string, string>>({});
   const repFilterInitialized = useRef(false);
 
-  // Board-wide note mode — defaults to client-facing (safety default)
-  const [mode, setMode] = useState<NoteMode>("client");
-
   const [brandSummaries, setBrandSummaries] = useState<BrandSummary[]>([]);
   const [timingByBrand, setTimingByBrand] = useState<Record<string, TimingRow[]>>({});
 
@@ -142,8 +140,9 @@ export default function AllBrandsBoardPage() {
   const [expandedBrandIds, setExpandedBrandIds] = useState<Set<string>>(new Set());
 
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
-  const [noteText, setNoteText] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [clientNoteText, setClientNoteText] = useState("");
+  const [internalNoteText, setInternalNoteText] = useState("");
+  const [saving, setSaving] = useState<"client" | "internal" | null>(null);
   const [saveStatus, setSaveStatus] = useState<Record<string, string>>({});
   // Task form state — key is `${brandId}__${retailerId}`
   const [taskFormKey, setTaskFormKey] = useState<string | null>(null);
@@ -173,18 +172,6 @@ export default function AllBrandsBoardPage() {
     }
   }, [userId, role]);
 
-  // When mode changes: discard cached rows, close any open note editor,
-  // and reload all currently expanded brands with the new visibility.
-  useEffect(() => {
-    if (loading) return; // skip during initial page load
-    setBrandRows({});
-    setLoadingBrand({});
-    setExpandedKey(null);
-    setNoteText("");
-    expandedBrandIdsRef.current.forEach((id) => loadBrandRows(id, mode));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
-
   // Auto-expand matching brands when search has text; collapse all when cleared
   useEffect(() => {
     const q = search.trim().toLowerCase();
@@ -203,12 +190,13 @@ export default function AllBrandsBoardPage() {
       });
 
       matchIds.forEach((id) => {
-        if (!brandRows[id]) loadBrandRows(id, mode);
+        if (!brandRows[id]) loadBrandRows(id);
       });
     } else if (prev && !q) {
       setExpandedBrandIds(new Set());
       setExpandedKey(null);
-      setNoteText("");
+      setClientNoteText("");
+      setInternalNoteText("");
     }
   }, [search, brandSummaries]);
 
@@ -311,7 +299,7 @@ export default function AllBrandsBoardPage() {
 
   // ── On-demand brand detail load ───────────────────────────────────────────
 
-  async function loadBrandRows(brandId: string, visibility: NoteMode) {
+  async function loadBrandRows(brandId: string) {
     if (loadingBrand[brandId]) return;
     setLoadingBrand((s) => ({ ...s, [brandId]: true }));
 
@@ -324,17 +312,23 @@ export default function AllBrandsBoardPage() {
       return;
     }
 
-    const [retailerRes, messagesRes] = await Promise.all([
+    const [retailerRes, clientMsgsRes, internalMsgsRes] = await Promise.all([
       supabase.from("retailers").select("id, name, banner").in("id", retailerIds),
       supabase
         .from("brand_retailer_messages")
         .select("id, retailer_id, body, created_at")
         .eq("brand_id", brandId)
-        .eq("visibility", visibility)
+        .eq("visibility", "client")
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("brand_retailer_messages")
+        .select("id, retailer_id, body, created_at")
+        .eq("brand_id", brandId)
+        .eq("visibility", "internal")
         .order("created_at", { ascending: false }),
     ]);
 
-    if (retailerRes.error || messagesRes.error) {
+    if (retailerRes.error) {
       setLoadingBrand((s) => ({ ...s, [brandId]: false }));
       return;
     }
@@ -342,24 +336,32 @@ export default function AllBrandsBoardPage() {
     const retailerMap: Record<string, Retailer> = {};
     ((retailerRes.data as Retailer[]) ?? []).forEach((r) => { retailerMap[r.id] = r; });
 
-    const latestNoteMap: Record<string, Message> = {};
-    ((messagesRes.data as Message[]) ?? []).forEach((m) => {
-      if (!latestNoteMap[m.retailer_id]) latestNoteMap[m.retailer_id] = m;
+    const latestClientMap: Record<string, Message> = {};
+    ((clientMsgsRes.data as Message[]) ?? []).forEach((m) => {
+      if (!latestClientMap[m.retailer_id]) latestClientMap[m.retailer_id] = m;
+    });
+
+    const latestInternalMap: Record<string, Message> = {};
+    ((internalMsgsRes.data as Message[]) ?? []).forEach((m) => {
+      if (!latestInternalMap[m.retailer_id]) latestInternalMap[m.retailer_id] = m;
     });
 
     const rows: BoardRetailerRow[] = timing
       .map((t) => {
         const retailer = retailerMap[t.retailer_id];
         const banner = retailer?.banner?.trim() || retailer?.name || "Unknown Retailer";
-        const latest = latestNoteMap[t.retailer_id] ?? null;
+        const latestClient = latestClientMap[t.retailer_id] ?? null;
+        const latestInternal = latestInternalMap[t.retailer_id] ?? null;
         return {
           timingId: t.id,
           retailerId: t.retailer_id,
           banner,
           accountStatus: t.account_status,
           submittedDate: t.submitted_date,
-          latestNote: latest?.body ?? null,
-          latestNoteDate: latest?.created_at ?? null,
+          latestClientNote: latestClient?.body ?? null,
+          latestClientNoteDate: latestClient?.created_at ?? null,
+          latestInternalNote: latestInternal?.body ?? null,
+          latestInternalNoteDate: latestInternal?.created_at ?? null,
         };
       })
       .sort((a, b) => a.banner.localeCompare(b.banner));
@@ -377,11 +379,12 @@ export default function AllBrandsBoardPage() {
         next.delete(brandId);
         if (expandedKey?.startsWith(`${brandId}__`)) {
           setExpandedKey(null);
-          setNoteText("");
+          setClientNoteText("");
+          setInternalNoteText("");
         }
       } else {
         next.add(brandId);
-        if (!brandRows[brandId]) loadBrandRows(brandId, mode);
+        if (!brandRows[brandId]) loadBrandRows(brandId);
       }
       return next;
     });
@@ -393,19 +396,21 @@ export default function AllBrandsBoardPage() {
     const key = `${brandId}__${retailerId}`;
     if (expandedKey === key) {
       setExpandedKey(null);
-      setNoteText("");
+      setClientNoteText("");
+      setInternalNoteText("");
     } else {
       setExpandedKey(key);
-      setNoteText("");
+      setClientNoteText("");
+      setInternalNoteText("");
     }
   }
 
-  async function saveNote(brandId: string, retailerId: string) {
-    const text = noteText.trim();
+  async function saveNote(brandId: string, retailerId: string, visibility: "client" | "internal") {
+    const text = (visibility === "client" ? clientNoteText : internalNoteText).trim();
     if (!text || !userId) return;
     const key = `${brandId}__${retailerId}`;
 
-    setSaving(true);
+    setSaving(visibility);
     setSaveStatus((s) => ({ ...s, [key]: "" }));
 
     const { data: profileData } = await supabase
@@ -415,26 +420,24 @@ export default function AllBrandsBoardPage() {
       .single();
     const senderName = profileData?.full_name ?? null;
 
-    console.log("[saveNote] inserting:", { brand_id: brandId, retailer_id: retailerId, visibility: mode, sender_id: userId, sender_name: senderName, body: text });
-
     const { error } = await supabase.from("brand_retailer_messages").insert({
       brand_id: brandId,
       retailer_id: retailerId,
-      visibility: mode,
+      visibility,
       sender_id: userId,
       sender_name: senderName,
       body: text,
     });
 
-    setSaving(false);
+    setSaving(null);
 
     if (error) { setSaveStatus((s) => ({ ...s, [key]: error.message })); return; }
 
-    setSaveStatus((s) => ({ ...s, [key]: "Saved." }));
-    setExpandedKey(null);
-    setNoteText("");
+    if (visibility === "client") setClientNoteText("");
+    else setInternalNoteText("");
+
     setBrandRows((s) => { const next = { ...s }; delete next[brandId]; return next; });
-    loadBrandRows(brandId, mode);
+    loadBrandRows(brandId);
   }
 
   async function saveBoardTask(brandId: string, retailerId: string) {
@@ -507,15 +510,10 @@ export default function AllBrandsBoardPage() {
     return result;
   }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand, userId]);
 
-  const isInternal = mode === "internal";
-
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div
-      className="p-6 space-y-5 min-h-screen transition-colors"
-      style={{ background: isInternal ? "#f1f5f9" : undefined }}
-    >
+    <div className="p-6 space-y-5 min-h-screen">
       {/* Error toast */}
       {errorToast && (
         <div
@@ -526,66 +524,17 @@ export default function AllBrandsBoardPage() {
         </div>
       )}
 
-      {/* Internal mode banner */}
-      {isInternal && (
-        <div
-          className="flex items-center justify-between rounded-lg px-4 py-2.5 text-sm"
-          style={{ background: "#e2e8f0", color: "#334155", border: "1px solid #cbd5e1" }}
-        >
-          <span className="font-medium">
-            Internal-only mode active · notes written here are team-only and NOT sent to clients
-          </span>
-          <button
-            onClick={() => setMode("client")}
-            className="ml-4 text-xs underline shrink-0"
-            style={{ color: "#475569" }}
-          >
-            Switch to client-facing
-          </button>
-        </div>
-      )}
-
       <div>
         <h1 className="text-3xl font-bold" style={{ color: "var(--foreground)" }}>
           All Brands Board
         </h1>
-        <p className="mt-1 text-sm" style={{ color: isInternal ? "#64748b" : "var(--muted-foreground)" }}>
-          {isInternal
-            ? "Internal-only mode · notes written here are team-only and NOT sent to clients."
-            : "Click a brand to expand — click a retailer row to add a client-facing note. Notes here appear on the client's dashboard."}
+        <p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>
+          Click a brand to expand · click a retailer row to add notes.
         </p>
       </div>
 
-      {/* Filter row + mode toggle */}
+      {/* Filter row */}
       <div className="flex flex-wrap items-center gap-3">
-        {/* Mode toggle */}
-        <div
-          className="flex rounded-lg overflow-hidden text-sm"
-          style={{ border: "1px solid var(--border)" }}
-        >
-          <button
-            onClick={() => setMode("client")}
-            className="px-3 py-2 font-medium transition-colors"
-            style={{
-              background: !isInternal ? "var(--foreground)" : "var(--card)",
-              color: !isInternal ? "var(--background)" : "var(--muted-foreground)",
-            }}
-          >
-            Client-facing
-          </button>
-          <button
-            onClick={() => setMode("internal")}
-            className="px-3 py-2 font-medium transition-colors"
-            style={{
-              background: isInternal ? "#334155" : "var(--card)",
-              color: isInternal ? "#f8fafc" : "var(--muted-foreground)",
-              borderLeft: "1px solid var(--border)",
-            }}
-          >
-            Internal only
-          </button>
-        </div>
-
         <input
           type="text"
           placeholder="Filter by brand name…"
@@ -653,16 +602,14 @@ export default function AllBrandsBoardPage() {
               <div
                 key={brand.id}
                 className="rounded-xl overflow-hidden"
-                style={{ border: `1px solid ${isInternal ? "#cbd5e1" : "var(--border)"}` }}
+                style={{ border: "1px solid var(--border)" }}
               >
                 {/* ── Collapsed summary row ── */}
                 <button
                   type="button"
                   className="w-full flex items-center justify-between px-4 py-3 text-left"
                   style={{
-                    background: isOpen
-                      ? (isInternal ? "#e2e8f0" : "var(--accent)")
-                      : (isInternal ? "#e8edf2" : "var(--muted)"),
+                    background: isOpen ? "var(--accent)" : "var(--muted)",
                     cursor: "pointer",
                   }}
                   onClick={() => toggleBrand(brand.id)}
@@ -699,14 +646,14 @@ export default function AllBrandsBoardPage() {
                   isFetching || rows === null ? (
                     <div
                       className="px-4 py-3 text-sm"
-                      style={{ borderTop: `1px solid ${isInternal ? "#cbd5e1" : "var(--border)"}`, color: "var(--muted-foreground)" }}
+                      style={{ borderTop: "1px solid var(--border)", color: "var(--muted-foreground)" }}
                     >
                       Loading retailers…
                     </div>
                   ) : rows.length === 0 ? (
                     <div
                       className="px-4 py-3 text-sm italic"
-                      style={{ borderTop: `1px solid ${isInternal ? "#cbd5e1" : "var(--border)"}`, color: "var(--muted-foreground)" }}
+                      style={{ borderTop: "1px solid var(--border)", color: "var(--muted-foreground)" }}
                     >
                       No retailers found.
                     </div>
@@ -714,9 +661,9 @@ export default function AllBrandsBoardPage() {
                     <table className="w-full text-sm" style={{ boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
                       <thead>
                         <tr style={{
-                          background: isInternal ? "#e2e8f0" : "var(--secondary)",
+                          background: "var(--secondary)",
                           color: "var(--muted-foreground)",
-                          borderTop: `1px solid ${isInternal ? "#cbd5e1" : "var(--border)"}`,
+                          borderTop: "1px solid var(--border)",
                         }}>
                           <th className="text-left px-4 py-2 font-medium">Retailer</th>
                           <th className="text-left px-4 py-2 font-medium">Account Status</th>
@@ -737,11 +684,11 @@ export default function AllBrandsBoardPage() {
                                 key={key}
                                 style={{
                                   background: isNoteOpen
-                                    ? (isInternal ? "#e2e8f0" : "var(--accent)")
+                                    ? "var(--accent)"
                                     : isEven
-                                      ? (isInternal ? "#f8fafc" : "var(--card)")
-                                      : (isInternal ? "#f1f5f9" : "var(--secondary)"),
-                                  borderTop: `1px solid ${isInternal ? "#cbd5e1" : "var(--border)"}`,
+                                      ? "var(--card)"
+                                      : "var(--secondary)",
+                                  borderTop: "1px solid var(--border)",
                                   cursor: "pointer",
                                 }}
                                 onClick={() => toggleNoteEditor(brand.id, row.retailerId)}
@@ -788,13 +735,13 @@ export default function AllBrandsBoardPage() {
                                 </td>
 
                                 <td className="px-4 py-2.5" style={{ color: "var(--muted-foreground)" }}>
-                                  {relativeTime(row.latestNoteDate)}
+                                  {relativeTime(row.latestClientNoteDate)}
                                 </td>
 
-                                <td className="px-4 py-2.5 max-w-xs" style={{ color: row.latestNote ? "var(--foreground)" : "var(--muted-foreground)" }}>
-                                  {row.latestNote ? (
+                                <td className="px-4 py-2.5 max-w-xs" style={{ color: row.latestClientNote ? "var(--foreground)" : "var(--muted-foreground)" }}>
+                                  {row.latestClientNote ? (
                                     <span className="line-clamp-1">
-                                      {row.latestNote.length > 80 ? row.latestNote.slice(0, 80) + "…" : row.latestNote}
+                                      {row.latestClientNote.length > 80 ? row.latestClientNote.slice(0, 80) + "…" : row.latestClientNote}
                                     </span>
                                   ) : (
                                     <span className="italic text-xs">No notes yet</span>
@@ -810,45 +757,94 @@ export default function AllBrandsBoardPage() {
                                 <tr
                                   key={`${key}-editor`}
                                   style={{
-                                    background: isInternal ? "#e2e8f0" : "var(--accent)",
-                                    borderTop: `1px solid ${isInternal ? "#cbd5e1" : "var(--border)"}`,
+                                    background: "var(--accent)",
+                                    borderTop: "1px solid var(--border)",
                                   }}
                                 >
                                   <td colSpan={5} className="px-4 pb-4 pt-2">
-                                    <div className="space-y-2">
-                                      <p className="text-xs font-medium" style={{ color: isInternal ? "#475569" : "var(--muted-foreground)" }}>
-                                        {isInternal
-                                          ? `Add internal-only note for ${row.banner}`
-                                          : `Add client-facing note for ${row.banner}`}
-                                      </p>
-                                      <textarea
-                                        className="w-full rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2"
-                                        style={{
-                                          border: `1px solid ${isInternal ? "#94a3b8" : "var(--border)"}`,
-                                          background: isInternal ? "#f8fafc" : "var(--card)",
-                                          color: "var(--foreground)",
-                                          minHeight: "72px",
-                                        }}
-                                        placeholder={isInternal ? "Write an internal-only note…" : "Write a client-facing note…"}
-                                        value={noteText}
-                                        onChange={(e) => setNoteText(e.target.value)}
-                                        onClick={(e) => e.stopPropagation()}
-                                        autoFocus
-                                      />
-                                      <div className="flex items-center gap-3 flex-wrap">
-                                        <button
-                                          className="px-4 py-1.5 rounded-lg text-sm font-medium"
-                                          style={{
-                                            background: isInternal ? "#334155" : "var(--foreground)",
-                                            color: isInternal ? "#f8fafc" : "var(--background)",
-                                            opacity: saving || !noteText.trim() ? 0.5 : 1,
-                                            cursor: saving || !noteText.trim() ? "not-allowed" : "pointer",
-                                          }}
-                                          disabled={saving || !noteText.trim()}
-                                          onClick={(e) => { e.stopPropagation(); saveNote(brand.id, row.retailerId); }}
-                                        >
-                                          {saving ? "Saving…" : "Save Note"}
-                                        </button>
+                                    <div className="space-y-3">
+                                      {/* 2-column note editor */}
+                                      <div className="grid grid-cols-2 gap-4">
+                                        {/* Client-facing note */}
+                                        <div className="space-y-2">
+                                          <p className="text-xs font-semibold" style={{ color: "var(--foreground)" }}>
+                                            Client-facing note
+                                          </p>
+                                          {row.latestClientNote && (
+                                            <p className="text-xs rounded px-2 py-1.5 line-clamp-2" style={{ background: "var(--card)", color: "var(--muted-foreground)", border: "1px solid var(--border)" }}>
+                                              {row.latestClientNote}
+                                              <span className="ml-1 opacity-60">· {relativeTime(row.latestClientNoteDate)}</span>
+                                            </p>
+                                          )}
+                                          <textarea
+                                            className="w-full rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2"
+                                            style={{
+                                              border: "1px solid var(--border)",
+                                              background: "var(--card)",
+                                              color: "var(--foreground)",
+                                              minHeight: "72px",
+                                            }}
+                                            placeholder="Write a client-facing note…"
+                                            value={clientNoteText}
+                                            onChange={(e) => setClientNoteText(e.target.value)}
+                                            onClick={(e) => e.stopPropagation()}
+                                          />
+                                          <button
+                                            className="px-3 py-1.5 rounded-lg text-sm font-medium"
+                                            style={{
+                                              background: "var(--foreground)",
+                                              color: "var(--background)",
+                                              opacity: saving === "client" || !clientNoteText.trim() ? 0.5 : 1,
+                                              cursor: saving === "client" || !clientNoteText.trim() ? "not-allowed" : "pointer",
+                                            }}
+                                            disabled={saving === "client" || !clientNoteText.trim()}
+                                            onClick={(e) => { e.stopPropagation(); saveNote(brand.id, row.retailerId, "client"); }}
+                                          >
+                                            {saving === "client" ? "Saving…" : "Save Client Note"}
+                                          </button>
+                                        </div>
+
+                                        {/* Internal note */}
+                                        <div className="space-y-2">
+                                          <p className="text-xs font-semibold" style={{ color: "var(--foreground)" }}>
+                                            Internal only
+                                          </p>
+                                          {row.latestInternalNote && (
+                                            <p className="text-xs rounded px-2 py-1.5 line-clamp-2" style={{ background: "#f1f5f9", color: "#475569", border: "1px solid #cbd5e1" }}>
+                                              {row.latestInternalNote}
+                                              <span className="ml-1 opacity-60">· {relativeTime(row.latestInternalNoteDate)}</span>
+                                            </p>
+                                          )}
+                                          <textarea
+                                            className="w-full rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2"
+                                            style={{
+                                              border: "1px solid #94a3b8",
+                                              background: "#f8fafc",
+                                              color: "var(--foreground)",
+                                              minHeight: "72px",
+                                            }}
+                                            placeholder="Write an internal-only note…"
+                                            value={internalNoteText}
+                                            onChange={(e) => setInternalNoteText(e.target.value)}
+                                            onClick={(e) => e.stopPropagation()}
+                                          />
+                                          <button
+                                            className="px-3 py-1.5 rounded-lg text-sm font-medium"
+                                            style={{
+                                              background: "#334155",
+                                              color: "#f8fafc",
+                                              opacity: saving === "internal" || !internalNoteText.trim() ? 0.5 : 1,
+                                              cursor: saving === "internal" || !internalNoteText.trim() ? "not-allowed" : "pointer",
+                                            }}
+                                            disabled={saving === "internal" || !internalNoteText.trim()}
+                                            onClick={(e) => { e.stopPropagation(); saveNote(brand.id, row.retailerId, "internal"); }}
+                                          >
+                                            {saving === "internal" ? "Saving…" : "Save Internal Note"}
+                                          </button>
+                                        </div>
+                                      </div>
+
+                                      <div className="flex items-center gap-3 flex-wrap pt-1">
                                         <button
                                           className="text-sm underline"
                                           style={{ color: "var(--muted-foreground)" }}
