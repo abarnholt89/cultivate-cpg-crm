@@ -200,6 +200,20 @@ function formatFileSize(bytes: number): string {
   return `${Math.round(bytes / 1024)} KB`;
 }
 
+function daysAgo(iso: string): number {
+  return Math.floor((Date.now() - new Date(iso + "T00:00:00").getTime()) / 86400000);
+}
+
+function workedBadgeStyle(workedAt: string | null): { bg: string; fg: string } {
+  if (!workedAt) return { bg: "#ef4444", fg: "#fff" };
+  const d = daysAgo(workedAt);
+  if (d <= 14) return { bg: "#15803d", fg: "#fff" };
+  if (d <= 30) return { bg: "#86efac", fg: "#14532d" };
+  if (d <= 45) return { bg: "#fde047", fg: "#713f12" };
+  if (d <= 60) return { bg: "#fb923c", fg: "#431407" };
+  return { bg: "#ef4444", fg: "#fff" };
+}
+
 function statusLeftBorderColor(status: string | undefined): string {
   switch (status) {
     case "active_account":
@@ -302,6 +316,10 @@ export default function BrandRetailersPage() {
   const [manualEditDraft, setManualEditDraft] = useState<ManualReviewRow | null>(null);
   // Per-row "More" toggle (submitted date/notes)
   const [rowMoreOpen, setRowMoreOpen] = useState<Record<string, boolean>>({});
+
+  // Date Worked (brand-level, for the logged-in rep)
+  const [dateWorked, setDateWorked] = useState<string | null>(null);
+  const [dateWorkedSaving, setDateWorkedSaving] = useState(false);
 
   // SKU modal state
   const [skuModal, setSkuModal] = useState<{ retailerId: string; retailerName: string } | null>(null);
@@ -558,6 +576,19 @@ export default function BrandRetailersPage() {
           nextTasksMap[t.retailer_id].push(t);
         });
         setRetailerTasksMap(nextTasksMap);
+      }
+
+      // Fetch most recent date worked for this brand + logged-in rep
+      if ((resolvedRole === "admin" || resolvedRole === "rep") && userId) {
+        const { data: workedData } = await supabase
+          .from("brand_date_worked")
+          .select("worked_at")
+          .eq("brand_id", brandId)
+          .eq("rep_id", userId)
+          .order("worked_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        setDateWorked(workedData?.worked_at ?? null);
       }
 
       // Scroll to hashed retailer card after all data is loaded and rendered.
@@ -855,6 +886,19 @@ export default function BrandRetailersPage() {
     } finally {
       setTaskSaving((prev) => ({ ...prev, [retailerId]: false }));
     }
+  }
+
+  async function markWorkedBrand() {
+    if (!userId || !brandId) return;
+    setDateWorkedSaving(true);
+    const today = new Date().toISOString().split("T")[0];
+    const { error } = await supabase.from("brand_date_worked").insert({
+      brand_id: brandId,
+      rep_id: userId,
+      worked_at: today,
+    });
+    if (!error) setDateWorked(today);
+    setDateWorkedSaving(false);
   }
 
   async function openSkuModal(retailerId: string, retailerName: string) {
@@ -2368,6 +2412,39 @@ export default function BrandRetailersPage() {
                     )}
                   </div>
                 ) : null}
+
+                {/* Mark Worked Today — rep/admin only */}
+                {isRepOrAdmin && (() => {
+                  const badge = workedBadgeStyle(dateWorked);
+                  const daysWorked = dateWorked ? daysAgo(dateWorked) : null;
+                  const lastWorkedLabel = daysWorked === null
+                    ? "Never worked this brand"
+                    : daysWorked === 0
+                      ? "Last worked: today"
+                      : `Last worked: ${daysWorked}d ago`;
+                  return (
+                    <div className="border-t border-border pt-3 mt-1 flex items-center gap-3 flex-wrap">
+                      <span
+                        className="text-xs font-medium rounded px-2 py-0.5"
+                        style={{ background: badge.bg, color: badge.fg }}
+                      >
+                        {lastWorkedLabel}
+                      </span>
+                      <button
+                        onClick={markWorkedBrand}
+                        disabled={dateWorkedSaving}
+                        className="text-xs px-3 py-1 rounded-lg font-medium transition-opacity"
+                        style={{
+                          background: "#123b52",
+                          color: "#78f5cd",
+                          opacity: dateWorkedSaving ? 0.6 : 1,
+                        }}
+                      >
+                        {dateWorkedSaving ? "Saving…" : "Mark Worked Today"}
+                      </button>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}

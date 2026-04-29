@@ -92,6 +92,21 @@ function statusLeftBorderColor(status: string | undefined): string {
   }
 }
 
+function daysAgo(iso: string): number {
+  return Math.floor((Date.now() - new Date(iso + "T00:00:00").getTime()) / 86400000);
+}
+
+function workedBadge(workedAt: string | null): { label: string; bg: string; fg: string } {
+  if (!workedAt) return { label: "Never", bg: "#ef4444", fg: "#fff" };
+  const d = daysAgo(workedAt);
+  const label = d === 0 ? "Today" : d === 1 ? "1d ago" : `${d}d ago`;
+  if (d <= 14) return { label, bg: "#15803d", fg: "#fff" };
+  if (d <= 30) return { label, bg: "#86efac", fg: "#14532d" };
+  if (d <= 45) return { label, bg: "#fde047", fg: "#713f12" };
+  if (d <= 60) return { label, bg: "#fb923c", fg: "#431407" };
+  return { label, bg: "#ef4444", fg: "#fff" };
+}
+
 function relativeTime(ts: string | null) {
   if (!ts) return "—";
   const mins = Math.floor((Date.now() - new Date(ts).getTime()) / 60000);
@@ -148,6 +163,10 @@ export default function AllBrandsBoardPage() {
   const [taskFormKey, setTaskFormKey] = useState<string | null>(null);
   const [taskForm, setTaskForm] = useState({ title: "", notes: "", due_date: "", assigned_to: "" });
   const [taskSaving, setTaskSaving] = useState(false);
+
+  // Date Worked — brand_id → rep_id → most recent worked_at (ISO date)
+  const [workedMap, setWorkedMap] = useState<Record<string, Record<string, string>>>({});
+  const [dateWorkedSaving, setDateWorkedSaving] = useState<Record<string, boolean>>({});
 
   // Inline status editing — no intermediate edit-mode; select is always visible
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
@@ -283,6 +302,20 @@ export default function AllBrandsBoardPage() {
       .filter((b) => b.retailerCount > 0);
 
     setBrandSummaries(summaries);
+
+    // Load all date-worked entries for display (all reps, all brands)
+    const { data: workedData } = await supabase
+      .from("brand_date_worked")
+      .select("brand_id, rep_id, worked_at");
+    const nextWorkedMap: Record<string, Record<string, string>> = {};
+    (workedData ?? []).forEach((w: any) => {
+      if (!nextWorkedMap[w.brand_id]) nextWorkedMap[w.brand_id] = {};
+      const existing = nextWorkedMap[w.brand_id][w.rep_id];
+      if (!existing || w.worked_at > existing) {
+        nextWorkedMap[w.brand_id][w.rep_id] = w.worked_at;
+      }
+    });
+    setWorkedMap(nextWorkedMap);
 
     if (!repsRes.error) setReps((repsRes.data ?? []) as RepProfile[]);
 
@@ -487,6 +520,26 @@ export default function AllBrandsBoardPage() {
     }
   }
 
+  // ── Date Worked ───────────────────────────────────────────────────────────
+
+  async function markWorked(brandId: string) {
+    if (!userId) return;
+    setDateWorkedSaving((s) => ({ ...s, [brandId]: true }));
+    const today = new Date().toISOString().split("T")[0];
+    const { error } = await supabase.from("brand_date_worked").insert({
+      brand_id: brandId,
+      rep_id: userId,
+      worked_at: today,
+    });
+    if (!error) {
+      setWorkedMap((prev) => ({
+        ...prev,
+        [brandId]: { ...(prev[brandId] ?? {}), [userId]: today },
+      }));
+    }
+    setDateWorkedSaving((s) => ({ ...s, [brandId]: false }));
+  }
+
   // ── Filter ────────────────────────────────────────────────────────────────
 
   const filteredSummaries = useMemo(() => {
@@ -585,6 +638,11 @@ export default function AllBrandsBoardPage() {
         <div className="space-y-2">
           {filteredSummaries.map((brand) => {
             const isOpen = expandedBrandIds.has(brand.id);
+            // Which rep's date-worked to display: specific rep if filtering, else logged-in user
+            const targetRepId = (repFilter && repFilter !== MY_TEAM) ? repFilter : (userId ?? "");
+            const workedAt = workedMap[brand.id]?.[targetRepId] ?? null;
+            const badge = workedBadge(workedAt);
+
             const rawRows = brandRows[brand.id] ?? null;
             const rows = rawRows === null
               ? null
@@ -614,7 +672,7 @@ export default function AllBrandsBoardPage() {
                   }}
                   onClick={() => toggleBrand(brand.id)}
                 >
-                  <div className="flex items-center gap-4 min-w-0">
+                  <div className="flex items-center gap-4 min-w-0 flex-wrap">
                     <span className="font-semibold text-sm truncate" style={{ color: "var(--foreground)" }}>
                       {brand.name}
                     </span>
@@ -624,6 +682,25 @@ export default function AllBrandsBoardPage() {
                     <span className="text-xs shrink-0" style={{ color: "var(--muted-foreground)" }}>
                       Last activity: {relativeTime(brand.lastActivity)}
                     </span>
+                    {/* Date Worked badge + button */}
+                    <span
+                      className="text-xs font-medium rounded px-2 py-0.5 shrink-0"
+                      style={{ background: badge.bg, color: badge.fg }}
+                    >
+                      {badge.label}
+                    </span>
+                    <button
+                      className="text-xs px-2 py-0.5 rounded shrink-0 font-medium transition-opacity"
+                      style={{
+                        background: "#123b52",
+                        color: "#78f5cd",
+                        opacity: dateWorkedSaving[brand.id] ? 0.6 : 1,
+                      }}
+                      disabled={dateWorkedSaving[brand.id]}
+                      onClick={(e) => { e.stopPropagation(); markWorked(brand.id); }}
+                    >
+                      {dateWorkedSaving[brand.id] ? "…" : "✓ Mark Worked"}
+                    </button>
                   </div>
 
                   <div className="flex items-center gap-3 shrink-0 ml-4">
