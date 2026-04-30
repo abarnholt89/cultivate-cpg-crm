@@ -800,6 +800,7 @@ export default function AllBrandsBoardPage() {
                           <th className="w-8" />
                         </tr>
                       </thead>
+                      <tbody>
                         {rows.map((row, idx) => {
                           const key = `${brand.id}__${row.retailerId}`;
                           const isNoteOpen = expandedKey === key;
