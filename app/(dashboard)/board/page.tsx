@@ -266,6 +266,7 @@ export default function AllBrandsBoardPage() {
   // ── Initial summary load ──────────────────────────────────────────────────
 
   async function loadSummaries() {
+    console.log("BOARD loadSummaries START");
     setLoading(true);
     setError("");
 
@@ -387,6 +388,8 @@ export default function AllBrandsBoardPage() {
     setLatestWorkedMap(nextWorkedMap);
     setMsgBySenderMap(msgBySender);
 
+    console.log("BOARD repsRes:", JSON.stringify(repsRes.data));
+    console.log("BOARD repsRes.error:", repsRes.error);
     if (!repsRes.error) setReps((repsRes.data ?? []) as RepProfile[]);
 
     if (!retailerRepRes.error) {
@@ -708,6 +711,8 @@ export default function AllBrandsBoardPage() {
   }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand, userId, latestWorkedMap]);
 
   // ── Render ────────────────────────────────────────────────────────────────
+
+  console.log("BOARD RENDER — role:", role, "reps.length:", reps.length, "repFilter:", repFilter, "latestWorkedMap keys:", Object.keys(latestWorkedMap).length);
 
   return (
     <div className="p-6 space-y-5 min-h-screen">
