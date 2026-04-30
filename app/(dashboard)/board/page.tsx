@@ -370,6 +370,14 @@ export default function AllBrandsBoardPage() {
       })
       .filter((b) => b.retailerCount > 0);
 
+    // DEBUG — remove after diagnosis
+    console.log("[DEBUG load] workedResult.data.length:", workedResult.data.length);
+    console.log("[DEBUG load] workedResult.error:", workedResult.error);
+    const uniqueSenders = [...new Set(
+      Object.values(msgBySender).flatMap((byBrand) => Object.keys(byBrand))
+    )];
+    console.log("[DEBUG load] unique sender_ids in msgBySenderMap:", uniqueSenders);
+
     // Set all state in one synchronous block so the first render has everything
     setBrandSummaries(summaries);
     setWorkedEntries(workedResult.data); // fetchAll always returns an array, never null
@@ -653,6 +661,10 @@ export default function AllBrandsBoardPage() {
       const existing = result[e.brand_id][e.rep_id];
       if (!existing || e.worked_at > existing) result[e.brand_id][e.rep_id] = e.worked_at;
     }
+    // DEBUG — remove after diagnosis
+    const uniqueRepIds = [...new Set(workedEntries.map((e) => e.rep_id))];
+    console.log("[DEBUG latestWorkedMap] workedEntries.length:", workedEntries.length);
+    console.log("[DEBUG latestWorkedMap] unique rep_ids in brand_date_worked:", uniqueRepIds);
     return result;
   }, [workedEntries]);
 
@@ -728,7 +740,11 @@ export default function AllBrandsBoardPage() {
           reps.length > 0 && (
             <select
               value={repFilter}
-              onChange={(e) => setRepFilter(e.target.value)}
+              onChange={(e) => {
+                // DEBUG — remove after diagnosis
+                console.log("[DEBUG repFilter] selected option value:", e.target.value);
+                setRepFilter(e.target.value);
+              }}
               className="rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
               style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
             >
