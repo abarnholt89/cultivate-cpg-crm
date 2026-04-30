@@ -102,14 +102,14 @@ function daysAgo(iso: string): number {
   return Math.floor((Date.now() - new Date(iso + "T00:00:00").getTime()) / 86400000);
 }
 
-function workedBadge(workedAt: string | null, allTouched: boolean): { label: string; bg: string; fg: string } {
-  if (allTouched) return { label: "All Done ✓", bg: "#15803d", fg: "#fff" };
+function workedBadge(workedAt: string | null): { label: string; bg: string; fg: string } {
   if (!workedAt) return { label: "No Activity", bg: "#ef4444", fg: "#fff" };
   const d = daysAgo(workedAt);
   const label = d === 0 ? "Today" : d === 1 ? "1d ago" : `${d}d ago`;
-  if (d <= 14) return { label, bg: "#86efac", fg: "#14532d" };
-  if (d <= 30) return { label, bg: "#fde047", fg: "#713f12" };
-  if (d <= 45) return { label, bg: "#fb923c", fg: "#431407" };
+  if (d <= 14) return { label, bg: "#15803d", fg: "#fff" };
+  if (d <= 30) return { label, bg: "#86efac", fg: "#14532d" };
+  if (d <= 45) return { label, bg: "#fde047", fg: "#713f12" };
+  if (d <= 60) return { label, bg: "#fb923c", fg: "#431407" };
   return { label, bg: "#ef4444", fg: "#fff" };
 }
 
@@ -209,7 +209,6 @@ export default function AllBrandsBoardPage() {
   const [workedEntries, setWorkedEntries] = useState<WorkedEntry[]>([]);
   // Derived map stored as state (not useMemo) so it updates reliably after async fetch
   const [latestWorkedMap, setLatestWorkedMap] = useState<Record<string, Record<string, string>>>({});
-  const [dateWorkedSaving, setDateWorkedSaving] = useState<Record<string, boolean>>({});
   const [snoozeSaving, setSnoozeSaving] = useState<Record<string, boolean>>({});
 
   // Inline status editing — no intermediate edit-mode; select is always visible
@@ -627,26 +626,6 @@ export default function AllBrandsBoardPage() {
 
   // ── Date Worked ───────────────────────────────────────────────────────────
 
-  async function markWorked(brandId: string) {
-    if (!userId) return;
-    setDateWorkedSaving((s) => ({ ...s, [brandId]: true }));
-    const today = new Date().toISOString().split("T")[0];
-    const { error } = await supabase.from("brand_date_worked").insert({
-      brand_id: brandId,
-      rep_id: userId,
-      worked_at: today,
-      // retailer_id intentionally null — brand-level touch counts for all retailers
-    });
-    if (!error) {
-      setWorkedEntries((prev) => [...prev, { brand_id: brandId, rep_id: userId!, retailer_id: null, worked_at: today }]);
-      setLatestWorkedMap((prev) => ({
-        ...prev,
-        [brandId]: { ...(prev[brandId] ?? {}), [userId!]: today },
-      }));
-    }
-    setDateWorkedSaving((s) => ({ ...s, [brandId]: false }));
-  }
-
   async function snoozeRetailer(brandId: string, retailerId: string) {
     if (!userId) return;
     const snoozeKey = `${brandId}__${retailerId}`;
@@ -783,25 +762,7 @@ export default function AllBrandsBoardPage() {
           {filteredSummaries.map((brand) => {
             const isOpen = expandedBrandIds.has(brand.id);
             const workedAt = latestWorkedMap[brand.id]?.[repFilter] ?? null;
-
-            // Dark green = rep has touched ALL assigned retailers in the current 60-day round
-            const roundStart = new Date(Date.now() - 60 * 86400000).toISOString().split("T")[0];
-            const brandTiming = timingByBrand[brand.id] ?? [];
-            const assignedRetailerIds = [...new Set(
-              brandTiming
-                .filter((t) => retailerRepMap[t.retailer_id] === repFilter)
-                .map((t) => t.retailer_id)
-            )];
-            const allTouched = assignedRetailerIds.length > 0 && (() => {
-              const entries = workedEntries.filter(
-                (e) => e.brand_id === brand.id && e.rep_id === repFilter && e.worked_at >= roundStart
-              );
-              if (entries.some((e) => e.retailer_id === null)) return true; // brand-level touch counts for all
-              const touchedSet = new Set(entries.map((e) => e.retailer_id));
-              return assignedRetailerIds.every((r) => touchedSet.has(r));
-            })();
-
-            const badge = workedBadge(workedAt, allTouched);
+            const badge = workedBadge(workedAt);
 
             const rawRows = brandRows[brand.id] ?? null;
             const rows = rawRows === null
