@@ -303,10 +303,17 @@ export default function AllBrandsBoardPage() {
 
     const allRetailerIds = [...new Set(timing.map((t) => t.retailer_id))];
 
-    // Fetch all supporting data in parallel — keeping brand_date_worked in the same
-    // Promise.all ensures setBrandSummaries and setWorkedEntries are called in the
-    // same synchronous block so filteredSummaries sorts correctly on the first render.
-    const [repsRes, retailerRepRes, msgActivityRes, workedRes] = await Promise.all([
+    // Start brand_date_worked fetch first so it runs in parallel with the Promise.all below.
+    // Using fetchAll (paginated) instead of a plain .select() so we never hit the 1 000-row
+    // default limit — a system with many reps × many brands can easily exceed that, causing
+    // entries (e.g. JJ's 46) to be silently truncated.
+    const workedPromise = fetchAll<WorkedEntry>(() =>
+      supabase
+        .from("brand_date_worked")
+        .select("brand_id, rep_id, worked_at, retailer_id")
+    );
+
+    const [repsRes, retailerRepRes, msgActivityRes] = await Promise.all([
       supabase
         .from("profiles")
         .select("id, full_name")
@@ -318,26 +325,29 @@ export default function AllBrandsBoardPage() {
             .select("id, rep_owner_user_id")
             .in("id", allRetailerIds)
         : Promise.resolve({ data: [] as { id: string; rep_owner_user_id: string | null }[], error: null }),
-      fetchAll<{ brand_id: string; created_at: string; sender_id: string | null; visibility: string }>(() =>
+      // Fetch client messages with sender_id for per-rep last-activity lookup.
+      // We keep eq("visibility", "client") so RLS policies that gate internal
+      // messages never silently drop the entire result set.
+      fetchAll<{ brand_id: string; created_at: string; sender_id: string | null }>(() =>
         supabase
           .from("brand_retailer_messages")
-          .select("brand_id, created_at, sender_id, visibility")
+          .select("brand_id, created_at, sender_id")
+          .eq("visibility", "client")
       ),
-      supabase
-        .from("brand_date_worked")
-        .select("brand_id, rep_id, worked_at, retailer_id"),
     ]);
 
+    // Await the already-running worked promise (runs concurrently with the above)
+    const workedResult = await workedPromise;
+
+    // msgActivityRes is already filtered to visibility="client"
     const msgLastActivity: Record<string, string> = {};
     const msgBySender: Record<string, Record<string, string>> = {};
     (msgActivityRes.data ?? []).forEach((m) => {
-      // All-reps aggregate: client messages only (keeps existing board behavior)
-      if (m.visibility === "client") {
-        if (!msgLastActivity[m.brand_id] || m.created_at > msgLastActivity[m.brand_id]) {
-          msgLastActivity[m.brand_id] = m.created_at;
-        }
+      // All-reps aggregate
+      if (!msgLastActivity[m.brand_id] || m.created_at > msgLastActivity[m.brand_id]) {
+        msgLastActivity[m.brand_id] = m.created_at;
       }
-      // Per-sender: all visibility types so rep-specific "last activity" is accurate
+      // Per-sender (sender_id may be null for legacy rows — skip those)
       if (m.sender_id) {
         if (!msgBySender[m.brand_id]) msgBySender[m.brand_id] = {};
         const existing = msgBySender[m.brand_id][m.sender_id];
@@ -362,7 +372,7 @@ export default function AllBrandsBoardPage() {
 
     // Set all state in one synchronous block so the first render has everything
     setBrandSummaries(summaries);
-    setWorkedEntries((workedRes.data ?? []) as WorkedEntry[]);
+    setWorkedEntries(workedResult.data); // fetchAll always returns an array, never null
     setMsgBySenderMap(msgBySender);
 
     if (!repsRes.error) setReps((repsRes.data ?? []) as RepProfile[]);
