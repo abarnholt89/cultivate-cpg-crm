@@ -4,7 +4,6 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
-import StatusBadge from "@/components/StatusBadge";
 
 type Role = "admin" | "rep" | "client" | null;
 
@@ -16,6 +15,14 @@ type TimingRow = {
   retailer_id: string;
   account_status: string;
   submitted_date: string | null;
+  universal_category: string | null;
+};
+
+type CategoryEntry = {
+  timingId: string;
+  accountStatus: string;
+  universal_category: string | null;
+  submittedDate: string | null;
 };
 
 type Retailer = {
@@ -32,11 +39,9 @@ type Message = {
 };
 
 type BoardRetailerRow = {
-  timingId: string;
   retailerId: string;
   banner: string;
-  accountStatus: string;
-  submittedDate: string | null;
+  categories: CategoryEntry[];   // sorted: null/primary first, then alpha
   latestClientNote: string | null;
   latestClientNoteDate: string | null;
   latestInternalNote: string | null;
@@ -111,6 +116,39 @@ function relativeTime(ts: string | null) {
   if (days < 7) return `${days}d ago`;
   if (days < 30) return `${Math.floor(days / 7)}w ago`;
   return `${Math.floor(days / 30)}mo ago`;
+}
+
+function statusShortLabel(status: string): string {
+  switch (status) {
+    case "awaiting_submission_opportunity": return "Awaiting";
+    case "in_process":                     return "In Process";
+    case "retailer_declined":              return "Declined";
+    case "not_a_target_account":           return "Not Target";
+    case "working_to_secure_anchor_account": return "Distributor";
+    default:                               return "—";
+  }
+}
+
+function statusPillBg(status: string): string {
+  switch (status) {
+    case "awaiting_submission_opportunity": return "#fef9c3";
+    case "in_process":                     return "#dbeafe";
+    case "retailer_declined":              return "#ffe4e6";
+    case "not_a_target_account":
+    case "working_to_secure_anchor_account": return "#f1f5f9";
+    default:                               return "#f1f5f9";
+  }
+}
+
+function statusPillFg(status: string): string {
+  switch (status) {
+    case "awaiting_submission_opportunity": return "#713f12";
+    case "in_process":                     return "#1e3a8a";
+    case "retailer_declined":              return "#881337";
+    case "not_a_target_account":
+    case "working_to_secure_anchor_account": return "#475569";
+    default:                               return "#64748b";
+  }
 }
 
 async function fetchAll<T>(buildQuery: () => any): Promise<{ data: T[]; error: string | null }> {
@@ -241,7 +279,7 @@ export default function AllBrandsBoardPage() {
     const { data: timing, error: timingErr } = await fetchAll<TimingRow>(() =>
       supabase
         .from("brand_retailer_timing")
-        .select("id, brand_id, retailer_id, account_status, submitted_date")
+        .select("id, brand_id, retailer_id, account_status, submitted_date, universal_category")
     );
 
     if (timingErr) { setError(timingErr); setLoading(false); return; }
@@ -286,10 +324,11 @@ export default function AllBrandsBoardPage() {
     const summaries: BrandSummary[] = brands
       .map((brand) => {
         const rows = byBrand[brand.id] ?? [];
+        const uniqueRetailers = new Set(rows.map((r) => r.retailer_id)).size;
         return {
           id: brand.id,
           name: brand.name,
-          retailerCount: rows.length,
+          retailerCount: uniqueRetailers,
           lastActivity: msgLastActivity[brand.id] ?? null,
         };
       })
@@ -373,18 +412,36 @@ export default function AllBrandsBoardPage() {
       if (!latestInternalMap[m.retailer_id]) latestInternalMap[m.retailer_id] = m;
     });
 
-    const rows: BoardRetailerRow[] = timing
-      .map((t) => {
-        const retailer = retailerMap[t.retailer_id];
+    // Group timing rows by retailer_id — one BoardRetailerRow per retailer
+    const byRetailer = new Map<string, TimingRow[]>();
+    for (const t of timing) {
+      if (!byRetailer.has(t.retailer_id)) byRetailer.set(t.retailer_id, []);
+      byRetailer.get(t.retailer_id)!.push(t);
+    }
+
+    const rows: BoardRetailerRow[] = [...byRetailer.entries()]
+      .map(([retailerId, timingRows]) => {
+        const retailer = retailerMap[retailerId];
         const banner = retailer?.banner?.trim() || retailer?.name || "Unknown Retailer";
-        const latestClient = latestClientMap[t.retailer_id] ?? null;
-        const latestInternal = latestInternalMap[t.retailer_id] ?? null;
+        const latestClient = latestClientMap[retailerId] ?? null;
+        const latestInternal = latestInternalMap[retailerId] ?? null;
+
+        // Sort categories: null/primary first, then alphabetical
+        const sortedTiming = [...timingRows].sort((a, b) => {
+          if (!a.universal_category && b.universal_category) return -1;
+          if (a.universal_category && !b.universal_category) return 1;
+          return (a.universal_category ?? "").localeCompare(b.universal_category ?? "");
+        });
+
         return {
-          timingId: t.id,
-          retailerId: t.retailer_id,
+          retailerId,
           banner,
-          accountStatus: t.account_status,
-          submittedDate: t.submitted_date,
+          categories: sortedTiming.map((t) => ({
+            timingId: t.id,
+            accountStatus: t.account_status,
+            universal_category: t.universal_category ?? null,
+            submittedDate: t.submitted_date,
+          })),
           latestClientNote: latestClient?.body ?? null,
           latestClientNoteDate: latestClient?.created_at ?? null,
           latestInternalNote: latestInternal?.body ?? null,
@@ -743,12 +800,12 @@ export default function AllBrandsBoardPage() {
                           <th className="w-8" />
                         </tr>
                       </thead>
-                      <tbody>
                         {rows.map((row, idx) => {
                           const key = `${brand.id}__${row.retailerId}`;
                           const isNoteOpen = expandedKey === key;
                           const isEven = idx % 2 === 0;
-                          const currentStatus = statusOverrides[row.timingId] ?? row.accountStatus;
+                          // Use primary (first) category's status for the left border color
+                          const primaryStatus = statusOverrides[row.categories[0]?.timingId] ?? row.categories[0]?.accountStatus ?? "";
                           return (
                             <>
                               <tr
@@ -764,11 +821,12 @@ export default function AllBrandsBoardPage() {
                                 }}
                                 onClick={() => toggleNoteEditor(brand.id, row.retailerId)}
                               >
+                                {/* Retailer name */}
                                 <td
                                   className="px-4 py-2.5 font-medium"
                                   style={{
                                     color: "var(--foreground)",
-                                    borderLeft: `4px solid ${statusLeftBorderColor(currentStatus)}`,
+                                    borderLeft: `4px solid ${statusLeftBorderColor(primaryStatus)}`,
                                   }}
                                 >
                                   <Link
@@ -781,28 +839,28 @@ export default function AllBrandsBoardPage() {
                                   </Link>
                                 </td>
 
-                                {/* Inline status edit — always-visible select, no intermediate edit mode */}
-                                <td className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
-                                  <select
-                                    value={currentStatus}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      updateStatus(row.timingId, currentStatus, e.target.value);
-                                    }}
-                                    disabled={statusSaving[row.timingId]}
-                                    className="text-xs rounded px-2 py-1 focus:outline-none focus:ring-1"
-                                    style={{
-                                      border: "1px solid var(--border)",
-                                      background: "var(--card)",
-                                      color: "var(--foreground)",
-                                      maxWidth: "180px",
-                                      opacity: statusSaving[row.timingId] ? 0.6 : 1,
-                                    }}
-                                  >
-                                    {STATUS_OPTIONS.map((opt) => (
-                                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                    ))}
-                                  </select>
+                                {/* Category + status pills */}
+                                <td className="px-4 py-2.5">
+                                  <div className="flex flex-wrap gap-1">
+                                    {row.categories.map((cat) => {
+                                      const status = statusOverrides[cat.timingId] ?? cat.accountStatus;
+                                      const label = cat.universal_category
+                                        ? `${cat.universal_category} · ${statusShortLabel(status)}`
+                                        : statusShortLabel(status);
+                                      return (
+                                        <span
+                                          key={cat.timingId}
+                                          className="inline-block text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap"
+                                          style={{
+                                            background: statusPillBg(status),
+                                            color: statusPillFg(status),
+                                          }}
+                                        >
+                                          {label}
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
                                 </td>
 
                                 <td className="px-4 py-2.5" style={{ color: "var(--muted-foreground)" }}>
@@ -834,6 +892,38 @@ export default function AllBrandsBoardPage() {
                                 >
                                   <td colSpan={5} className="px-4 pb-4 pt-2">
                                     <div className="space-y-3">
+                                      {/* Per-category status selects */}
+                                      <div className="flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
+                                        {row.categories.map((cat) => {
+                                          const status = statusOverrides[cat.timingId] ?? cat.accountStatus;
+                                          return (
+                                            <div key={cat.timingId} className="flex flex-col gap-0.5">
+                                              {cat.universal_category && (
+                                                <span className="text-xs font-medium" style={{ color: "var(--muted-foreground)" }}>
+                                                  {cat.universal_category}
+                                                </span>
+                                              )}
+                                              <select
+                                                value={status}
+                                                onChange={(e) => { e.stopPropagation(); updateStatus(cat.timingId, status, e.target.value); }}
+                                                disabled={statusSaving[cat.timingId]}
+                                                className="text-xs rounded px-2 py-1 focus:outline-none focus:ring-1"
+                                                style={{
+                                                  border: "1px solid var(--border)",
+                                                  background: "var(--card)",
+                                                  color: "var(--foreground)",
+                                                  opacity: statusSaving[cat.timingId] ? 0.6 : 1,
+                                                }}
+                                              >
+                                                {STATUS_OPTIONS.map((opt) => (
+                                                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                                ))}
+                                              </select>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+
                                       {/* 2-column note editor */}
                                       <div className="grid grid-cols-2 gap-4">
                                         {/* Client-facing note */}
