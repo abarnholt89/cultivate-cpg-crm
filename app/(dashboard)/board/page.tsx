@@ -104,7 +104,7 @@ function daysAgo(iso: string): number {
 
 function workedBadge(workedAt: string | null, allTouched: boolean): { label: string; bg: string; fg: string } {
   if (allTouched) return { label: "All Done ✓", bg: "#15803d", fg: "#fff" };
-  if (!workedAt) return { label: "Never", bg: "#ef4444", fg: "#fff" };
+  if (!workedAt) return { label: "No Activity", bg: "#ef4444", fg: "#fff" };
   const d = daysAgo(workedAt);
   const label = d === 0 ? "Today" : d === 1 ? "1d ago" : `${d}d ago`;
   if (d <= 14) return { label, bg: "#86efac", fg: "#14532d" };
@@ -185,6 +185,8 @@ export default function AllBrandsBoardPage() {
   const repFilterInitialized = useRef(false);
 
   const [brandSummaries, setBrandSummaries] = useState<BrandSummary[]>([]);
+  // Per-sender last activity: brand_id → sender_id → latest created_at
+  const [msgBySenderMap, setMsgBySenderMap] = useState<Record<string, Record<string, string>>>({});
   const [timingByBrand, setTimingByBrand] = useState<Record<string, TimingRow[]>>({});
 
   const [brandRows, setBrandRows] = useState<Record<string, BoardRetailerRow[]>>({});
@@ -316,11 +318,10 @@ export default function AllBrandsBoardPage() {
             .select("id, rep_owner_user_id")
             .in("id", allRetailerIds)
         : Promise.resolve({ data: [] as { id: string; rep_owner_user_id: string | null }[], error: null }),
-      fetchAll<{ brand_id: string; created_at: string }>(() =>
+      fetchAll<{ brand_id: string; created_at: string; sender_id: string | null; visibility: string }>(() =>
         supabase
           .from("brand_retailer_messages")
-          .select("brand_id, created_at")
-          .eq("visibility", "client")
+          .select("brand_id, created_at, sender_id, visibility")
       ),
       supabase
         .from("brand_date_worked")
@@ -328,9 +329,21 @@ export default function AllBrandsBoardPage() {
     ]);
 
     const msgLastActivity: Record<string, string> = {};
+    const msgBySender: Record<string, Record<string, string>> = {};
     (msgActivityRes.data ?? []).forEach((m) => {
-      if (!msgLastActivity[m.brand_id] || m.created_at > msgLastActivity[m.brand_id]) {
-        msgLastActivity[m.brand_id] = m.created_at;
+      // All-reps aggregate: client messages only (keeps existing board behavior)
+      if (m.visibility === "client") {
+        if (!msgLastActivity[m.brand_id] || m.created_at > msgLastActivity[m.brand_id]) {
+          msgLastActivity[m.brand_id] = m.created_at;
+        }
+      }
+      // Per-sender: all visibility types so rep-specific "last activity" is accurate
+      if (m.sender_id) {
+        if (!msgBySender[m.brand_id]) msgBySender[m.brand_id] = {};
+        const existing = msgBySender[m.brand_id][m.sender_id];
+        if (!existing || m.created_at > existing) {
+          msgBySender[m.brand_id][m.sender_id] = m.created_at;
+        }
       }
     });
 
@@ -350,6 +363,7 @@ export default function AllBrandsBoardPage() {
     // Set all state in one synchronous block so the first render has everything
     setBrandSummaries(summaries);
     setWorkedEntries((workedRes.data ?? []) as WorkedEntry[]);
+    setMsgBySenderMap(msgBySender);
 
     if (!repsRes.error) setReps((repsRes.data ?? []) as RepProfile[]);
 
@@ -801,15 +815,21 @@ export default function AllBrandsBoardPage() {
                       {brand.retailerCount} retailer{brand.retailerCount !== 1 ? "s" : ""}
                     </span>
                     <span className="text-xs shrink-0" style={{ color: "var(--muted-foreground)" }}>
-                      Last activity: {relativeTime(brand.lastActivity)}
+                      Last activity: {relativeTime(
+                        (repFilter && repFilter !== MY_TEAM)
+                          ? (msgBySenderMap[brand.id]?.[repFilter] ?? null)
+                          : brand.lastActivity
+                      )}
                     </span>
-                    {/* Date Worked badge */}
-                    <span
-                      className="text-xs font-medium rounded px-2 py-0.5 shrink-0"
-                      style={{ background: badge.bg, color: badge.fg }}
-                    >
-                      {badge.label}
-                    </span>
+                    {/* Date Worked badge — only meaningful for a specific rep */}
+                    {repFilter && repFilter !== MY_TEAM && (
+                      <span
+                        className="text-xs font-medium rounded px-2 py-0.5 shrink-0"
+                        style={{ background: badge.bg, color: badge.fg }}
+                      >
+                        {badge.label}
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-3 shrink-0 ml-4">
