@@ -301,8 +301,10 @@ export default function AllBrandsBoardPage() {
 
     const allRetailerIds = [...new Set(timing.map((t) => t.retailer_id))];
 
-    // Brand-level last activity always reflects client-visible messages
-    const [repsRes, retailerRepRes, msgActivityRes] = await Promise.all([
+    // Fetch all supporting data in parallel — keeping brand_date_worked in the same
+    // Promise.all ensures setBrandSummaries and setWorkedEntries are called in the
+    // same synchronous block so filteredSummaries sorts correctly on the first render.
+    const [repsRes, retailerRepRes, msgActivityRes, workedRes] = await Promise.all([
       supabase
         .from("profiles")
         .select("id, full_name")
@@ -320,6 +322,9 @@ export default function AllBrandsBoardPage() {
           .select("brand_id, created_at")
           .eq("visibility", "client")
       ),
+      supabase
+        .from("brand_date_worked")
+        .select("brand_id, rep_id, worked_at, retailer_id"),
     ]);
 
     const msgLastActivity: Record<string, string> = {};
@@ -342,13 +347,9 @@ export default function AllBrandsBoardPage() {
       })
       .filter((b) => b.retailerCount > 0);
 
+    // Set all state in one synchronous block so the first render has everything
     setBrandSummaries(summaries);
-
-    // Load all date-worked entries for display (all reps, all brands, with retailer_id)
-    const { data: workedData } = await supabase
-      .from("brand_date_worked")
-      .select("brand_id, rep_id, worked_at, retailer_id");
-    setWorkedEntries((workedData ?? []) as WorkedEntry[]);
+    setWorkedEntries((workedRes.data ?? []) as WorkedEntry[]);
 
     if (!repsRes.error) setReps((repsRes.data ?? []) as RepProfile[]);
 
@@ -802,25 +803,13 @@ export default function AllBrandsBoardPage() {
                     <span className="text-xs shrink-0" style={{ color: "var(--muted-foreground)" }}>
                       Last activity: {relativeTime(brand.lastActivity)}
                     </span>
-                    {/* Date Worked badge + button */}
+                    {/* Date Worked badge */}
                     <span
                       className="text-xs font-medium rounded px-2 py-0.5 shrink-0"
                       style={{ background: badge.bg, color: badge.fg }}
                     >
                       {badge.label}
                     </span>
-                    <button
-                      className="text-xs px-2 py-0.5 rounded shrink-0 font-medium transition-opacity"
-                      style={{
-                        background: "#123b52",
-                        color: "#78f5cd",
-                        opacity: dateWorkedSaving[brand.id] ? 0.6 : 1,
-                      }}
-                      disabled={dateWorkedSaving[brand.id]}
-                      onClick={(e) => { e.stopPropagation(); markWorked(brand.id); }}
-                    >
-                      {dateWorkedSaving[brand.id] ? "…" : "✓ Mark Worked"}
-                    </button>
                   </div>
 
                   <div className="flex items-center gap-3 shrink-0 ml-4">
