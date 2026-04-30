@@ -205,8 +205,10 @@ export default function AllBrandsBoardPage() {
   const [taskForm, setTaskForm] = useState({ title: "", notes: "", due_date: "", assigned_to: "" });
   const [taskSaving, setTaskSaving] = useState(false);
 
-  // Date Worked — raw entries (brand_id, rep_id, retailer_id, worked_at)
+  // Date Worked — raw entries kept for per-retailer "all touched" check
   const [workedEntries, setWorkedEntries] = useState<WorkedEntry[]>([]);
+  // Derived map stored as state (not useMemo) so it updates reliably after async fetch
+  const [latestWorkedMap, setLatestWorkedMap] = useState<Record<string, Record<string, string>>>({});
   const [dateWorkedSaving, setDateWorkedSaving] = useState<Record<string, boolean>>({});
   const [snoozeSaving, setSnoozeSaving] = useState<Record<string, boolean>>({});
 
@@ -370,17 +372,19 @@ export default function AllBrandsBoardPage() {
       })
       .filter((b) => b.retailerCount > 0);
 
-    // DEBUG — remove after diagnosis
-    console.log("[DEBUG load] workedResult.data.length:", workedResult.data.length);
-    console.log("[DEBUG load] workedResult.error:", workedResult.error);
-    const uniqueSenders = [...new Set(
-      Object.values(msgBySender).flatMap((byBrand) => Object.keys(byBrand))
-    )];
-    console.log("[DEBUG load] unique sender_ids in msgBySenderMap:", uniqueSenders);
+    // Build latestWorkedMap here (not in useMemo) so it lands in state at the same
+    // time as workedEntries — useMemo can fire before the async setState is processed.
+    const nextWorkedMap: Record<string, Record<string, string>> = {};
+    for (const e of workedResult.data) {
+      if (!nextWorkedMap[e.brand_id]) nextWorkedMap[e.brand_id] = {};
+      const existing = nextWorkedMap[e.brand_id][e.rep_id];
+      if (!existing || e.worked_at > existing) nextWorkedMap[e.brand_id][e.rep_id] = e.worked_at;
+    }
 
     // Set all state in one synchronous block so the first render has everything
     setBrandSummaries(summaries);
-    setWorkedEntries(workedResult.data); // fetchAll always returns an array, never null
+    setWorkedEntries(workedResult.data);
+    setLatestWorkedMap(nextWorkedMap);
     setMsgBySenderMap(msgBySender);
 
     if (!repsRes.error) setReps((repsRes.data ?? []) as RepProfile[]);
@@ -563,6 +567,10 @@ export default function AllBrandsBoardPage() {
     }).then(({ error: stampErr }) => {
       if (!stampErr) {
         setWorkedEntries((prev) => [...prev, { brand_id: brandId, rep_id: userId!, retailer_id: retailerId, worked_at: today }]);
+        setLatestWorkedMap((prev) => ({
+          ...prev,
+          [brandId]: { ...(prev[brandId] ?? {}), [userId!]: today },
+        }));
       }
     });
 
@@ -631,6 +639,10 @@ export default function AllBrandsBoardPage() {
     });
     if (!error) {
       setWorkedEntries((prev) => [...prev, { brand_id: brandId, rep_id: userId!, retailer_id: null, worked_at: today }]);
+      setLatestWorkedMap((prev) => ({
+        ...prev,
+        [brandId]: { ...(prev[brandId] ?? {}), [userId!]: today },
+      }));
     }
     setDateWorkedSaving((s) => ({ ...s, [brandId]: false }));
   }
@@ -648,25 +660,18 @@ export default function AllBrandsBoardPage() {
     });
     if (!error) {
       setWorkedEntries((prev) => [...prev, { brand_id: brandId, rep_id: userId!, retailer_id: retailerId, worked_at: today }]);
+      setLatestWorkedMap((prev) => ({
+        ...prev,
+        [brandId]: { ...(prev[brandId] ?? {}), [userId!]: today },
+      }));
     }
     setSnoozeSaving((s) => ({ ...s, [snoozeKey]: false }));
   }
 
-  // ── Derived: latest worked_at per brand+rep ───────────────────────────────
-
-  const latestWorkedMap = useMemo<Record<string, Record<string, string>>>(() => {
-    const result: Record<string, Record<string, string>> = {};
-    for (const e of workedEntries) {
-      if (!result[e.brand_id]) result[e.brand_id] = {};
-      const existing = result[e.brand_id][e.rep_id];
-      if (!existing || e.worked_at > existing) result[e.brand_id][e.rep_id] = e.worked_at;
-    }
-    // DEBUG — remove after diagnosis
-    const uniqueRepIds = [...new Set(workedEntries.map((e) => e.rep_id))];
-    console.log("[DEBUG latestWorkedMap] workedEntries.length:", workedEntries.length);
-    console.log("[DEBUG latestWorkedMap] unique rep_ids in brand_date_worked:", uniqueRepIds);
-    return result;
-  }, [workedEntries]);
+  // latestWorkedMap is now a useState (set in loadSummaries) — not a useMemo.
+  // useMemo fired with the initial empty workedEntries before the async fetch
+  // resolved, and React's batching prevented a re-run after setWorkedEntries.
+  // Storing it as state alongside workedEntries ensures they update together.
 
   // ── Filter ────────────────────────────────────────────────────────────────
 
@@ -740,11 +745,7 @@ export default function AllBrandsBoardPage() {
           reps.length > 0 && (
             <select
               value={repFilter}
-              onChange={(e) => {
-                // DEBUG — remove after diagnosis
-                console.log("[DEBUG repFilter] selected option value:", e.target.value);
-                setRepFilter(e.target.value);
-              }}
+              onChange={(e) => setRepFilter(e.target.value)}
               className="rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
               style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
             >
