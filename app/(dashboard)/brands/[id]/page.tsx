@@ -489,11 +489,6 @@ export default function BrandDashboardPage() {
           <Link href={`/brands/${brandId}/products`} className="px-3 py-1.5 rounded border hover:bg-gray-50">
             Products
           </Link>
-          {role !== "client" && (
-            <Link href="/board" className="px-3 py-1.5 rounded border hover:bg-gray-50">
-              Board
-            </Link>
-          )}
           <Link href={`/brands/${brandId}/category-review`} className="px-3 py-1.5 rounded border hover:bg-gray-50">
             Category Review
           </Link>

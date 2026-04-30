@@ -430,7 +430,7 @@ export default function BrandRetailersPage() {
           id: row.id,
           brand_id: row.brand_id,
           retailer_id: row.retailer_id,
-          account_status: (row.account_status ?? "upcoming_review") as AccountStatus,
+          account_status: (row.account_status ?? "") as AccountStatus,
           schedule_mode: (row.schedule_mode ?? "open") as "scheduled" | "open",
           submitted_date: row.submitted_date ?? null,
           submitted_notes: row.submitted_notes ?? null,
@@ -439,9 +439,26 @@ export default function BrandRetailersPage() {
           universal_category: row.universal_category ?? null,
         });
       });
-      // Sort: null/primary category first, then alphabetical
+      // Deduplicate by normalized category (trim + lowercase + strip punctuation),
+      // keeping the row whose category string contains commas (correct punctuation).
       Object.keys(nextPipelineMap).forEach((rid) => {
-        nextPipelineMap[rid].sort((a, b) => {
+        const rows = nextPipelineMap[rid];
+        const seen = new Map<string, PipelineRow>(); // normalizedKey → row
+        for (const row of rows) {
+          const normalized = (row.universal_category ?? "").trim().toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ");
+          if (!seen.has(normalized)) {
+            seen.set(normalized, row);
+          } else {
+            // Prefer the row whose category contains a comma
+            const existing = seen.get(normalized)!;
+            const existingHasComma = (existing.universal_category ?? "").includes(",");
+            const rowHasComma = (row.universal_category ?? "").includes(",");
+            if (rowHasComma && !existingHasComma) {
+              seen.set(normalized, row);
+            }
+          }
+        }
+        nextPipelineMap[rid] = [...seen.values()].sort((a, b) => {
           if (!a.universal_category && b.universal_category) return -1;
           if (a.universal_category && !b.universal_category) return 1;
           return (a.universal_category ?? "").localeCompare(b.universal_category ?? "");
@@ -618,12 +635,29 @@ export default function BrandRetailersPage() {
       setSubmissionsMap(nextSubmissionsMap);
 
       // Fetch brand categories for submission dropdown
-      const { data: catData } = await supabase
+      const { data: catData, error: catError } = await supabase
         .from("brand_category_access")
         .select("universal_category")
         .eq("brand_id", brandId)
         .order("universal_category");
-      setBrandCategories(((catData ?? []) as { universal_category: string }[]).map((c) => c.universal_category));
+      console.log("[brandCategories] brand_category_access result:", { catData, catError, brandId });
+      const accessCats = ((catData ?? []) as { universal_category: string }[])
+        .map((c) => c.universal_category)
+        .filter(Boolean);
+      if (accessCats.length > 0) {
+        setBrandCategories(accessCats);
+      } else {
+        // Fallback: extract unique non-null categories from the already-loaded pipeline data
+        const fallbackCats = [
+          ...new Set(
+            (pipelineData ?? [])
+              .map((r: any) => r.universal_category)
+              .filter((c: string | null): c is string => !!c)
+          ),
+        ].sort();
+        console.log("[brandCategories] falling back to pipeline categories:", fallbackCats);
+        setBrandCategories(fallbackCats);
+      }
 
       // Scroll to hashed retailer card after all data is loaded and rendered.
       // We defer with setTimeout so React has flushed all the state updates above
@@ -1427,13 +1461,11 @@ export default function BrandRetailersPage() {
           <Link href={`/brands/${brandId}/products`} className="px-3 py-1.5 rounded border hover:bg-gray-50">
             Products
           </Link>
-          {isRepOrAdmin && (
-            <Link href="/board" className="px-3 py-1.5 rounded border hover:bg-gray-50">
-              Board
-            </Link>
-          )}
           <Link href={`/brands/${brandId}/category-review`} className="px-3 py-1.5 rounded border hover:bg-gray-50">
             Category Review
+          </Link>
+          <Link href={`/promotions?brand=${brandId}`} className="px-3 py-1.5 rounded border hover:bg-gray-50">
+            Promotions
           </Link>
         </div>
       </div>
@@ -2213,25 +2245,28 @@ export default function BrandRetailersPage() {
                                         if (isImageMime(a.mime_type)) {
                                           const url = signedImageUrls[a.id];
                                           return url ? (
-                                            <img
-                                              key={a.id}
-                                              src={url}
-                                              alt={a.file_name}
-                                              title="Click to open full size"
-                                              onClick={() => openAttachment(a.storage_path)}
-                                              style={{
-                                                maxWidth: 200,
-                                                maxHeight: 160,
-                                                borderRadius: 6,
-                                                objectFit: "cover",
-                                                display: "block",
-                                                cursor: "pointer",
-                                              }}
-                                              onError={(e) => {
-                                                (e.currentTarget as HTMLImageElement).style.display = "none";
-                                                e.currentTarget.insertAdjacentText("afterend", "File unavailable");
-                                              }}
-                                            />
+                                            <div key={a.id}>
+                                              <img
+                                                src={url}
+                                                alt={a.file_name}
+                                                style={{
+                                                  maxWidth: 400,
+                                                  borderRadius: 6,
+                                                  display: "block",
+                                                }}
+                                                onError={(e) => {
+                                                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                                                }}
+                                              />
+                                              <button
+                                                type="button"
+                                                onClick={() => openAttachment(a.storage_path)}
+                                                className="text-xs mt-1 underline"
+                                                style={{ color: "var(--muted-foreground)" }}
+                                              >
+                                                Download {a.file_name}{a.file_size ? ` (${formatFileSize(a.file_size)})` : ""}
+                                              </button>
+                                            </div>
                                           ) : (
                                             <div key={a.id} className="text-xs italic" style={{ color: "var(--muted-foreground)" }}>
                                               Loading image…

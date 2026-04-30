@@ -551,7 +551,7 @@ export default function BrandProductsPage() {
 
   return (
     <div className="space-y-6 p-6">
-      <div className="space-y-3">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <Link href="/brands" className="text-sm text-muted-foreground hover:text-foreground">← Brands</Link>
           <h1 className="text-3xl font-bold mt-2 text-foreground">{brand?.name ?? "Brand"} — Products</h1>
@@ -563,8 +563,8 @@ export default function BrandProductsPage() {
           <Link href={`/brands/${brandId}`} className="px-3 py-1.5 rounded border hover:bg-gray-50">Overview</Link>
           <Link href={`/brands/${brandId}/retailers`} className="px-3 py-1.5 rounded border hover:bg-gray-50">Retailers</Link>
           <span className="px-3 py-1.5 rounded border text-white" style={{ background: "var(--foreground)" }}>Products</span>
-          {isRepOrAdmin && <Link href="/board" className="px-3 py-1.5 rounded border hover:bg-gray-50">Board</Link>}
           <Link href={`/brands/${brandId}/category-review`} className="px-3 py-1.5 rounded border hover:bg-gray-50">Category Review</Link>
+          <Link href={`/promotions?brand=${brandId}`} className="px-3 py-1.5 rounded border hover:bg-gray-50">Promotions</Link>
         </div>
       </div>
 
