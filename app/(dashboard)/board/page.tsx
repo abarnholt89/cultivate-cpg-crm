@@ -266,7 +266,6 @@ export default function AllBrandsBoardPage() {
   // ── Initial summary load ──────────────────────────────────────────────────
 
   async function loadSummaries() {
-    console.log("BOARD loadSummaries START");
     setLoading(true);
     setError("");
 
@@ -388,8 +387,6 @@ export default function AllBrandsBoardPage() {
     setLatestWorkedMap(nextWorkedMap);
     setMsgBySenderMap(msgBySender);
 
-    console.log("BOARD repsRes:", JSON.stringify(repsRes.data));
-    console.log("BOARD repsRes.error:", repsRes.error);
     if (!repsRes.error) setReps((repsRes.data ?? []) as RepProfile[]);
 
     if (!retailerRepRes.error) {
@@ -712,8 +709,6 @@ export default function AllBrandsBoardPage() {
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  console.log("BOARD RENDER — role:", role, "reps.length:", reps.length, "repFilter:", repFilter, "latestWorkedMap keys:", Object.keys(latestWorkedMap).length);
-
   return (
     <div className="p-6 space-y-5 min-h-screen">
       {/* Error toast */}
@@ -785,34 +780,21 @@ export default function AllBrandsBoardPage() {
         </p>
       ) : (
         <div className="space-y-2">
-          {filteredSummaries.map((brand, brandIdx) => {
+          {filteredSummaries.map((brand) => {
             const isOpen = expandedBrandIds.has(brand.id);
-            // Which rep's date-worked to display: specific rep if filtering, else logged-in user
-            const targetRepId = (repFilter && repFilter !== MY_TEAM) ? repFilter : (userId ?? "");
-            const workedAt = latestWorkedMap[brand.id]?.[targetRepId] ?? null;
-
-            // DEBUG — log for first brand row only
-            if (brandIdx === 0) {
-              const topKeys = Object.keys(latestWorkedMap).slice(0, 3);
-              const innerKeys = latestWorkedMap[brand.id] ? Object.keys(latestWorkedMap[brand.id]) : [];
-              console.log("BOARD DEBUG first brand:", brand.id, brand.name);
-              console.log("BOARD DEBUG latestWorkedMap first 3 outer keys:", topKeys);
-              console.log("BOARD DEBUG latestWorkedMap[brand.id] keys:", innerKeys);
-              console.log("BOARD DEBUG targetRepId:", targetRepId);
-              console.log("BOARD DEBUG workedAt lookup result:", workedAt);
-            }
+            const workedAt = latestWorkedMap[brand.id]?.[repFilter] ?? null;
 
             // Dark green = rep has touched ALL assigned retailers in the current 60-day round
             const roundStart = new Date(Date.now() - 60 * 86400000).toISOString().split("T")[0];
             const brandTiming = timingByBrand[brand.id] ?? [];
             const assignedRetailerIds = [...new Set(
               brandTiming
-                .filter((t) => retailerRepMap[t.retailer_id] === targetRepId)
+                .filter((t) => retailerRepMap[t.retailer_id] === repFilter)
                 .map((t) => t.retailer_id)
             )];
             const allTouched = assignedRetailerIds.length > 0 && (() => {
               const entries = workedEntries.filter(
-                (e) => e.brand_id === brand.id && e.rep_id === targetRepId && e.worked_at >= roundStart
+                (e) => e.brand_id === brand.id && e.rep_id === repFilter && e.worked_at >= roundStart
               );
               if (entries.some((e) => e.retailer_id === null)) return true; // brand-level touch counts for all
               const touchedSet = new Set(entries.map((e) => e.retailer_id));
