@@ -324,6 +324,7 @@ export default function BrandRetailersPage() {
   // Date Worked (brand-level, for the logged-in rep)
   const [dateWorked, setDateWorked] = useState<string | null>(null);
   const [dateWorkedSaving, setDateWorkedSaving] = useState(false);
+  const [snoozeSaving, setSnoozeSaving] = useState<Record<string, boolean>>({});
 
   // Submissions per retailer
   const [submissionsMap, setSubmissionsMap] = useState<Record<string, SubmissionRow[]>>({});
@@ -1001,9 +1002,23 @@ export default function BrandRetailersPage() {
       brand_id: brandId,
       rep_id: userId,
       worked_at: today,
+      // retailer_id intentionally null — brand-level touch
     });
     if (!error) setDateWorked(today);
     setDateWorkedSaving(false);
+  }
+
+  async function snoozeRetailer(retailerId: string) {
+    if (!userId || !brandId) return;
+    setSnoozeSaving((prev) => ({ ...prev, [retailerId]: true }));
+    const today = new Date().toISOString().split("T")[0];
+    await supabase.from("brand_date_worked").insert({
+      brand_id: brandId,
+      rep_id: userId,
+      retailer_id: retailerId,
+      worked_at: today,
+    });
+    setSnoozeSaving((prev) => ({ ...prev, [retailerId]: false }));
   }
 
   async function openSkuModal(retailerId: string, retailerName: string) {
@@ -1329,6 +1344,17 @@ export default function BrandRetailersPage() {
     try {
       await logActivity({ userId, brandId, retailerId, type: "note", description: activeTab === "client" ? "Client message" : "Internal note" });
     } catch { /* non-fatal */ }
+
+    // Auto-stamp date worked (silent — no extra UI feedback)
+    if (isRepOrAdmin) {
+      const today = new Date().toISOString().split("T")[0];
+      supabase.from("brand_date_worked").insert({
+        brand_id: brandId,
+        rep_id: userId,
+        retailer_id: retailerId,
+        worked_at: today,
+      }); // fire and forget
+    }
 
     if (isRepOrAdmin && activeTab === "client" && brand?.message_notifications_enabled) {
       try {
@@ -2659,6 +2685,18 @@ export default function BrandRetailersPage() {
                         }}
                       >
                         {dateWorkedSaving ? "Saving…" : "Mark Worked Today"}
+                      </button>
+                      <button
+                        onClick={() => snoozeRetailer(r.id)}
+                        disabled={!!snoozeSaving[r.id]}
+                        className="text-xs px-3 py-1 rounded-lg font-medium transition-opacity"
+                        style={{
+                          background: "#1e293b",
+                          color: "#94a3b8",
+                          opacity: snoozeSaving[r.id] ? 0.6 : 1,
+                        }}
+                      >
+                        {snoozeSaving[r.id] ? "…" : "💤 Snooze"}
                       </button>
                     </div>
                   );

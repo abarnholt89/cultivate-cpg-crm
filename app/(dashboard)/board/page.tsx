@@ -60,6 +60,13 @@ type RepProfile = {
   full_name: string | null;
 };
 
+type WorkedEntry = {
+  brand_id: string;
+  rep_id: string;
+  retailer_id: string | null;
+  worked_at: string;
+};
+
 const MY_TEAM = "__my_team__";
 
 const MANAGER_MAP: Record<string, string[]> = {
@@ -95,14 +102,14 @@ function daysAgo(iso: string): number {
   return Math.floor((Date.now() - new Date(iso + "T00:00:00").getTime()) / 86400000);
 }
 
-function workedBadge(workedAt: string | null): { label: string; bg: string; fg: string } {
+function workedBadge(workedAt: string | null, allTouched: boolean): { label: string; bg: string; fg: string } {
+  if (allTouched) return { label: "All Done ✓", bg: "#15803d", fg: "#fff" };
   if (!workedAt) return { label: "Never", bg: "#ef4444", fg: "#fff" };
   const d = daysAgo(workedAt);
   const label = d === 0 ? "Today" : d === 1 ? "1d ago" : `${d}d ago`;
-  if (d <= 14) return { label, bg: "#15803d", fg: "#fff" };
-  if (d <= 30) return { label, bg: "#86efac", fg: "#14532d" };
-  if (d <= 45) return { label, bg: "#fde047", fg: "#713f12" };
-  if (d <= 60) return { label, bg: "#fb923c", fg: "#431407" };
+  if (d <= 14) return { label, bg: "#86efac", fg: "#14532d" };
+  if (d <= 30) return { label, bg: "#fde047", fg: "#713f12" };
+  if (d <= 45) return { label, bg: "#fb923c", fg: "#431407" };
   return { label, bg: "#ef4444", fg: "#fff" };
 }
 
@@ -196,9 +203,10 @@ export default function AllBrandsBoardPage() {
   const [taskForm, setTaskForm] = useState({ title: "", notes: "", due_date: "", assigned_to: "" });
   const [taskSaving, setTaskSaving] = useState(false);
 
-  // Date Worked — brand_id → rep_id → most recent worked_at (ISO date)
-  const [workedMap, setWorkedMap] = useState<Record<string, Record<string, string>>>({});
+  // Date Worked — raw entries (brand_id, rep_id, retailer_id, worked_at)
+  const [workedEntries, setWorkedEntries] = useState<WorkedEntry[]>([]);
   const [dateWorkedSaving, setDateWorkedSaving] = useState<Record<string, boolean>>({});
+  const [snoozeSaving, setSnoozeSaving] = useState<Record<string, boolean>>({});
 
   // Inline status editing — no intermediate edit-mode; select is always visible
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
@@ -336,19 +344,11 @@ export default function AllBrandsBoardPage() {
 
     setBrandSummaries(summaries);
 
-    // Load all date-worked entries for display (all reps, all brands)
+    // Load all date-worked entries for display (all reps, all brands, with retailer_id)
     const { data: workedData } = await supabase
       .from("brand_date_worked")
-      .select("brand_id, rep_id, worked_at");
-    const nextWorkedMap: Record<string, Record<string, string>> = {};
-    (workedData ?? []).forEach((w: any) => {
-      if (!nextWorkedMap[w.brand_id]) nextWorkedMap[w.brand_id] = {};
-      const existing = nextWorkedMap[w.brand_id][w.rep_id];
-      if (!existing || w.worked_at > existing) {
-        nextWorkedMap[w.brand_id][w.rep_id] = w.worked_at;
-      }
-    });
-    setWorkedMap(nextWorkedMap);
+      .select("brand_id, rep_id, worked_at, retailer_id");
+    setWorkedEntries((workedData ?? []) as WorkedEntry[]);
 
     if (!repsRes.error) setReps((repsRes.data ?? []) as RepProfile[]);
 
@@ -520,6 +520,19 @@ export default function AllBrandsBoardPage() {
     if (visibility === "client") setClientNoteText("");
     else setInternalNoteText("");
 
+    // Auto-stamp date worked (silent — no extra UI feedback)
+    const today = new Date().toISOString().split("T")[0];
+    supabase.from("brand_date_worked").insert({
+      brand_id: brandId,
+      rep_id: userId,
+      retailer_id: retailerId,
+      worked_at: today,
+    }).then(({ error: stampErr }) => {
+      if (!stampErr) {
+        setWorkedEntries((prev) => [...prev, { brand_id: brandId, rep_id: userId!, retailer_id: retailerId, worked_at: today }]);
+      }
+    });
+
     setBrandRows((s) => { const next = { ...s }; delete next[brandId]; return next; });
     loadBrandRows(brandId);
   }
@@ -581,15 +594,42 @@ export default function AllBrandsBoardPage() {
       brand_id: brandId,
       rep_id: userId,
       worked_at: today,
+      // retailer_id intentionally null — brand-level touch counts for all retailers
     });
     if (!error) {
-      setWorkedMap((prev) => ({
-        ...prev,
-        [brandId]: { ...(prev[brandId] ?? {}), [userId]: today },
-      }));
+      setWorkedEntries((prev) => [...prev, { brand_id: brandId, rep_id: userId!, retailer_id: null, worked_at: today }]);
     }
     setDateWorkedSaving((s) => ({ ...s, [brandId]: false }));
   }
+
+  async function snoozeRetailer(brandId: string, retailerId: string) {
+    if (!userId) return;
+    const snoozeKey = `${brandId}__${retailerId}`;
+    setSnoozeSaving((s) => ({ ...s, [snoozeKey]: true }));
+    const today = new Date().toISOString().split("T")[0];
+    const { error } = await supabase.from("brand_date_worked").insert({
+      brand_id: brandId,
+      rep_id: userId,
+      retailer_id: retailerId,
+      worked_at: today,
+    });
+    if (!error) {
+      setWorkedEntries((prev) => [...prev, { brand_id: brandId, rep_id: userId!, retailer_id: retailerId, worked_at: today }]);
+    }
+    setSnoozeSaving((s) => ({ ...s, [snoozeKey]: false }));
+  }
+
+  // ── Derived: latest worked_at per brand+rep ───────────────────────────────
+
+  const latestWorkedMap = useMemo<Record<string, Record<string, string>>>(() => {
+    const result: Record<string, Record<string, string>> = {};
+    for (const e of workedEntries) {
+      if (!result[e.brand_id]) result[e.brand_id] = {};
+      const existing = result[e.brand_id][e.rep_id];
+      if (!existing || e.worked_at > existing) result[e.brand_id][e.rep_id] = e.worked_at;
+    }
+    return result;
+  }, [workedEntries]);
 
   // ── Filter ────────────────────────────────────────────────────────────────
 
@@ -611,8 +651,19 @@ export default function AllBrandsBoardPage() {
         return brandTiming.some((t) => retailerRepMap[t.retailer_id] === repFilter);
       });
     }
+    // When filtering by a specific rep, sort oldest-to-newest by date worked (never first)
+    if (repFilter && repFilter !== MY_TEAM) {
+      result = [...result].sort((a, b) => {
+        const aW = latestWorkedMap[a.id]?.[repFilter] ?? null;
+        const bW = latestWorkedMap[b.id]?.[repFilter] ?? null;
+        if (!aW && !bW) return a.name.localeCompare(b.name);
+        if (!aW) return -1;
+        if (!bW) return 1;
+        return aW.localeCompare(bW); // lexicographic ascending = oldest date first
+      });
+    }
     return result;
-  }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand, userId]);
+  }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand, userId, latestWorkedMap]);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -691,8 +742,26 @@ export default function AllBrandsBoardPage() {
             const isOpen = expandedBrandIds.has(brand.id);
             // Which rep's date-worked to display: specific rep if filtering, else logged-in user
             const targetRepId = (repFilter && repFilter !== MY_TEAM) ? repFilter : (userId ?? "");
-            const workedAt = workedMap[brand.id]?.[targetRepId] ?? null;
-            const badge = workedBadge(workedAt);
+            const workedAt = latestWorkedMap[brand.id]?.[targetRepId] ?? null;
+
+            // Dark green = rep has touched ALL assigned retailers in the current 60-day round
+            const roundStart = new Date(Date.now() - 60 * 86400000).toISOString().split("T")[0];
+            const brandTiming = timingByBrand[brand.id] ?? [];
+            const assignedRetailerIds = [...new Set(
+              brandTiming
+                .filter((t) => retailerRepMap[t.retailer_id] === targetRepId)
+                .map((t) => t.retailer_id)
+            )];
+            const allTouched = assignedRetailerIds.length > 0 && (() => {
+              const entries = workedEntries.filter(
+                (e) => e.brand_id === brand.id && e.rep_id === targetRepId && e.worked_at >= roundStart
+              );
+              if (entries.some((e) => e.retailer_id === null)) return true; // brand-level touch counts for all
+              const touchedSet = new Set(entries.map((e) => e.retailer_id));
+              return assignedRetailerIds.every((r) => touchedSet.has(r));
+            })();
+
+            const badge = workedBadge(workedAt, allTouched);
 
             const rawRows = brandRows[brand.id] ?? null;
             const rows = rawRows === null
@@ -1007,6 +1076,18 @@ export default function AllBrandsBoardPage() {
                                       </div>
 
                                       <div className="flex items-center gap-3 flex-wrap pt-1">
+                                        <button
+                                          className="text-xs px-2 py-1 rounded font-medium transition-opacity"
+                                          style={{
+                                            background: "#1e293b",
+                                            color: "#94a3b8",
+                                            opacity: snoozeSaving[`${brand.id}__${row.retailerId}`] ? 0.6 : 1,
+                                          }}
+                                          disabled={!!snoozeSaving[`${brand.id}__${row.retailerId}`]}
+                                          onClick={(e) => { e.stopPropagation(); snoozeRetailer(brand.id, row.retailerId); }}
+                                        >
+                                          {snoozeSaving[`${brand.id}__${row.retailerId}`] ? "…" : "💤 Snooze"}
+                                        </button>
                                         <button
                                           className="text-sm underline"
                                           style={{ color: "var(--muted-foreground)" }}
