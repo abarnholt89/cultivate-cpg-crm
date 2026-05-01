@@ -1107,8 +1107,8 @@ export default function ProductsLibraryPage() {
                               const isListed = dcListings.get(key) ?? false;
                               const isFirstUnfi = dc.distributor === "UNFI" && (i === 0 || allDcCodes[i - 1].distributor === "KeHE");
                               return (
-                                <td key={`${dc.distributor}-${dc.code}`} onClick={() => isRepOrAdmin && toggleDc(p.id, dc.distributor, dc.code)}
-                                  style={{ textAlign: "center", padding: "6px 4px", cursor: isRepOrAdmin ? "pointer" : "default", background: isListed ? "rgba(22,163,74,0.12)" : rowBg, borderLeft: isFirstUnfi ? "2px solid rgba(59,130,246,0.2)" : "1px solid var(--border)", minWidth: 30, transition: "background 0.1s" }}
+                                <td key={`${dc.distributor}-${dc.code}`}
+                                  style={{ textAlign: "center", padding: "6px 4px", cursor: "default", background: isListed ? "rgba(22,163,74,0.12)" : rowBg, borderLeft: isFirstUnfi ? "2px solid rgba(59,130,246,0.2)" : "1px solid var(--border)", minWidth: 30, transition: "background 0.1s" }}
                                   title={`[${dc.distributor}] ${dc.code} — ${isListed ? "Listed" : "Not listed"}`}>
                                   {isListed
                                     ? <span style={{ color: "#16a34a", fontWeight: 700, fontSize: "0.85rem" }}>✓</span>
@@ -1123,7 +1123,7 @@ export default function ProductsLibraryPage() {
                   </table>
                 </div>
                 {isRepOrAdmin && (
-                  <p className="text-xs text-muted-foreground">Click DC cells to toggle listing · Click item # cells to edit inline</p>
+                  <p className="text-xs text-muted-foreground">Click item # cells to edit inline</p>
                 )}
               </>
             );
