@@ -738,18 +738,19 @@ export default function AllBrandsBoardPage() {
           {filteredSummaries.map((brand) => {
             const isOpen = expandedBrandIds.has(brand.id);
             const workedAt = repFilter && repFilter !== MY_TEAM
-              ? (workedEntries
-                  .filter((e) => e.brand_id === brand.id && e.rep_id === repFilter)
-                  .map((e) => e.worked_at)
-                  .sort()
-                  .at(-1) ?? null)
+              ? (() => {
+                  const fromWorked = workedEntries
+                    .filter((e) => e.brand_id === brand.id && e.rep_id === repFilter)
+                    .map((e) => e.worked_at)
+                    .sort()
+                    .at(-1) ?? null;
+                  if (fromWorked) return fromWorked;
+                  // Fall back to most recent message sent by this rep for this brand
+                  const fromMsg = msgBySenderMap[brand.id]?.[repFilter] ?? null;
+                  return fromMsg ? fromMsg.split("T")[0] : null;
+                })()
               : null;
             const badge = workedBadge(workedAt);
-            if (brand.name === 'Aeras') {
-              console.log('BADGE brand.id:', brand.id);
-              console.log('BADGE workedEntries sample:', workedEntries.slice(0, 3));
-              console.log('BADGE filter result:', workedEntries.filter(e => e.brand_id === brand.id && e.rep_id === repFilter));
-            }
 
             const rawRows = brandRows[brand.id] ?? null;
             const rows = rawRows === null
