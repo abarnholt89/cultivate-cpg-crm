@@ -708,10 +708,7 @@ export default function BrandDashboardPage() {
             ) : (
               <div className="space-y-3 mt-4">
                 {topAuthorized.map((row, index) => {
-                  const retailer = retailersById[row.retailer_id];
-                  const headline = retailer?.banner?.trim()
-                    ? retailer.banner
-                    : row.retailer_name || retailer?.name || "Retailer";
+                  const headline = row.retailer_name ?? "Unknown";
                   return (
                     <Link
                       key={`${row.retailer_id ?? "no-retailer"}-${index}`}
