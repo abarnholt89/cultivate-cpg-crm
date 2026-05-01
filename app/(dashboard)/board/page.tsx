@@ -185,8 +185,10 @@ export default function AllBrandsBoardPage() {
   const repFilterInitialized = useRef(false);
 
   const [brandSummaries, setBrandSummaries] = useState<BrandSummary[]>([]);
-  // Per-sender last activity: brand_id → sender_id → latest created_at
+  // Per-sender last activity keyed by brand_id → sender_id → latest created_at (client messages only, for "Last activity" display)
   const [msgBySenderMap, setMsgBySenderMap] = useState<Record<string, Record<string, string>>>({});
+  // Per-sender last activity keyed by brand_id → sender_id → latest date string (all messages, for badge fallback)
+  const [msgByBrandSenderMap, setMsgByBrandSenderMap] = useState<Record<string, Record<string, string>>>({});
   const [timingByBrand, setTimingByBrand] = useState<Record<string, TimingRow[]>>({});
 
   const [brandRows, setBrandRows] = useState<Record<string, BoardRetailerRow[]>>({});
@@ -312,7 +314,7 @@ export default function AllBrandsBoardPage() {
         .select("brand_id, rep_id, worked_at, retailer_id")
     );
 
-    const [repsRes, retailerRepRes, msgActivityRes] = await Promise.all([
+    const [repsRes, retailerRepRes, msgActivityRes, allMsgActivityRes] = await Promise.all([
       supabase
         .from("profiles")
         .select("id, full_name")
@@ -324,35 +326,49 @@ export default function AllBrandsBoardPage() {
             .select("id, rep_owner_user_id")
             .in("id", allRetailerIds)
         : Promise.resolve({ data: [] as { id: string; rep_owner_user_id: string | null }[], error: null }),
-      // Fetch client messages with sender_id for per-rep last-activity lookup.
-      // We keep eq("visibility", "client") so RLS policies that gate internal
-      // messages never silently drop the entire result set.
+      // Client messages only — for the "Last activity" display label
       fetchAll<{ brand_id: string; created_at: string; sender_id: string | null }>(() =>
         supabase
           .from("brand_retailer_messages")
           .select("brand_id, created_at, sender_id")
           .eq("visibility", "client")
       ),
+      // All messages (client + internal) — for per-rep badge fallback so internal-only activity counts
+      fetchAll<{ brand_id: string; created_at: string; sender_id: string | null }>(() =>
+        supabase
+          .from("brand_retailer_messages")
+          .select("brand_id, created_at, sender_id")
+      ),
     ]);
 
     // Await the already-running worked promise (runs concurrently with the above)
     const workedResult = await workedPromise;
 
-    // msgActivityRes is already filtered to visibility="client"
+    // Client messages — for "Last activity" display label and all-reps aggregate
     const msgLastActivity: Record<string, string> = {};
     const msgBySender: Record<string, Record<string, string>> = {};
     (msgActivityRes.data ?? []).forEach((m) => {
-      // All-reps aggregate
       if (!msgLastActivity[m.brand_id] || m.created_at > msgLastActivity[m.brand_id]) {
         msgLastActivity[m.brand_id] = m.created_at;
       }
-      // Per-sender (sender_id may be null for legacy rows — skip those)
       if (m.sender_id) {
         if (!msgBySender[m.brand_id]) msgBySender[m.brand_id] = {};
         const existing = msgBySender[m.brand_id][m.sender_id];
         if (!existing || m.created_at > existing) {
           msgBySender[m.brand_id][m.sender_id] = m.created_at;
         }
+      }
+    });
+
+    // All messages (client + internal) keyed brand_id → sender_id → latest date string
+    // Used as badge fallback so internal-only rep activity still gets a color
+    const msgByBrandSender: Record<string, Record<string, string>> = {};
+    (allMsgActivityRes.data ?? []).forEach((m) => {
+      if (!m.sender_id || !m.brand_id) return;
+      if (!msgByBrandSender[m.brand_id]) msgByBrandSender[m.brand_id] = {};
+      const existing = msgByBrandSender[m.brand_id][m.sender_id];
+      if (!existing || m.created_at > existing) {
+        msgByBrandSender[m.brand_id][m.sender_id] = m.created_at.split("T")[0];
       }
     });
 
@@ -373,6 +389,7 @@ export default function AllBrandsBoardPage() {
     setBrandSummaries(summaries);
     setWorkedEntries(workedResult.data);
     setMsgBySenderMap(msgBySender);
+    setMsgByBrandSenderMap(msgByBrandSender);
 
     if (!repsRes.error) setReps((repsRes.data ?? []) as RepProfile[]);
 
@@ -745,9 +762,8 @@ export default function AllBrandsBoardPage() {
                     .sort()
                     .at(-1) ?? null;
                   if (fromWorked) return fromWorked;
-                  // Fall back to most recent message sent by this rep for this brand
-                  const fromMsg = msgBySenderMap[brand.id]?.[repFilter] ?? null;
-                  return fromMsg ? fromMsg.split("T")[0] : null;
+                  // Fall back to most recent message (any visibility) sent by this rep for this brand
+                  return msgByBrandSenderMap[brand.id]?.[repFilter] ?? null;
                 })()
               : null;
             const badge = workedBadge(workedAt);
