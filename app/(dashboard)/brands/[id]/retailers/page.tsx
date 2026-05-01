@@ -641,7 +641,6 @@ export default function BrandRetailersPage() {
         .select("universal_category")
         .eq("brand_id", brandId)
         .order("universal_category");
-      console.log("[brandCategories] brand_category_access result:", { catData, catError, brandId });
       const accessCats = ((catData ?? []) as { universal_category: string }[])
         .map((c) => c.universal_category)
         .filter(Boolean);
@@ -656,7 +655,6 @@ export default function BrandRetailersPage() {
               .filter((c: string | null): c is string => !!c)
           ),
         ].sort();
-        console.log("[brandCategories] falling back to pipeline categories:", fallbackCats);
         setBrandCategories(fallbackCats);
       }
 
