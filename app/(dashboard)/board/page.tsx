@@ -745,6 +745,7 @@ export default function AllBrandsBoardPage() {
                   .at(-1) ?? null)
               : null;
             const badge = workedBadge(workedAt);
+            if (brand.name === 'Aeras') console.log('BADGE render:', workedEntries.length, repFilter, workedEntries.filter(e => e.brand_id === brand.id && e.rep_id === repFilter));
 
             const rawRows = brandRows[brand.id] ?? null;
             const rows = rawRows === null
