@@ -339,6 +339,7 @@ export default function AllBrandsBoardPage() {
 
     // Await the already-running worked promise (runs concurrently with the above)
     const workedResult = await workedPromise;
+    console.log("brand_date_worked rows fetched:", workedResult.data.length, "error:", workedResult.error);
 
     // msgActivityRes is already filtered to visibility="client"
     const msgLastActivity: Record<string, string> = {};
