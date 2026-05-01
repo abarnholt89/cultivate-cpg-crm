@@ -207,8 +207,6 @@ export default function AllBrandsBoardPage() {
 
   // Date Worked — raw entries kept for per-retailer "all touched" check
   const [workedEntries, setWorkedEntries] = useState<WorkedEntry[]>([]);
-  // Derived map stored as state (not useMemo) so it updates reliably after async fetch
-  const [latestWorkedMap, setLatestWorkedMap] = useState<Record<string, Record<string, string>>>({});
   const [snoozeSaving, setSnoozeSaving] = useState<Record<string, boolean>>({});
 
   // Inline status editing — no intermediate edit-mode; select is always visible
@@ -339,7 +337,6 @@ export default function AllBrandsBoardPage() {
 
     // Await the already-running worked promise (runs concurrently with the above)
     const workedResult = await workedPromise;
-    console.log("brand_date_worked rows fetched:", workedResult.data.length, "error:", workedResult.error);
 
     // msgActivityRes is already filtered to visibility="client"
     const msgLastActivity: Record<string, string> = {};
@@ -372,19 +369,9 @@ export default function AllBrandsBoardPage() {
       })
       .filter((b) => b.retailerCount > 0);
 
-    // Build latestWorkedMap here (not in useMemo) so it lands in state at the same
-    // time as workedEntries — useMemo can fire before the async setState is processed.
-    const nextWorkedMap: Record<string, Record<string, string>> = {};
-    for (const e of workedResult.data) {
-      if (!nextWorkedMap[e.brand_id]) nextWorkedMap[e.brand_id] = {};
-      const existing = nextWorkedMap[e.brand_id][e.rep_id];
-      if (!existing || e.worked_at > existing) nextWorkedMap[e.brand_id][e.rep_id] = e.worked_at;
-    }
-
     // Set all state in one synchronous block so the first render has everything
     setBrandSummaries(summaries);
     setWorkedEntries(workedResult.data);
-    setLatestWorkedMap(nextWorkedMap);
     setMsgBySenderMap(msgBySender);
 
     if (!repsRes.error) setReps((repsRes.data ?? []) as RepProfile[]);
@@ -567,10 +554,6 @@ export default function AllBrandsBoardPage() {
     }).then(({ error: stampErr }) => {
       if (!stampErr) {
         setWorkedEntries((prev) => [...prev, { brand_id: brandId, rep_id: userId!, retailer_id: retailerId, worked_at: today }]);
-        setLatestWorkedMap((prev) => ({
-          ...prev,
-          [brandId]: { ...(prev[brandId] ?? {}), [userId!]: today },
-        }));
       }
     });
 
@@ -640,18 +623,10 @@ export default function AllBrandsBoardPage() {
     });
     if (!error) {
       setWorkedEntries((prev) => [...prev, { brand_id: brandId, rep_id: userId!, retailer_id: retailerId, worked_at: today }]);
-      setLatestWorkedMap((prev) => ({
-        ...prev,
-        [brandId]: { ...(prev[brandId] ?? {}), [userId!]: today },
-      }));
     }
     setSnoozeSaving((s) => ({ ...s, [snoozeKey]: false }));
   }
 
-  // latestWorkedMap is now a useState (set in loadSummaries) — not a useMemo.
-  // useMemo fired with the initial empty workedEntries before the async fetch
-  // resolved, and React's batching prevented a re-run after setWorkedEntries.
-  // Storing it as state alongside workedEntries ensures they update together.
 
   // ── Filter ────────────────────────────────────────────────────────────────
 
@@ -676,16 +651,16 @@ export default function AllBrandsBoardPage() {
     // When filtering by a specific rep, sort oldest-to-newest by date worked (never first)
     if (repFilter && repFilter !== MY_TEAM) {
       result = [...result].sort((a, b) => {
-        const aW = latestWorkedMap[a.id]?.[repFilter] ?? null;
-        const bW = latestWorkedMap[b.id]?.[repFilter] ?? null;
+        const aW = workedEntries.filter((e) => e.brand_id === a.id && e.rep_id === repFilter).map((e) => e.worked_at).sort().at(-1) ?? null;
+        const bW = workedEntries.filter((e) => e.brand_id === b.id && e.rep_id === repFilter).map((e) => e.worked_at).sort().at(-1) ?? null;
         if (!aW && !bW) return a.name.localeCompare(b.name);
         if (!aW) return -1;
         if (!bW) return 1;
-        return aW.localeCompare(bW); // lexicographic ascending = oldest date first
+        return aW.localeCompare(bW);
       });
     }
     return result;
-  }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand, userId, latestWorkedMap]);
+  }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand, userId, workedEntries]);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -762,7 +737,13 @@ export default function AllBrandsBoardPage() {
         <div className="space-y-2">
           {filteredSummaries.map((brand) => {
             const isOpen = expandedBrandIds.has(brand.id);
-            const workedAt = latestWorkedMap[brand.id]?.[repFilter] ?? null;
+            const workedAt = repFilter && repFilter !== MY_TEAM
+              ? (workedEntries
+                  .filter((e) => e.brand_id === brand.id && e.rep_id === repFilter)
+                  .map((e) => e.worked_at)
+                  .sort()
+                  .at(-1) ?? null)
+              : null;
             const badge = workedBadge(workedAt);
 
             const rawRows = brandRows[brand.id] ?? null;
