@@ -384,6 +384,7 @@ export default function BrandDashboardPage() {
   type ReviewActivityItem = {
     key: string;
     retailer_name: string;
+    retailer_headline: string;
     universal_category: string;
     retailer_category_review_name: string | null;
     category_label: string;
@@ -401,27 +402,37 @@ export default function BrandDashboardPage() {
     const calendarItems: ReviewActivityItem[] = calendarRows
       .filter((r) => !!r.review_date && isBetweenInclusive(r.review_date, prev30, next30))
       .filter((r) => !dismissedReviewKeys.has(dismissKey(r.retailer_name, r.universal_category, r.retailer_category_review_name ?? null)))
-      .map((r) => ({
-        key: `cal-${r.retailer_name}-${r.universal_category}-${r.review_date}`,
-        retailer_name: r.retailer_name,
-        universal_category: r.universal_category,
-        retailer_category_review_name: r.retailer_category_review_name ?? null,
-        category_label: r.retailer_category_review_name || r.universal_category,
-        date: r.review_date!,
-        retailer_id: r.retailer_id,
-      }));
+      .map((r) => {
+        const ret = r.retailer_id ? retailersById[r.retailer_id] : null;
+        const headline = ret?.banner?.trim() ? ret.banner : ret?.name ?? r.retailer_name;
+        return {
+          key: `cal-${r.retailer_name}-${r.universal_category}-${r.review_date}`,
+          retailer_name: r.retailer_name,
+          retailer_headline: headline,
+          universal_category: r.universal_category,
+          retailer_category_review_name: r.retailer_category_review_name ?? null,
+          category_label: r.retailer_category_review_name || r.universal_category,
+          date: r.review_date!,
+          retailer_id: r.retailer_id,
+        };
+      });
 
     const manualItems: ReviewActivityItem[] = manualTimingRows
       .filter((r) => !!r.category_review_date && isBetweenInclusive(r.category_review_date, prev30, next30))
-      .map((r) => ({
-        key: `manual-${r.id}`,
-        retailer_name: retailersById[r.retailer_id]?.name ?? "Retailer",
-        universal_category: r.category || "",
-        retailer_category_review_name: null,
-        category_label: r.category || "Category Review",
-        date: r.category_review_date!,
-        retailer_id: r.retailer_id,
-      }));
+      .map((r) => {
+        const ret = retailersById[r.retailer_id];
+        const headline = ret?.banner?.trim() ? ret.banner : ret?.name ?? "Retailer";
+        return {
+          key: `manual-${r.id}`,
+          retailer_name: retailersById[r.retailer_id]?.name ?? "Retailer",
+          retailer_headline: headline,
+          universal_category: r.category || "",
+          retailer_category_review_name: null,
+          category_label: r.category || "Category Review",
+          date: r.category_review_date!,
+          retailer_id: r.retailer_id,
+        };
+      });
 
     return [...calendarItems, ...manualItems]
       .sort((a, b) => a.date.localeCompare(b.date))
@@ -722,7 +733,7 @@ export default function BrandDashboardPage() {
                 {upcomingList.map((item) => (
                   <div key={item.key} className="block border rounded-lg p-3">
                     <div className="flex items-start justify-between gap-2">
-                      <div className="font-medium">{item.retailer_name}</div>
+                      <div className="font-medium">{item.retailer_headline}</div>
                       {(role === "admin" || role === "rep") && (
                         <button
                           onClick={() => dismissReview(item)}
