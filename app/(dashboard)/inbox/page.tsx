@@ -76,6 +76,9 @@ type UpcomingItem = {
   milestone_type: "Category Review" | "Reset Date" | "Follow Up";
   milestone_date: string;
   account_status: TimingRow["account_status"];
+  // present only for Category Review items — used for dismissal
+  universal_category?: string;
+  retailer_category_review_name?: string | null;
 };
 
 type CalendarViewRow = {
@@ -194,6 +197,7 @@ export default function RepInboxPage() {
   const [loadingCompleted, setLoadingCompleted] = useState(false);
   const [agingAccounts, setAgingAccounts] = useState<AgingRow[]>([]);
   const [upcoming, setUpcoming] = useState<UpcomingItem[]>([]);
+  const [dismissedInboxKeys, setDismissedInboxKeys] = useState<Set<string>>(new Set());
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [clientMessages, setClientMessages] = useState<ClientMessageInboxRow[]>([]);
   const [brandsById, setBrandsById] = useState<Record<string, Brand>>({});
@@ -440,7 +444,9 @@ if (clientMessagesResult.error) {
         ]),
       ];
 
-      const [brandsResult, retailersResult, repProfilesResult] = await Promise.all([
+      const calendarBrandIds = [...new Set(calendarRows.map((r) => r.brand_id))];
+
+      const [brandsResult, retailersResult, repProfilesResult, dismissalsResult] = await Promise.all([
         brandIds.length
           ? supabase.from("brands").select("id,name").in("id", brandIds)
           : Promise.resolve({ data: [], error: null }),
@@ -449,6 +455,12 @@ if (clientMessagesResult.error) {
           : Promise.resolve({ data: [], error: null }),
         nextRole === "admin"
           ? supabase.from("profiles").select("id,full_name").in("role", ["rep", "admin"]).order("full_name")
+          : Promise.resolve({ data: [], error: null }),
+        calendarBrandIds.length
+          ? supabase
+              .from("brand_category_review_dismissals")
+              .select("retailer_name,universal_category,retailer_category_review_name")
+              .in("brand_id", calendarBrandIds)
           : Promise.resolve({ data: [], error: null }),
       ]);
 
@@ -602,8 +614,16 @@ if (clientMessagesResult.error) {
         }
       });
 
+      const inboxDismissedKeys = new Set<string>(
+        ((dismissalsResult.data ?? []) as { retailer_name: string; universal_category: string; retailer_category_review_name: string | null }[])
+          .map((d) => `${d.retailer_name}||${d.universal_category}||${d.retailer_category_review_name ?? ""}`)
+      );
+      setDismissedInboxKeys(inboxDismissedKeys);
+
       calendarRows.forEach((row, idx) => {
         if (!row.review_date) return;
+        const dKey = `${row.retailer_name}||${row.universal_category}||${row.retailer_category_review_name ?? ""}`;
+        if (inboxDismissedKeys.has(dKey)) return;
         const brand = nextBrandsById[row.brand_id];
         const retailer = row.retailer_id ? nextRetailersById[row.retailer_id] : null;
         const retailerHeadline =
@@ -618,6 +638,8 @@ if (clientMessagesResult.error) {
           milestone_type: "Category Review",
           milestone_date: row.review_date,
           account_status: "upcoming_review",
+          universal_category: row.universal_category,
+          retailer_category_review_name: row.retailer_category_review_name ?? null,
         });
       });
 
@@ -648,6 +670,25 @@ if (clientMessagesResult.error) {
     if (!taskRepFilter) return tasks;
     return tasks.filter((t) => t.assigned_to === taskRepFilter);
   }, [tasks, taskRepFilter]);
+
+  async function dismissInboxReview(item: UpcomingItem) {
+    if (!currentUserId || item.milestone_type !== "Category Review" || !item.universal_category) return;
+    const key = `${item.retailer_name}||${item.universal_category}||${item.retailer_category_review_name ?? ""}`;
+    setDismissedInboxKeys((prev) => new Set([...prev, key]));
+    setUpcoming((prev) => prev.filter((u) => u.id !== item.id));
+    await supabase.from("brand_category_review_dismissals").upsert(
+      {
+        brand_id: item.brand_id,
+        retailer_name: item.retailer_name,
+        retailer_id: item.retailer_id || null,
+        universal_category: item.universal_category,
+        retailer_category_review_name: item.retailer_category_review_name ?? "",
+        review_date: item.milestone_date,
+        dismissed_by_user_id: currentUserId,
+      },
+      { onConflict: "brand_id,retailer_name,universal_category,retailer_category_review_name" }
+    );
+  }
 
   async function markTaskDone(id: string) {
     await fetch(`/api/tasks/${id}/done`, { method: "PATCH" });
@@ -918,15 +959,31 @@ if (clientMessagesResult.error) {
           ) : (
             <div className="space-y-3">
               {upcoming.map((item) => (
-                <Link
+                <div
                   key={item.id}
-                  href={`/brands/${item.brand_id}/retailers#retailer-${item.retailer_id}`}
-                  className="block rounded-lg border border-border bg-card p-3 transition-colors hover:bg-accent"
+                  className="rounded-lg border border-border bg-card p-3"
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <div className="font-medium text-foreground">{item.retailer_headline}</div>
-                    <div className="text-sm font-medium text-foreground">
-                      {prettyDate(item.milestone_date)}
+                    <Link
+                      href={`/brands/${item.brand_id}/retailers#retailer-${item.retailer_id}`}
+                      className="font-medium text-foreground hover:underline"
+                    >
+                      {item.retailer_headline}
+                    </Link>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="text-sm font-medium text-foreground">
+                        {prettyDate(item.milestone_date)}
+                      </span>
+                      {item.milestone_type === "Category Review" && (
+                        <button
+                          onClick={() => dismissInboxReview(item)}
+                          className="text-xs"
+                          style={{ color: "var(--muted-foreground)" }}
+                          title="Dismiss this review"
+                        >
+                          Dismiss
+                        </button>
+                      )}
                     </div>
                   </div>
                   <div className="mt-1 text-sm text-muted-foreground">{item.brand_name}</div>
@@ -934,7 +991,7 @@ if (clientMessagesResult.error) {
                     <span className="text-sm text-foreground/85">{item.milestone_type}</span>
                     <StatusBadge status={item.account_status} />
                   </div>
-                </Link>
+                </div>
               ))}
             </div>
           )}

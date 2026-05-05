@@ -179,6 +179,8 @@ export default function BrandDashboardPage() {
   const [messagesByRetailer, setMessagesByRetailer] = useState<Record<string, MsgSummary>>({});
   const [recentOnlyFilter, setRecentOnlyFilter] = useState(false);
   const [promotionRows, setPromotionRows] = useState<PromotionRow[]>([]);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [dismissedReviewKeys, setDismissedReviewKeys] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!brandId) return;
@@ -187,7 +189,8 @@ export default function BrandDashboardPage() {
       setError("");
 
       const { data: authData } = await supabase.auth.getUser();
-      const userId = authData?.user?.id;
+      const userId = authData?.user?.id ?? null;
+      setUserId(userId);
       if (userId) {
         const { data: profileData } = await supabase
           .from("profiles")
@@ -207,7 +210,7 @@ export default function BrandDashboardPage() {
       if (!brandData) { setError("Brand not found."); return; }
       setBrand(brandData);
 
-      const [pipelineResponse, calendarResponse, authorizedResponse, msgsResponse, manualTimingResponse, promotionsResponse] =
+      const [pipelineResponse, calendarResponse, authorizedResponse, msgsResponse, manualTimingResponse, promotionsResponse, dismissalsResponse] =
         await Promise.all([
           supabase
             .from("brand_retailer_timing")
@@ -238,6 +241,10 @@ export default function BrandDashboardPage() {
             .select("id,retailer_name,retailer_banner,promo_name,promo_type,start_date,end_date")
             .eq("brand_id", brandId)
             .order("start_date", { ascending: true }),
+          supabase
+            .from("brand_category_review_dismissals")
+            .select("retailer_name,universal_category,retailer_category_review_name")
+            .eq("brand_id", brandId),
         ]);
 
       if (pipelineResponse.error) { setError(pipelineResponse.error.message); return; }
@@ -262,6 +269,12 @@ export default function BrandDashboardPage() {
       setManualTimingRows(nextManualTimingRows);
       setAuthorizedRows(nextAuthorizedRows);
       setPromotionRows((promotionsResponse.data as PromotionRow[]) ?? []);
+
+      const dismissedKeys = new Set<string>(
+        ((dismissalsResponse.data ?? []) as { retailer_name: string; universal_category: string; retailer_category_review_name: string | null }[])
+          .map((d) => `${d.retailer_name}||${d.universal_category}||${d.retailer_category_review_name ?? ""}`)
+      );
+      setDismissedReviewKeys(dismissedKeys);
 
       // ── activity banner ──────────────────────────────────────────────────
       const sevenDaysAgo = nDaysAgoISO(7);
@@ -371,6 +384,8 @@ export default function BrandDashboardPage() {
   type ReviewActivityItem = {
     key: string;
     retailer_name: string;
+    universal_category: string;
+    retailer_category_review_name: string | null;
     category_label: string;
     date: string;
     retailer_id: string | null;
@@ -380,12 +395,17 @@ export default function BrandDashboardPage() {
     const today = todayISO();
     const prev30 = addDaysISO(today, -30);
     const next30 = addDaysISO(today, 30);
+    const dismissKey = (rn: string, uc: string, rcn: string | null) =>
+      `${rn}||${uc}||${rcn ?? ""}`;
 
     const calendarItems: ReviewActivityItem[] = calendarRows
       .filter((r) => !!r.review_date && isBetweenInclusive(r.review_date, prev30, next30))
+      .filter((r) => !dismissedReviewKeys.has(dismissKey(r.retailer_name, r.universal_category, r.retailer_category_review_name ?? null)))
       .map((r) => ({
         key: `cal-${r.retailer_name}-${r.universal_category}-${r.review_date}`,
         retailer_name: r.retailer_name,
+        universal_category: r.universal_category,
+        retailer_category_review_name: r.retailer_category_review_name ?? null,
         category_label: r.retailer_category_review_name || r.universal_category,
         date: r.review_date!,
         retailer_id: r.retailer_id,
@@ -396,6 +416,8 @@ export default function BrandDashboardPage() {
       .map((r) => ({
         key: `manual-${r.id}`,
         retailer_name: retailersById[r.retailer_id]?.name ?? "Retailer",
+        universal_category: r.category || "",
+        retailer_category_review_name: null,
         category_label: r.category || "Category Review",
         date: r.category_review_date!,
         retailer_id: r.retailer_id,
@@ -404,7 +426,7 @@ export default function BrandDashboardPage() {
     return [...calendarItems, ...manualItems]
       .sort((a, b) => a.date.localeCompare(b.date))
       .slice(0, 8);
-  }, [calendarRows, manualTimingRows, retailersById]);
+  }, [calendarRows, manualTimingRows, retailersById, dismissedReviewKeys]);
 
   const recentWorkflow = useMemo(() => {
     const sevenDaysAgo = nDaysAgoISO(7);
@@ -455,6 +477,24 @@ export default function BrandDashboardPage() {
       .filter((p) => p.start_date && p.start_date >= today && p.start_date <= in60)
       .slice(0, 8);
   }, [promotionRows]);
+
+  async function dismissReview(item: ReviewActivityItem) {
+    if (!userId || !brandId) return;
+    const key = `${item.retailer_name}||${item.universal_category}||${item.retailer_category_review_name ?? ""}`;
+    setDismissedReviewKeys((prev) => new Set([...prev, key]));
+    await supabase.from("brand_category_review_dismissals").upsert(
+      {
+        brand_id: brandId,
+        retailer_name: item.retailer_name,
+        retailer_id: item.retailer_id ?? null,
+        universal_category: item.universal_category,
+        retailer_category_review_name: item.retailer_category_review_name ?? "",
+        review_date: item.date,
+        dismissed_by_user_id: userId,
+      },
+      { onConflict: "brand_id,retailer_name,universal_category,retailer_category_review_name" }
+    );
+  }
 
   if (!brandId) return <div className="p-6">No brand ID in URL.</div>;
 
@@ -681,7 +721,19 @@ export default function BrandDashboardPage() {
               <div className="space-y-3 mt-4">
                 {upcomingList.map((item) => (
                   <div key={item.key} className="block border rounded-lg p-3">
-                    <div className="font-medium">{item.retailer_name}</div>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="font-medium">{item.retailer_name}</div>
+                      {(role === "admin" || role === "rep") && (
+                        <button
+                          onClick={() => dismissReview(item)}
+                          className="text-xs shrink-0"
+                          style={{ color: "var(--muted-foreground)" }}
+                          title="Dismiss this review"
+                        >
+                          Dismiss
+                        </button>
+                      )}
+                    </div>
                     <div className="text-sm text-gray-500">{item.category_label}</div>
                     <div className="text-sm text-gray-600 mt-1">{prettyDate(item.date)}</div>
                     {item.retailer_id ? (
