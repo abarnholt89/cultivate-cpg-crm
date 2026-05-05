@@ -15,6 +15,8 @@ type Product = {
   size: string | null;
   uom: string | null;
   cost: number | null;
+  kehe_cost: number | null;
+  unfi_cost: number | null;
   case_cost: number | null;
   srp: number | null;
   status: string;
@@ -47,6 +49,8 @@ type EditForm = {
   unfi_east_item: string;
   unfi_west_item: string;
   cost: string;
+  kehe_cost: string;
+  unfi_cost: string;
   case_cost: string;
   srp: string;
   unit_pack: string;
@@ -63,14 +67,15 @@ type EditForm = {
 
 const EMPTY_EDIT_FORM: EditForm = {
   description: "", retail_upc: "", size: "", uom: "", kehe_item: "", unfi_east_item: "",
-  unfi_west_item: "", cost: "", case_cost: "", srp: "", unit_pack: "", inner_pack: "",
-  master_case_pack: "", ti: "", hi: "", cert_non_gmo: false, cert_organic: false,
-  cert_gluten_free: false, cert_kosher: false, cert_vegan: false,
+  unfi_west_item: "", cost: "", kehe_cost: "", unfi_cost: "", case_cost: "", srp: "",
+  unit_pack: "", inner_pack: "", master_case_pack: "", ti: "", hi: "",
+  cert_non_gmo: false, cert_organic: false, cert_gluten_free: false, cert_kosher: false,
+  cert_vegan: false,
 };
 
 const PRODUCT_SELECT = [
   "id", "brand_id", "description", "retail_upc", "size", "uom",
-  "cost", "case_cost", "srp", "status", "created_at",
+  "cost", "kehe_cost", "unfi_cost", "case_cost", "srp", "status", "created_at",
   "kehe_item", "unfi_east_item", "unfi_west_item",
   "unit_pack", "inner_pack", "master_case_pack", "ti", "hi",
   "cert_non_gmo", "cert_organic", "cert_gluten_free", "cert_kosher", "cert_vegan",
@@ -473,6 +478,8 @@ export default function ProductsLibraryPage() {
       unfi_east_item: product.unfi_east_item ?? "",
       unfi_west_item: product.unfi_west_item ?? "",
       cost: product.cost != null ? String(product.cost) : "",
+      kehe_cost: product.kehe_cost != null ? String(product.kehe_cost) : "",
+      unfi_cost: product.unfi_cost != null ? String(product.unfi_cost) : "",
       case_cost: product.case_cost != null ? String(product.case_cost) : "",
       srp: product.srp != null ? String(product.srp) : "",
       unit_pack: product.unit_pack ?? "",
@@ -505,6 +512,8 @@ export default function ProductsLibraryPage() {
       unfi_east_item: editForm.unfi_east_item.trim() || null,
       unfi_west_item: editForm.unfi_west_item.trim() || null,
       cost: editForm.cost ? parseFloat(editForm.cost) : null,
+      kehe_cost: editForm.kehe_cost ? parseFloat(editForm.kehe_cost) : null,
+      unfi_cost: editForm.unfi_cost ? parseFloat(editForm.unfi_cost) : null,
       case_cost: editForm.case_cost ? parseFloat(editForm.case_cost) : null,
       srp: editForm.srp ? parseFloat(editForm.srp) : null,
       unit_pack: editForm.unit_pack.trim() || null,
@@ -526,7 +535,7 @@ export default function ProductsLibraryPage() {
   }
 
   const isRepOrAdminLocal = role === "admin" || role === "rep";
-  const totalCols = 22 + (isRepOrAdminLocal ? 1 : 0);
+  const totalCols = 24 + (isRepOrAdminLocal ? 1 : 0);
 
   if (loading) return <div className="p-6 text-sm text-muted-foreground">Loading products…</div>;
   if (!authorized) return null;
@@ -598,7 +607,7 @@ export default function ProductsLibraryPage() {
                     <th className={groupTh} colSpan={1} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Brand</th>
                     <th className={groupTh} colSpan={4} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Identity</th>
                     <th className={groupTh} colSpan={3} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Distributor Items</th>
-                    <th className={groupTh} colSpan={3} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Pricing</th>
+                    <th className={groupTh} colSpan={5} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Pricing</th>
                     <th className={groupTh} colSpan={5} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Pack Info</th>
                     <th className={groupTh} colSpan={5} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Certifications</th>
                     <th className={groupTh} colSpan={1}>Auth.</th>
@@ -614,6 +623,8 @@ export default function ProductsLibraryPage() {
                     <th className={thStyle}>UNFI East</th>
                     <th className={thStyle} style={{ borderRight: "1px solid var(--border)" }}>UNFI West</th>
                     <th className={thStyle}>Unit Cost</th>
+                    <th className={thStyle}>KeHE Cost</th>
+                    <th className={thStyle}>UNFI Cost</th>
                     <th className={thStyle}>Case Cost</th>
                     <th className={thStyle} style={{ borderRight: "1px solid var(--border)" }}>SRP</th>
                     <th className={thStyle}>Unit Pack</th>
@@ -645,7 +656,7 @@ export default function ProductsLibraryPage() {
                             ? <Link href={`/brands/${product.brand_id}/products`} className="text-xs font-medium text-foreground hover:underline whitespace-nowrap">{brand.name}</Link>
                             : <span className="text-muted-foreground">—</span>}
                         </td>
-                        <td className={`${tdStyle} text-foreground font-medium max-w-[240px] whitespace-normal`}>{product.description}</td>
+                        <td className="px-3 py-2 text-xs text-foreground font-medium" style={{ whiteSpace: "normal" }}>{product.description}</td>
                         <td className={`${tdStyle} font-mono text-muted-foreground`}>{product.retail_upc ?? "—"}</td>
                         <td className={`${tdStyle} text-muted-foreground`}>{product.size ?? "—"}</td>
                         <td className={`${tdStyle} text-muted-foreground`} style={{ borderRight: "1px solid var(--border)" }}>{product.uom ?? "—"}</td>
@@ -653,6 +664,8 @@ export default function ProductsLibraryPage() {
                         <td className={`${tdStyle} text-muted-foreground`}>{product.unfi_east_item ?? "—"}</td>
                         <td className={`${tdStyle} text-muted-foreground`} style={{ borderRight: "1px solid var(--border)" }}>{product.unfi_west_item ?? "—"}</td>
                         <td className={`${tdStyle} text-muted-foreground`}>{fmt$(product.cost)}</td>
+                        <td className={`${tdStyle} text-muted-foreground`}>{fmt$(product.kehe_cost)}</td>
+                        <td className={`${tdStyle} text-muted-foreground`}>{fmt$(product.unfi_cost)}</td>
                         <td className={`${tdStyle} text-muted-foreground`}>{fmt$(product.case_cost)}</td>
                         <td className={`${tdStyle} text-muted-foreground`} style={{ borderRight: "1px solid var(--border)" }}>{fmt$(product.srp)}</td>
                         <td className={`${tdStyle} text-muted-foreground`}>{product.unit_pack ?? "—"}</td>
@@ -712,10 +725,18 @@ export default function ProductsLibraryPage() {
                                   <input type="text" value={editForm.unfi_west_item} onChange={(e) => setEditForm((f) => ({ ...f, unfi_west_item: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full font-mono" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
                                 </div>
                               </div>
-                              <div className="grid grid-cols-4 gap-3">
+                              <div className="grid grid-cols-5 gap-3">
                                 <div>
                                   <label className="block text-xs text-muted-foreground mb-1">Unit Cost ($)</label>
                                   <input type="number" step="0.01" value={editForm.cost} onChange={(e) => setEditForm((f) => ({ ...f, cost: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-muted-foreground mb-1">KeHE Cost ($)</label>
+                                  <input type="number" step="0.01" value={editForm.kehe_cost} onChange={(e) => setEditForm((f) => ({ ...f, kehe_cost: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-muted-foreground mb-1">UNFI Cost ($)</label>
+                                  <input type="number" step="0.01" value={editForm.unfi_cost} onChange={(e) => setEditForm((f) => ({ ...f, unfi_cost: e.target.value }))} className="border rounded px-2 py-1 text-sm w-full" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
                                 </div>
                                 <div>
                                   <label className="block text-xs text-muted-foreground mb-1">Case Cost ($)</label>
