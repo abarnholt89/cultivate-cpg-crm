@@ -20,7 +20,12 @@ function buildContextualCard(e) {
     // Use the active user's email (the rep) for sender attribution, not
     // message.getFrom() which returns whoever sent the currently open email
     // (often the retailer in an inbound thread).
-    var repEmail = Session.getActiveUser().getEmail();
+    var repEmail = "";
+    try {
+      repEmail = Session.getActiveUser().getEmail() || "";
+    } catch (_) {
+      // Insufficient scope — fall back to empty string.
+    }
     var subject = message.getSubject();
     var threadId = message.getThread().getId();
 
@@ -76,7 +81,14 @@ function buildHomepageCard() {
  */
 function buildComposeCard(e) {
   try {
-    var repEmail = Session.getActiveUser().getEmail();
+    var repEmail = "";
+    try {
+      repEmail = Session.getActiveUser().getEmail() || "";
+    } catch (_) {
+      // Session.getActiveUser() requires the 'See your primary Google Account email address'
+      // scope and will throw for users whose OAuth grant doesn't include it.
+      // Fall through with an empty string — the card still loads.
+    }
 
     var options = fetchOptions_();
     if (options.error) {
