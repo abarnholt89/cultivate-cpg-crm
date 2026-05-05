@@ -1642,7 +1642,30 @@ export default function BrandRetailersPage() {
                   </div>
                 </div>
 
-                {/* Account status — compact horizontal grid, one cell per category */}
+                {/* Account status — editable for rep/admin, read-only label for clients */}
+                {!isRepOrAdmin && pipelineRows.length > 0 && (
+                  <div className={`grid gap-2 ${pipelineRows.length === 1 ? "grid-cols-1" : pipelineRows.length === 2 ? "grid-cols-2" : "grid-cols-2 md:grid-cols-3"}`}>
+                    {pipelineRows.map((pRow) => {
+                      const pRowKey = pRow.id ?? `default-${r.id}-${pRow.universal_category ?? "none"}`;
+                      return (
+                        <div
+                          key={pRowKey}
+                          className="rounded-lg p-2.5 space-y-1"
+                          style={{ border: "1px solid var(--border)", background: "var(--muted)" }}
+                        >
+                          {isMultiCategory && (
+                            <div className="text-xs font-semibold truncate" style={{ color: "var(--foreground)" }}>
+                              {pRow.universal_category ?? "Primary"}
+                            </div>
+                          )}
+                          <div className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+                            {accountStatusLabel(pRow.account_status) || "—"}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 {isRepOrAdmin && (
                   <div className={`grid gap-2 ${pipelineRows.length === 1 ? "grid-cols-1" : pipelineRows.length === 2 ? "grid-cols-2" : "grid-cols-2 md:grid-cols-3"}`}>
                     {pipelineRows.map((pRow) => {
