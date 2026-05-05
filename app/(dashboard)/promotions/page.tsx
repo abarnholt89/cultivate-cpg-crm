@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 
 type Role = "admin" | "rep" | "client" | null;
 
@@ -289,6 +290,9 @@ function groupRetailerActivations(rows: PromotionRow[]): RetailerGroup[] {
 // ── component ─────────────────────────────────────────────────────────────────
 
 export default function PromotionsPage() {
+  const searchParams = useSearchParams();
+  const brandIdParam = searchParams.get("brand");
+
   const [role, setRole] = useState<Role>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [promotions, setPromotions] = useState<PromotionRow[]>([]);
@@ -355,7 +359,14 @@ export default function PromotionsPage() {
 
         // Fetch brands for bulk builder
         const { data: brandsData } = await supabase.from("brands").select("id,name").order("name");
-        setAllBrands((brandsData as BrandOption[]) ?? []);
+        const brandsList = (brandsData as BrandOption[]) ?? [];
+        setAllBrands(brandsList);
+
+        // Auto-apply brand filter when navigating from a brand dashboard
+        if (brandIdParam) {
+          const matched = brandsList.find((b) => b.id === brandIdParam);
+          if (matched) setBrandFilter(matched.name);
+        }
 
         let rows: PromotionRow[];
         if (nextRole === "client") {
@@ -943,8 +954,31 @@ export default function PromotionsPage() {
   const selectCls = "rounded-lg px-3 py-2 text-sm focus:outline-none";
   const selectStyle = { border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" };
 
+  const subNavBrand = brandIdParam ? allBrands.find((b) => b.id === brandIdParam) ?? null : null;
+
   return (
     <div className="p-6 space-y-6">
+      {/* Brand sub-nav */}
+      {subNavBrand && (
+        <div className="flex gap-2 text-sm flex-wrap">
+          <Link href={`/brands/${subNavBrand.id}`} className="px-3 py-1.5 rounded border hover:bg-gray-50">
+            Overview
+          </Link>
+          <Link href={`/brands/${subNavBrand.id}/retailers`} className="px-3 py-1.5 rounded border hover:bg-gray-50">
+            Retailers
+          </Link>
+          <Link href={`/brands/${subNavBrand.id}/products`} className="px-3 py-1.5 rounded border hover:bg-gray-50">
+            Products
+          </Link>
+          <Link href={`/brands/${subNavBrand.id}/category-review`} className="px-3 py-1.5 rounded border hover:bg-gray-50">
+            Category Review
+          </Link>
+          <span className="px-3 py-1.5 rounded border text-white" style={{ background: "var(--foreground)" }}>
+            Promotions
+          </span>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-3xl font-bold text-foreground mr-auto">Promotions</h1>
