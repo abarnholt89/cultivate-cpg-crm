@@ -727,6 +727,7 @@ if (clientMessagesResult.error) {
     const next = !showCompleted;
     setShowCompleted(next);
     if (next && completedTasks.length === 0) {
+      if (!currentUserId) return;
       setLoadingCompleted(true);
       try {
         const q = supabase
@@ -735,7 +736,7 @@ if (clientMessagesResult.error) {
           .eq("status", "done")
           .order("created_at", { ascending: false })
           .limit(30);
-        const finalQ = role === "admin" ? q : q.eq("assigned_to", currentUserId!);
+        const finalQ = role === "admin" ? q : q.eq("assigned_to", currentUserId);
         const { data } = await finalQ;
         setCompletedTasks((data as unknown as Task[]) ?? []);
       } finally {
