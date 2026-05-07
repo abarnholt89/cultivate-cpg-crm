@@ -299,37 +299,59 @@ export default function ProductsLibraryPage() {
   async function loadDc() {
     if (dcLoaded || dcLoading) return;
     setDcLoading(true);
-    // Fetch ALL distributor_dc_listings (small table ~3k rows)
-    const CHUNK = 1000;
-    const allRows: { brand_product_id: string; distributor: string; dc_code: string; dc_name: string | null; listed: boolean }[] = [];
+
+    // Step 1: confirm the API can see the table at all
+    const { count, error: countErr } = await supabase
+      .from("distributor_dc_listings")
+      .select("*", { count: "exact", head: true });
+    console.log("[loadDc] table row count via API:", count, "countErr:", countErr);
+    if (countErr) {
+      setError(`DC load error: ${countErr.message}`);
+      setDcLoading(false);
+      return;
+    }
+
+    // Step 2: fetch all rows without relying on .range() pagination —
+    // use .limit() with a high cap. Supabase's server max-rows cap can silently
+    // truncate .range() chunks to fewer rows than requested, breaking the
+    // `data.length < CHUNK` exit condition. Fetching in one shot avoids this.
+    type DcRow = { brand_product_id: string; distributor: string; dc_code: string; dc_name: string | null; listed: boolean };
+    let allRows: DcRow[] = [];
+    const PAGE = 1000;
     let from = 0;
     while (true) {
       const { data, error } = await supabase
         .from("distributor_dc_listings")
         .select("brand_product_id,distributor,dc_code,dc_name,listed")
-        .range(from, from + CHUNK - 1);
+        .range(from, from + PAGE - 1)
+        .order("id");
       if (error) {
-        console.error("[loadDc] query error:", error);
+        console.error(`[loadDc] fetch error at offset ${from}:`, error);
         setError(`DC load error: ${error.message}`);
         setDcLoading(false);
         return;
       }
-      console.log(`[loadDc] chunk from=${from}, rows=${data?.length ?? 0}`, data?.slice(0, 3));
-      if (!data || data.length === 0) break;
-      allRows.push(...(data as typeof allRows));
-      if (data.length < CHUNK) break;
-      from += CHUNK;
+      const rows = (data ?? []) as DcRow[];
+      console.log(`[loadDc] offset ${from}: got ${rows.length} rows`, rows.slice(0, 2));
+      allRows = allRows.concat(rows);
+      if (rows.length < PAGE) break;
+      from += PAGE;
     }
-    console.log(`[loadDc] total rows fetched: ${allRows.length}`);
+    console.log(`[loadDc] total rows: ${allRows.length}. Sample distributors:`,
+      [...new Set(allRows.slice(0, 20).map((r) => r.distributor))]);
+
     const map = new Map<string, boolean>();
     const unfiMap = new Map<string, string>();
     const keheMap = new Map<string, string>();
     allRows.forEach((r) => {
       map.set(`${r.brand_product_id}|${r.distributor}|${r.dc_code}`, r.listed);
-      if (r.distributor === "UNFI") unfiMap.set(r.dc_code, r.dc_name ?? r.dc_code);
-      else if (r.distributor === "KeHE") keheMap.set(r.dc_code, r.dc_name ?? r.dc_code);
+      // case-insensitive match so "KEHE" / "kehe" / "KeHE" all work
+      const dist = (r.distributor ?? "").trim().toUpperCase();
+      if (dist === "UNFI") unfiMap.set(r.dc_code, r.dc_name ?? r.dc_code);
+      else if (dist === "KEHE") keheMap.set(r.dc_code, r.dc_name ?? r.dc_code);
     });
-    console.log(`[loadDc] unique KeHE codes: ${keheMap.size}, UNFI codes: ${unfiMap.size}`);
+    console.log(`[loadDc] KeHE DC codes: ${keheMap.size}, UNFI DC codes: ${unfiMap.size}`);
+
     setDcListings(map);
     setUnfiCodes([...unfiMap.entries()].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code)));
     setKeheCodes([...keheMap.entries()].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code)));
