@@ -597,7 +597,7 @@ export default function BrandProductsPage() {
     }
   }
 
-  async function copySelected() {
+  function buildRowMap() {
     const rowMap = new Map<number, Map<string, string>>();
     for (const key of selectedCells) {
       const dashIdx = key.indexOf("-");
@@ -608,12 +608,32 @@ export default function BrandProductsPage() {
       if (!product) continue;
       rowMap.get(rowIdx)!.set(col, getProductCellValue(product, col));
     }
+    return rowMap;
+  }
+
+  async function copyForExcel() {
+    const rowMap = buildRowMap();
     const activeCols = COPY_COLS.filter((c) => [...rowMap.values()].some((m) => m.has(c)));
     const dataLines = [...rowMap.entries()]
       .sort((a, b) => a[0] - b[0])
       .map(([, cols]) => activeCols.map((c) => cols.get(c) ?? "").join("\t"));
     const lines = includeHeaders
       ? [activeCols.map((c) => COL_LABELS[c] ?? c).join("\t"), ...dataLines]
+      : dataLines;
+    await navigator.clipboard.writeText(lines.join("\n"));
+    setCopyConfirm(true);
+    setTimeout(() => setCopyConfirm(false), 1500);
+  }
+
+  async function copyForEmail() {
+    const rowMap = buildRowMap();
+    const activeCols = COPY_COLS.filter((c) => [...rowMap.values()].some((m) => m.has(c)));
+    const stripDollar = (v: string) => v.replace(/^\$/, "");
+    const dataLines = [...rowMap.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([, cols]) => activeCols.map((c) => stripDollar(cols.get(c) ?? "")).join(" | "));
+    const lines = includeHeaders
+      ? [activeCols.map((c) => COL_LABELS[c] ?? c).join(" | "), ...dataLines]
       : dataLines;
     await navigator.clipboard.writeText(lines.join("\n"));
     setCopyConfirm(true);
@@ -695,11 +715,18 @@ export default function BrandProductsPage() {
             {copyMode && selectedCells.size > 0 && (
               <>
                 <button
-                  onClick={copySelected}
+                  onClick={copyForExcel}
                   className="px-3 py-2 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap"
                   style={{ background: copyConfirm ? "#0d9488" : "var(--card)", color: copyConfirm ? "#fff" : "var(--foreground)", borderColor: copyConfirm ? "#0d9488" : "var(--border)" }}
                 >
-                  {copyConfirm ? "Copied!" : `Copy Selected (${selectedCells.size})`}
+                  {copyConfirm ? "Copied!" : "Copy for Excel"}
+                </button>
+                <button
+                  onClick={copyForEmail}
+                  className="px-3 py-2 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap"
+                  style={{ background: copyConfirm ? "#0d9488" : "var(--card)", color: copyConfirm ? "#fff" : "var(--foreground)", borderColor: copyConfirm ? "#0d9488" : "var(--border)" }}
+                >
+                  {copyConfirm ? "Copied!" : "Copy for Email"}
                 </button>
                 <button
                   onClick={() => setSelectedCells(new Set())}
