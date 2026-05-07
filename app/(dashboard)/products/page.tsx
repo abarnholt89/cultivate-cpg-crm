@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -133,6 +133,8 @@ export default function ProductsLibraryPage() {
   // Tab state
   const [activeTab, setActiveTab] = useState<"products" | "apl" | "dc">("products");
   const [copyMode, setCopyMode] = useState(false);
+  const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set());
+  const [copyConfirm, setCopyConfirm] = useState(false);
 
   // APL state (global — all brands)
   const [aplLoaded, setAplLoaded] = useState(false);
@@ -553,6 +555,63 @@ export default function ProductsLibraryPage() {
     }`;
   }
 
+  // Copy Mode helpers
+  const COPY_COLS = ["brand", "description", "retail_upc", "kehe_item", "unfi_east_item", "unfi_west_item", "cost", "case_cost", "srp"];
+
+  function toggleCell(rowIdx: number, col: string) {
+    const key = `${rowIdx}-${col}`;
+    setSelectedCells((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
+  function getProductCellValue(product: Product, col: string): string {
+    const brand = brandsById[product.brand_id];
+    switch (col) {
+      case "brand": return brand?.name ?? "";
+      case "description": return product.description ?? "";
+      case "retail_upc": return product.retail_upc ?? "";
+      case "kehe_item": return product.kehe_item ?? "";
+      case "unfi_east_item": return product.unfi_east_item ?? "";
+      case "unfi_west_item": return product.unfi_west_item ?? "";
+      case "cost": return product.cost != null ? `$${product.cost.toFixed(2)}` : "";
+      case "case_cost": return product.case_cost != null ? `$${product.case_cost.toFixed(2)}` : "";
+      case "srp": return product.srp != null ? `$${product.srp.toFixed(2)}` : "";
+      default: return "";
+    }
+  }
+
+  async function copySelected() {
+    const rowMap = new Map<number, Map<string, string>>();
+    for (const key of selectedCells) {
+      const dashIdx = key.indexOf("-");
+      const rowIdx = parseInt(key.slice(0, dashIdx));
+      const col = key.slice(dashIdx + 1);
+      if (!rowMap.has(rowIdx)) rowMap.set(rowIdx, new Map());
+      const product = filtered[rowIdx];
+      if (!product) continue;
+      rowMap.get(rowIdx)!.set(col, getProductCellValue(product, col));
+    }
+    const lines = [...rowMap.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([, cols]) => COPY_COLS.filter((c) => cols.has(c)).map((c) => cols.get(c)!).join("\t"));
+    await navigator.clipboard.writeText(lines.join("\n"));
+    setCopyConfirm(true);
+    setTimeout(() => setCopyConfirm(false), 1500);
+  }
+
+  function mkSelStyle(rowIdx: number, col: string, base?: CSSProperties): CSSProperties {
+    if (!copyMode) return base ?? {};
+    const isSel = selectedCells.has(`${rowIdx}-${col}`);
+    return { ...(base ?? {}), cursor: "pointer", ...(isSel ? { background: "#ccfbf1", outline: "2px solid #2dd4bf", outlineOffset: "-2px" } : {}) };
+  }
+
+  function mkSelClick(rowIdx: number, col: string): (() => void) | undefined {
+    return copyMode ? () => toggleCell(rowIdx, col) : undefined;
+  }
+
   return (
     <div className="space-y-6 p-6">
       <div>
@@ -588,7 +647,7 @@ export default function ProductsLibraryPage() {
         )}
         {activeTab === "products" && (
           <button
-            onClick={() => setCopyMode((v) => !v)}
+            onClick={() => { setCopyMode((v) => { if (v) setSelectedCells(new Set()); return !v; }); }}
             className="px-3 py-2 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap"
             style={copyMode
               ? { background: "#0d9488", color: "#fff", borderColor: "#0d9488" }
@@ -597,11 +656,29 @@ export default function ProductsLibraryPage() {
             {copyMode ? "Exit Copy Mode" : "Copy Mode"}
           </button>
         )}
+        {activeTab === "products" && copyMode && selectedCells.size > 0 && (
+          <>
+            <button
+              onClick={copySelected}
+              className="px-3 py-2 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap"
+              style={{ background: copyConfirm ? "#0d9488" : "var(--card)", color: copyConfirm ? "#fff" : "var(--foreground)", borderColor: copyConfirm ? "#0d9488" : "var(--border)" }}
+            >
+              {copyConfirm ? "Copied!" : `Copy Selected (${selectedCells.size})`}
+            </button>
+            <button
+              onClick={() => setSelectedCells(new Set())}
+              className="px-3 py-2 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap"
+              style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--muted-foreground)" }}
+            >
+              Clear
+            </button>
+          </>
+        )}
       </div>
 
       {activeTab === "products" && copyMode && (
-        <div className="rounded-lg px-3 py-2 text-xs text-blue-700" style={{ background: "#eff6ff", border: "1px solid #bfdbfe" }}>
-          Click and drag to select cells, then Ctrl+C to copy
+        <div className="rounded-lg px-3 py-2 text-xs text-teal-700" style={{ background: "#f0fdfa", border: "1px solid #99f6e4" }}>
+          {selectedCells.size === 0 ? "Click cells to select them, then click Copy Selected." : `${selectedCells.size} cell${selectedCells.size !== 1 ? "s" : ""} selected`}
         </div>
       )}
 
@@ -620,10 +697,10 @@ export default function ProductsLibraryPage() {
           ) : (
             <>
             {copyMode && (
-              <style>{`.copy-mode-table td:hover { background: rgba(59,130,246,0.08) !important; }`}</style>
+              <style>{`.copy-mode-table td[data-sel]:not([data-selected="true"]):hover { background: rgba(20,184,166,0.08) !important; } .copy-mode-table td[data-sel] { cursor: pointer; }`}</style>
             )}
             <div className="overflow-x-auto rounded-xl border border-border">
-              <table className={copyMode ? "text-sm copy-mode-table" : "text-sm"} style={{ minWidth: "max-content", width: "100%", userSelect: copyMode ? "text" : "none" }}>
+              <table className={copyMode ? "text-sm copy-mode-table" : "text-sm"} style={{ minWidth: "max-content", width: "100%", userSelect: copyMode ? "none" : undefined }}>
                 <thead>
                   <tr style={{ background: "#1e3a4a" }}>
                     <th className={groupTh} colSpan={1} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Brand</th>
@@ -673,23 +750,23 @@ export default function ProductsLibraryPage() {
 
                     return [
                       <tr key={product.id} className="border-b border-border last:border-0" style={{ background: rowBg }}>
-                        <td className={tdStyle} style={{ borderRight: "1px solid var(--border)" }}>
+                        <td className={tdStyle} data-sel={copyMode ? "1" : undefined} data-selected={selectedCells.has(`${idx}-brand`) ? "true" : undefined} style={mkSelStyle(idx, "brand", { borderRight: "1px solid var(--border)" })} onClick={mkSelClick(idx, "brand")}>
                           {brand
                             ? <Link href={`/brands/${product.brand_id}/products`} className="text-xs font-medium text-foreground hover:underline whitespace-nowrap" onClick={copyMode ? (e) => e.preventDefault() : undefined}>{brand.name}</Link>
                             : <span className="text-muted-foreground">—</span>}
                         </td>
-                        <td className="px-3 py-2 text-xs text-foreground font-medium" style={{ whiteSpace: "normal" }}>{product.description}</td>
-                        <td className={`${tdStyle} font-mono text-muted-foreground`}>{product.retail_upc ?? "—"}</td>
+                        <td className="px-3 py-2 text-xs text-foreground font-medium" data-sel={copyMode ? "1" : undefined} data-selected={selectedCells.has(`${idx}-description`) ? "true" : undefined} style={mkSelStyle(idx, "description", { whiteSpace: "normal" })} onClick={mkSelClick(idx, "description")}>{product.description}</td>
+                        <td className={`${tdStyle} font-mono text-muted-foreground`} data-sel={copyMode ? "1" : undefined} data-selected={selectedCells.has(`${idx}-retail_upc`) ? "true" : undefined} style={mkSelStyle(idx, "retail_upc")} onClick={mkSelClick(idx, "retail_upc")}>{product.retail_upc ?? "—"}</td>
                         <td className={`${tdStyle} text-muted-foreground`}>{product.size ?? "—"}</td>
                         <td className={`${tdStyle} text-muted-foreground`} style={{ borderRight: "1px solid var(--border)" }}>{product.uom ?? "—"}</td>
-                        <td className={`${tdStyle} text-muted-foreground`}>{product.kehe_item ?? "—"}</td>
-                        <td className={`${tdStyle} text-muted-foreground`}>{product.unfi_east_item ?? "—"}</td>
-                        <td className={`${tdStyle} text-muted-foreground`} style={{ borderRight: "1px solid var(--border)" }}>{product.unfi_west_item ?? "—"}</td>
-                        <td className={`${tdStyle} text-muted-foreground`}>{fmt$(product.cost)}</td>
+                        <td className={`${tdStyle} text-muted-foreground`} data-sel={copyMode ? "1" : undefined} data-selected={selectedCells.has(`${idx}-kehe_item`) ? "true" : undefined} style={mkSelStyle(idx, "kehe_item")} onClick={mkSelClick(idx, "kehe_item")}>{product.kehe_item ?? "—"}</td>
+                        <td className={`${tdStyle} text-muted-foreground`} data-sel={copyMode ? "1" : undefined} data-selected={selectedCells.has(`${idx}-unfi_east_item`) ? "true" : undefined} style={mkSelStyle(idx, "unfi_east_item")} onClick={mkSelClick(idx, "unfi_east_item")}>{product.unfi_east_item ?? "—"}</td>
+                        <td className={`${tdStyle} text-muted-foreground`} data-sel={copyMode ? "1" : undefined} data-selected={selectedCells.has(`${idx}-unfi_west_item`) ? "true" : undefined} style={mkSelStyle(idx, "unfi_west_item", { borderRight: "1px solid var(--border)" })} onClick={mkSelClick(idx, "unfi_west_item")}>{product.unfi_west_item ?? "—"}</td>
+                        <td className={`${tdStyle} text-muted-foreground`} data-sel={copyMode ? "1" : undefined} data-selected={selectedCells.has(`${idx}-cost`) ? "true" : undefined} style={mkSelStyle(idx, "cost")} onClick={mkSelClick(idx, "cost")}>{fmt$(product.cost)}</td>
                         <td className={`${tdStyle} text-muted-foreground`}>{fmt$(product.kehe_cost)}</td>
                         <td className={`${tdStyle} text-muted-foreground`}>{fmt$(product.unfi_cost)}</td>
-                        <td className={`${tdStyle} text-muted-foreground`}>{fmt$(product.case_cost)}</td>
-                        <td className={`${tdStyle} text-muted-foreground`} style={{ borderRight: "1px solid var(--border)" }}>{fmt$(product.srp)}</td>
+                        <td className={`${tdStyle} text-muted-foreground`} data-sel={copyMode ? "1" : undefined} data-selected={selectedCells.has(`${idx}-case_cost`) ? "true" : undefined} style={mkSelStyle(idx, "case_cost")} onClick={mkSelClick(idx, "case_cost")}>{fmt$(product.case_cost)}</td>
+                        <td className={`${tdStyle} text-muted-foreground`} data-sel={copyMode ? "1" : undefined} data-selected={selectedCells.has(`${idx}-srp`) ? "true" : undefined} style={mkSelStyle(idx, "srp", { borderRight: "1px solid var(--border)" })} onClick={mkSelClick(idx, "srp")}>{fmt$(product.srp)}</td>
                         <td className={`${tdStyle} text-muted-foreground`}>{product.unit_pack ?? "—"}</td>
                         <td className={`${tdStyle} text-muted-foreground`}>{product.inner_pack ?? "—"}</td>
                         <td className={`${tdStyle} text-muted-foreground`}>{product.master_case_pack ?? "—"}</td>
