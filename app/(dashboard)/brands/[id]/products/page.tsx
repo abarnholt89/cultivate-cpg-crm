@@ -148,6 +148,7 @@ export default function BrandProductsPage() {
   const [copyMode, setCopyMode] = useState(false);
   const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set());
   const [copyConfirm, setCopyConfirm] = useState(false);
+  const [includeHeaders, setIncludeHeaders] = useState(true);
 
   // APL state
   const [aplLoaded, setAplLoaded] = useState(false);
@@ -564,7 +565,12 @@ export default function BrandProductsPage() {
   }
 
   // Copy Mode helpers
-  const COPY_COLS = ["description", "retail_upc", "kehe_item", "unfi_east_item", "unfi_west_item", "cost", "case_cost", "srp"];
+  const COPY_COLS = ["description", "retail_upc", "size", "uom", "kehe_item", "unfi_east_item", "unfi_west_item", "cost", "case_cost", "srp"];
+  const COL_LABELS: Record<string, string> = {
+    description: "Description", retail_upc: "UPC", size: "Size", uom: "UOM",
+    kehe_item: "KeHE", unfi_east_item: "UNFI East", unfi_west_item: "UNFI West",
+    cost: "Unit Cost", case_cost: "Case Cost", srp: "SRP",
+  };
 
   function toggleCell(rowIdx: number, col: string) {
     const key = `${rowIdx}-${col}`;
@@ -579,6 +585,8 @@ export default function BrandProductsPage() {
     switch (col) {
       case "description": return product.description ?? "";
       case "retail_upc": return product.retail_upc ?? "";
+      case "size": return product.size ?? "";
+      case "uom": return product.uom ?? "";
       case "kehe_item": return product.kehe_item ?? "";
       case "unfi_east_item": return product.unfi_east_item ?? "";
       case "unfi_west_item": return product.unfi_west_item ?? "";
@@ -600,9 +608,13 @@ export default function BrandProductsPage() {
       if (!product) continue;
       rowMap.get(rowIdx)!.set(col, getProductCellValue(product, col));
     }
-    const lines = [...rowMap.entries()]
+    const activeCols = COPY_COLS.filter((c) => [...rowMap.values()].some((m) => m.has(c)));
+    const dataLines = [...rowMap.entries()]
       .sort((a, b) => a[0] - b[0])
-      .map(([, cols]) => COPY_COLS.filter((c) => cols.has(c)).map((c) => cols.get(c)!).join("\t"));
+      .map(([, cols]) => activeCols.map((c) => cols.get(c) ?? "").join("\t"));
+    const lines = includeHeaders
+      ? [activeCols.map((c) => COL_LABELS[c] ?? c).join("\t"), ...dataLines]
+      : dataLines;
     await navigator.clipboard.writeText(lines.join("\n"));
     setCopyConfirm(true);
     setTimeout(() => setCopyConfirm(false), 1500);
@@ -701,8 +713,12 @@ export default function BrandProductsPage() {
           </div>
 
           {copyMode && (
-            <div className="rounded-lg px-3 py-2 text-xs text-teal-700" style={{ background: "#f0fdfa", border: "1px solid #99f6e4" }}>
-              {selectedCells.size === 0 ? "Click cells to select them, then click Copy Selected." : `${selectedCells.size} cell${selectedCells.size !== 1 ? "s" : ""} selected`}
+            <div className="flex items-center gap-4 rounded-lg px-3 py-2 text-xs text-teal-700" style={{ background: "#f0fdfa", border: "1px solid #99f6e4" }}>
+              <span>{selectedCells.size === 0 ? "Click cells to select them, then click Copy Selected." : `${selectedCells.size} cell${selectedCells.size !== 1 ? "s" : ""} selected`}</span>
+              <label className="flex items-center gap-1.5 cursor-pointer ml-auto whitespace-nowrap">
+                <input type="checkbox" checked={includeHeaders} onChange={(e) => setIncludeHeaders(e.target.checked)} />
+                Include headers
+              </label>
             </div>
           )}
 
@@ -806,8 +822,12 @@ export default function BrandProductsPage() {
                         <td className={`${tdStyle} font-mono text-muted-foreground`} data-sel={copyMode ? "1" : undefined} data-selected={selectedCells.has(`${idx}-retail_upc`) ? "true" : undefined} style={mkSelStyle(idx, "retail_upc")}>
                           <span className="cell-hit" onClick={mkSelClick(idx, "retail_upc")}>{product.retail_upc ?? "—"}</span>
                         </td>
-                        <td className={`${tdStyle} text-muted-foreground`}>{product.size ?? "—"}</td>
-                        <td className={`${tdStyle} text-muted-foreground`} style={{ borderRight: "1px solid var(--border)" }}>{product.uom ?? "—"}</td>
+                        <td className={`${tdStyle} text-muted-foreground`} data-sel={copyMode ? "1" : undefined} data-selected={selectedCells.has(`${idx}-size`) ? "true" : undefined} style={mkSelStyle(idx, "size")}>
+                          <span className="cell-hit" onClick={mkSelClick(idx, "size")}>{product.size ?? "—"}</span>
+                        </td>
+                        <td className={`${tdStyle} text-muted-foreground`} data-sel={copyMode ? "1" : undefined} data-selected={selectedCells.has(`${idx}-uom`) ? "true" : undefined} style={mkSelStyle(idx, "uom", { borderRight: "1px solid var(--border)" })}>
+                          <span className="cell-hit" onClick={mkSelClick(idx, "uom")}>{product.uom ?? "—"}</span>
+                        </td>
                         <td className={`${tdStyle} text-muted-foreground`} data-sel={copyMode ? "1" : undefined} data-selected={selectedCells.has(`${idx}-kehe_item`) ? "true" : undefined} style={mkSelStyle(idx, "kehe_item")}>
                           <span className="cell-hit" onClick={mkSelClick(idx, "kehe_item")}>{product.kehe_item ?? "—"}</span>
                         </td>
