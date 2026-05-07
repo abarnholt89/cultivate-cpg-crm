@@ -145,6 +145,7 @@ export default function BrandProductsPage() {
 
   // Tab state
   const [activeTab, setActiveTab] = useState<"products" | "apl" | "dc">("products");
+  const [copyMode, setCopyMode] = useState(false);
 
   // APL state
   const [aplLoaded, setAplLoaded] = useState(false);
@@ -613,7 +614,22 @@ export default function BrandProductsPage() {
                 <input ref={csvRef} type="file" accept=".csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleCsvUpload(f); e.target.value = ""; }} />
               </>
             )}
+            <button
+              onClick={() => setCopyMode((v) => !v)}
+              className="px-3 py-2 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap"
+              style={copyMode
+                ? { background: "#0d9488", color: "#fff", borderColor: "#0d9488" }
+                : { border: "1px solid var(--border)", background: "var(--card)", color: "var(--muted-foreground)" }}
+            >
+              {copyMode ? "Exit Copy Mode" : "Copy Mode"}
+            </button>
           </div>
+
+          {copyMode && (
+            <div className="rounded-lg px-3 py-2 text-xs text-blue-700" style={{ background: "#eff6ff", border: "1px solid #bfdbfe" }}>
+              Click and drag to select cells, then Ctrl+C to copy
+            </div>
+          )}
 
           {csvStatus && <p className="text-sm text-muted-foreground">{csvStatus}</p>}
 
@@ -655,8 +671,12 @@ export default function BrandProductsPage() {
           {displayProducts.length === 0 ? (
             <p className="text-sm text-muted-foreground">{query ? "No products match your search." : "No products yet. Add one above or upload a CSV."}</p>
           ) : (
+            <>
+            {copyMode && (
+              <style>{`.copy-mode-table td:hover { background: rgba(59,130,246,0.08) !important; }`}</style>
+            )}
             <div className="overflow-x-auto rounded-xl border border-border">
-              <table className="text-sm" style={{ minWidth: "max-content", width: "100%" }}>
+              <table className={copyMode ? "text-sm copy-mode-table" : "text-sm"} style={{ minWidth: "max-content", width: "100%", userSelect: copyMode ? "text" : "none" }}>
                 <thead>
                   <tr style={{ background: "#1e3a4a" }}>
                     <th className={groupTh} colSpan={4} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Identity</th>
@@ -739,10 +759,10 @@ export default function BrandProductsPage() {
                         </td>
                         {isRepOrAdmin && (
                           <td className={`${tdStyle} text-right`}>
-                            <button onClick={() => startEdit(product)} className="text-xs text-muted-foreground hover:text-foreground transition-colors mr-3">Edit</button>
+                            <button onClick={copyMode ? undefined : () => startEdit(product)} className="text-xs text-muted-foreground hover:text-foreground transition-colors mr-3">Edit</button>
                             {product.status === "active"
-                              ? <button onClick={() => archiveProduct(product.id)} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Archive</button>
-                              : <button onClick={() => restoreProduct(product.id)} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Restore</button>}
+                              ? <button onClick={copyMode ? undefined : () => archiveProduct(product.id)} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Archive</button>
+                              : <button onClick={copyMode ? undefined : () => restoreProduct(product.id)} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Restore</button>}
                           </td>
                         )}
                       </tr>,
@@ -851,6 +871,7 @@ export default function BrandProductsPage() {
                 </tbody>
               </table>
             </div>
+            </>
           )}
           <p className="text-xs text-muted-foreground">CSV format: description, upc, size, srp, cost (header row required)</p>
         </>

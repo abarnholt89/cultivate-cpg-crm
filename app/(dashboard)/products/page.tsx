@@ -132,6 +132,7 @@ export default function ProductsLibraryPage() {
 
   // Tab state
   const [activeTab, setActiveTab] = useState<"products" | "apl" | "dc">("products");
+  const [copyMode, setCopyMode] = useState(false);
 
   // APL state (global — all brands)
   const [aplLoaded, setAplLoaded] = useState(false);
@@ -585,7 +586,24 @@ export default function ProductsLibraryPage() {
             {filtered.length.toLocaleString()} SKU{filtered.length !== 1 ? "s" : ""}
           </span>
         )}
+        {activeTab === "products" && (
+          <button
+            onClick={() => setCopyMode((v) => !v)}
+            className="px-3 py-2 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap"
+            style={copyMode
+              ? { background: "#0d9488", color: "#fff", borderColor: "#0d9488" }
+              : { border: "1px solid var(--border)", background: "var(--card)", color: "var(--muted-foreground)" }}
+          >
+            {copyMode ? "Exit Copy Mode" : "Copy Mode"}
+          </button>
+        )}
       </div>
+
+      {activeTab === "products" && copyMode && (
+        <div className="rounded-lg px-3 py-2 text-xs text-blue-700" style={{ background: "#eff6ff", border: "1px solid #bfdbfe" }}>
+          Click and drag to select cells, then Ctrl+C to copy
+        </div>
+      )}
 
       {/* Tab bar */}
       <div className="flex border-b border-border -mb-2">
@@ -600,8 +618,12 @@ export default function ProductsLibraryPage() {
           {filtered.length === 0 ? (
             <p className="text-sm text-muted-foreground">No products match your filters.</p>
           ) : (
+            <>
+            {copyMode && (
+              <style>{`.copy-mode-table td:hover { background: rgba(59,130,246,0.08) !important; }`}</style>
+            )}
             <div className="overflow-x-auto rounded-xl border border-border">
-              <table className="text-sm" style={{ minWidth: "max-content", width: "100%" }}>
+              <table className={copyMode ? "text-sm copy-mode-table" : "text-sm"} style={{ minWidth: "max-content", width: "100%", userSelect: copyMode ? "text" : "none" }}>
                 <thead>
                   <tr style={{ background: "#1e3a4a" }}>
                     <th className={groupTh} colSpan={1} style={{ borderRight: "1px solid rgba(255,255,255,0.15)" }}>Brand</th>
@@ -653,7 +675,7 @@ export default function ProductsLibraryPage() {
                       <tr key={product.id} className="border-b border-border last:border-0" style={{ background: rowBg }}>
                         <td className={tdStyle} style={{ borderRight: "1px solid var(--border)" }}>
                           {brand
-                            ? <Link href={`/brands/${product.brand_id}/products`} className="text-xs font-medium text-foreground hover:underline whitespace-nowrap">{brand.name}</Link>
+                            ? <Link href={`/brands/${product.brand_id}/products`} className="text-xs font-medium text-foreground hover:underline whitespace-nowrap" onClick={copyMode ? (e) => e.preventDefault() : undefined}>{brand.name}</Link>
                             : <span className="text-muted-foreground">—</span>}
                         </td>
                         <td className="px-3 py-2 text-xs text-foreground font-medium" style={{ whiteSpace: "normal" }}>{product.description}</td>
@@ -685,7 +707,7 @@ export default function ProductsLibraryPage() {
                         </td>
                         {isRepOrAdminLocal && (
                           <td className={`${tdStyle} text-right`}>
-                            <button onClick={() => startEdit(product)} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Edit</button>
+                            <button onClick={copyMode ? undefined : () => startEdit(product)} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Edit</button>
                           </td>
                         )}
                       </tr>,
@@ -794,6 +816,7 @@ export default function ProductsLibraryPage() {
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </>
       )}
