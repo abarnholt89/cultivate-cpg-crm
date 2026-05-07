@@ -304,15 +304,23 @@ export default function ProductsLibraryPage() {
     const allRows: { brand_product_id: string; distributor: string; dc_code: string; dc_name: string | null; listed: boolean }[] = [];
     let from = 0;
     while (true) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("distributor_dc_listings")
         .select("brand_product_id,distributor,dc_code,dc_name,listed")
         .range(from, from + CHUNK - 1);
+      if (error) {
+        console.error("[loadDc] query error:", error);
+        setError(`DC load error: ${error.message}`);
+        setDcLoading(false);
+        return;
+      }
+      console.log(`[loadDc] chunk from=${from}, rows=${data?.length ?? 0}`, data?.slice(0, 3));
       if (!data || data.length === 0) break;
       allRows.push(...(data as typeof allRows));
       if (data.length < CHUNK) break;
       from += CHUNK;
     }
+    console.log(`[loadDc] total rows fetched: ${allRows.length}`);
     const map = new Map<string, boolean>();
     const unfiMap = new Map<string, string>();
     const keheMap = new Map<string, string>();
@@ -321,6 +329,7 @@ export default function ProductsLibraryPage() {
       if (r.distributor === "UNFI") unfiMap.set(r.dc_code, r.dc_name ?? r.dc_code);
       else if (r.distributor === "KeHE") keheMap.set(r.dc_code, r.dc_name ?? r.dc_code);
     });
+    console.log(`[loadDc] unique KeHE codes: ${keheMap.size}, UNFI codes: ${unfiMap.size}`);
     setDcListings(map);
     setUnfiCodes([...unfiMap.entries()].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code)));
     setKeheCodes([...keheMap.entries()].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code)));
@@ -1222,7 +1231,24 @@ export default function ProductsLibraryPage() {
               ...unfiCodes.map((dc) => ({ ...dc, distributor: "UNFI" as const })),
             ];
             if (allDcCodes.length === 0) {
-              return <p className="text-sm text-muted-foreground">No DC listings found. Use &quot;+ Add DC Listing&quot; to add one.</p>;
+              return (
+                <div className="rounded-xl border border-border bg-card p-6 space-y-2">
+                  <p className="text-sm font-medium text-foreground">No DC listings found</p>
+                  <p className="text-xs text-muted-foreground">
+                    The <code className="font-mono bg-secondary px-1 rounded">distributor_dc_listings</code> table is empty.
+                    This can happen if brand products were re-imported (the CASCADE delete removes all DC listings when brand_products rows are deleted).
+                    Use &quot;+ Add DC Listing&quot; to add listings, or restore from a backup.
+                  </p>
+                  {isRepOrAdmin && (
+                    <button
+                      onClick={() => { setDcAddOpen(true); }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:text-foreground transition-colors mt-1"
+                    >
+                      + Add DC Listing
+                    </button>
+                  )}
+                </div>
+              );
             }
 
             const itemNumStyle = (bg: string, editable: boolean) => ({
