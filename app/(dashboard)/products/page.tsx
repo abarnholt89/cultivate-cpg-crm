@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -136,6 +136,8 @@ export default function ProductsLibraryPage() {
   const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set());
   const [copyConfirm, setCopyConfirm] = useState(false);
   const [includeHeaders, setIncludeHeaders] = useState(true);
+  const [tableModalHtml, setTableModalHtml] = useState<string | null>(null);
+  const tableModalRef = useRef<HTMLDivElement>(null);
 
   // APL state (global — all brands)
   const [aplLoaded, setAplLoaded] = useState(false);
@@ -619,14 +621,13 @@ export default function ProductsLibraryPage() {
     setTimeout(() => setCopyConfirm(false), 1500);
   }
 
-  async function copyForEmail() {
+  function openTableModal() {
     const rowMap = buildRowMap();
     const activeCols = COPY_COLS.filter((c) => [...rowMap.values()].some((m) => m.has(c)));
     const stripDollar = (v: string) => v.replace(/^\$/, "");
     const sortedRows = [...rowMap.entries()].sort((a, b) => a[0] - b[0]);
-
-    const thStyle = `border:1px solid #d1d5db;background:#f3f4f6;padding:6px 12px;font-weight:bold;text-align:left;`;
-    const tdStyle = `border:1px solid #d1d5db;padding:6px 12px;`;
+    const thStyle = `border:1px solid #d1d5db;background:#f3f4f6;padding:8px 14px;font-weight:bold;text-align:left;`;
+    const tdStyle = `border:1px solid #d1d5db;padding:8px 14px;`;
     const headerRow = includeHeaders
       ? `<tr>${activeCols.map((c) => `<th style="${thStyle}">${COL_LABELS[c] ?? c}</th>`).join("")}</tr>`
       : "";
@@ -634,20 +635,18 @@ export default function ProductsLibraryPage() {
       .map(([, cols]) => `<tr>${activeCols.map((c) => `<td style="${tdStyle}">${stripDollar(cols.get(c) ?? "")}</td>`).join("")}</tr>`)
       .join("");
     const html = `<table style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:13px;">${headerRow}${dataRows}</table>`;
-
-    const plainLines = sortedRows.map(([, cols]) => activeCols.map((c) => stripDollar(cols.get(c) ?? "")).join(" | "));
-    const plain = includeHeaders
-      ? [activeCols.map((c) => COL_LABELS[c] ?? c).join(" | "), ...plainLines].join("\n")
-      : plainLines.join("\n");
-
-    await navigator.clipboard.write([
-      new ClipboardItem({
-        "text/html": new Blob([html], { type: "text/html" }),
-        "text/plain": new Blob([plain], { type: "text/plain" }),
-      }),
-    ]);
-    setCopyConfirm(true);
-    setTimeout(() => setCopyConfirm(false), 1500);
+    setTableModalHtml(html);
+    // Auto-select table contents after render
+    setTimeout(() => {
+      const el = tableModalRef.current;
+      if (!el) return;
+      const sel = window.getSelection();
+      if (!sel) return;
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }, 50);
   }
 
   function mkSelStyle(rowIdx: number, col: string, base?: CSSProperties): CSSProperties {
@@ -714,11 +713,11 @@ export default function ProductsLibraryPage() {
               {copyConfirm ? "Copied!" : "Copy for Excel"}
             </button>
             <button
-              onClick={copyForEmail}
+              onClick={openTableModal}
               className="px-3 py-2 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap"
-              style={{ background: copyConfirm ? "#0d9488" : "var(--card)", color: copyConfirm ? "#fff" : "var(--foreground)", borderColor: copyConfirm ? "#0d9488" : "var(--border)" }}
+              style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
             >
-              {copyConfirm ? "Copied!" : "Copy for Email"}
+              Open as Table
             </button>
             <button
               onClick={() => setSelectedCells(new Set())}
@@ -1330,6 +1329,35 @@ export default function ProductsLibraryPage() {
               </>
             );
           })()}
+        </div>
+      )}
+      {tableModalHtml && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.55)" }}
+          onClick={() => { setTableModalHtml(null); window.getSelection()?.removeAllRanges(); }}
+        >
+          <div
+            className="bg-white rounded-xl shadow-2xl flex flex-col max-h-[85vh] w-auto max-w-[90vw]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 pt-5 pb-3 border-b border-gray-200">
+              <h2 className="text-base font-semibold text-gray-900">Copy this table into your email</h2>
+              <p className="text-xs text-gray-500 mt-1">Select all (Ctrl+A / Cmd+A), copy (Ctrl+C / Cmd+C), then paste into your email.</p>
+            </div>
+            <div className="overflow-auto px-6 py-4 flex-1">
+              <div ref={tableModalRef} dangerouslySetInnerHTML={{ __html: tableModalHtml }} />
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end">
+              <button
+                onClick={() => { setTableModalHtml(null); window.getSelection()?.removeAllRanges(); }}
+                className="px-4 py-2 rounded-lg text-sm font-medium"
+                style={{ background: "#1e3a4a", color: "#fff" }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
