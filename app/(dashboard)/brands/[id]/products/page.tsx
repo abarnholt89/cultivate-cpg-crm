@@ -629,13 +629,29 @@ export default function BrandProductsPage() {
     const rowMap = buildRowMap();
     const activeCols = COPY_COLS.filter((c) => [...rowMap.values()].some((m) => m.has(c)));
     const stripDollar = (v: string) => v.replace(/^\$/, "");
-    const dataLines = [...rowMap.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([, cols]) => activeCols.map((c) => stripDollar(cols.get(c) ?? "")).join(" | "));
-    const lines = includeHeaders
-      ? [activeCols.map((c) => COL_LABELS[c] ?? c).join(" | "), ...dataLines]
-      : dataLines;
-    await navigator.clipboard.writeText(lines.join("\n"));
+    const sortedRows = [...rowMap.entries()].sort((a, b) => a[0] - b[0]);
+
+    const thStyle = `border:1px solid #d1d5db;background:#f3f4f6;padding:6px 12px;font-weight:bold;text-align:left;`;
+    const tdStyle = `border:1px solid #d1d5db;padding:6px 12px;`;
+    const headerRow = includeHeaders
+      ? `<tr>${activeCols.map((c) => `<th style="${thStyle}">${COL_LABELS[c] ?? c}</th>`).join("")}</tr>`
+      : "";
+    const dataRows = sortedRows
+      .map(([, cols]) => `<tr>${activeCols.map((c) => `<td style="${tdStyle}">${stripDollar(cols.get(c) ?? "")}</td>`).join("")}</tr>`)
+      .join("");
+    const html = `<table style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:13px;">${headerRow}${dataRows}</table>`;
+
+    const plainLines = sortedRows.map(([, cols]) => activeCols.map((c) => stripDollar(cols.get(c) ?? "")).join(" | "));
+    const plain = includeHeaders
+      ? [activeCols.map((c) => COL_LABELS[c] ?? c).join(" | "), ...plainLines].join("\n")
+      : plainLines.join("\n");
+
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        "text/html": new Blob([html], { type: "text/html" }),
+        "text/plain": new Blob([plain], { type: "text/plain" }),
+      }),
+    ]);
     setCopyConfirm(true);
     setTimeout(() => setCopyConfirm(false), 1500);
   }
