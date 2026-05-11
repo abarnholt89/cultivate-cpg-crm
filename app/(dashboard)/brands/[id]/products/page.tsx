@@ -272,7 +272,21 @@ export default function BrandProductsPage() {
 
   async function loadDc(prods: Product[]) {
     if (dcLoaded || dcLoading) return;
+    console.log("[loadDc/brand] starting — prods:", prods.length, "brandId:", brandId);
     setDcLoading(true);
+
+    // Step 1: confirm the API can see the table
+    const { count: tableCount, error: countErr } = await supabase
+      .from("distributor_dc_listings")
+      .select("*", { count: "exact", head: true });
+    console.log("[loadDc/brand] table count:", tableCount, "countErr:", countErr);
+
+    // Step 2: 5-row sample
+    const { data: sample, error: sampleErr } = await supabase
+      .from("distributor_dc_listings")
+      .select("id,brand_product_id,distributor,dc_code,listed")
+      .limit(5);
+    console.log("[loadDc/brand] 5-row sample:", sample, "sampleErr:", sampleErr);
 
     // Build a set of this brand's product IDs for the listing map
     const brandProductIds = new Set(prods.map((p) => p.id));
@@ -291,8 +305,13 @@ export default function BrandProductsPage() {
         .range(from, from + PAGE - 1)
         .order("distributor")
         .order("dc_code");
-      if (error) { console.error("[loadDc brands]", error); setError(`DC load error: ${error.message}`); setDcLoading(false); return; }
+      console.log(`[loadDc/brand] range(${from},${from + PAGE - 1}): rows=${data?.length ?? "null"} error=${error?.message ?? "none"}`);
+      if (error) { console.error("[loadDc/brand] fetch error:", error); setError(`DC load error: ${error.message}`); setDcLoading(false); return; }
       const rows = (data ?? []) as DcRow[];
+      if (from === 0 && rows.length > 0) {
+        console.log("[loadDc/brand] first row:", JSON.stringify(rows[0]));
+        console.log("[loadDc/brand] brandProductIds (first 5):", [...brandProductIds].slice(0, 5));
+      }
       rows.forEach((r) => {
         // Only add to listing map for this brand's SKUs
         if (brandProductIds.has(r.brand_product_id)) {
@@ -305,6 +324,7 @@ export default function BrandProductsPage() {
       if (rows.length < PAGE) break;
       from += PAGE;
     }
+    console.log("[loadDc/brand] done — dcListings entries:", map.size, "KeHE codes:", keheMap.size, "UNFI codes:", unfiMap.size);
     setDcListings(map);
     setUnfiCodes([...unfiMap.entries()].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code)));
     setKeheCodes([...keheMap.entries()].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code)));

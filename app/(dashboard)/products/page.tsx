@@ -307,7 +307,21 @@ export default function ProductsLibraryPage() {
 
   async function loadDc() {
     if (dcLoaded || dcLoading) return;
+    console.log("[loadDc/global] starting — dcLoaded:", dcLoaded, "dcLoading:", dcLoading);
     setDcLoading(true);
+
+    // Step 1: confirm the API can see the table (no join)
+    const { count: tableCount, error: countErr } = await supabase
+      .from("distributor_dc_listings")
+      .select("*", { count: "exact", head: true });
+    console.log("[loadDc/global] table count:", tableCount, "countErr:", countErr);
+
+    // Step 2: try a simple 5-row sample with no join to isolate join issues
+    const { data: sample, error: sampleErr } = await supabase
+      .from("distributor_dc_listings")
+      .select("id,brand_product_id,distributor,dc_code,listed")
+      .limit(5);
+    console.log("[loadDc/global] 5-row sample:", sample, "sampleErr:", sampleErr);
 
     type RawRow = {
       id: string;
@@ -329,13 +343,17 @@ export default function ProductsLibraryPage() {
         .range(from, from + PAGE - 1)
         .order("distributor")
         .order("dc_code");
+      console.log(`[loadDc/global] range(${from},${from + PAGE - 1}): rows=${data?.length ?? "null"} error=${error?.message ?? "none"}`);
       if (error) {
-        console.error("[loadDc]", error);
+        console.error("[loadDc/global] fetch error:", error);
         setError(`DC load error: ${error.message}`);
         setDcLoading(false);
         return;
       }
       const rows = (data ?? []) as unknown as RawRow[];
+      if (from === 0 && rows.length > 0) {
+        console.log("[loadDc/global] first row sample:", JSON.stringify(rows[0]));
+      }
       rows.forEach((r) => {
         all.push({
           id: r.id,
@@ -352,6 +370,7 @@ export default function ProductsLibraryPage() {
       if (rows.length < PAGE) break;
       from += PAGE;
     }
+    console.log("[loadDc/global] done — total rows:", all.length, "sample distributors:", [...new Set(all.slice(0, 20).map(r => r.distributor))]);
     setDcRows(all);
     setDcLoaded(true);
     setDcLoading(false);
