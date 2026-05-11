@@ -535,12 +535,12 @@ export default function ProductsLibraryPage() {
   // Derived DC code lists for the Add DC Listing dropdown
   const unfiCodes = useMemo<DcCode[]>(() => {
     const m = new Map<string, string>();
-    dcRows.forEach((r) => { if (r.distributor === "UNFI") m.set(r.dc_code, r.dc_name ?? r.dc_code); });
+    dcRows.forEach((r) => { if ((r.distributor ?? "").toUpperCase() === "UNFI") m.set(r.dc_code, r.dc_name ?? r.dc_code); });
     return [...m.entries()].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code));
   }, [dcRows]);
   const keheCodes = useMemo<DcCode[]>(() => {
     const m = new Map<string, string>();
-    dcRows.forEach((r) => { if (r.distributor === "KeHE") m.set(r.dc_code, r.dc_name ?? r.dc_code); });
+    dcRows.forEach((r) => { if ((r.distributor ?? "").toUpperCase() === "KEHE") m.set(r.dc_code, r.dc_name ?? r.dc_code); });
     return [...m.entries()].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code));
   }, [dcRows]);
 
@@ -1299,7 +1299,7 @@ export default function ProductsLibraryPage() {
               ...keheCodes.map((dc) => ({ ...dc, distributor: "KeHE" as const })),
               ...unfiCodes.map((dc) => ({ ...dc, distributor: "UNFI" as const })),
             ];
-            if (allDcCodes.length === 0) {
+            if (dcRows.length === 0) {
               return (
                 <div className="rounded-xl border border-border bg-card p-6 space-y-2">
                   <p className="text-sm font-medium text-foreground">No DC listings found</p>

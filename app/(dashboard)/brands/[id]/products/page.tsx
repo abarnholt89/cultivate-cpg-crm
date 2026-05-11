@@ -318,8 +318,8 @@ export default function BrandProductsPage() {
           map.set(`${r.brand_product_id}|${r.distributor}|${r.dc_code}`, r.listed);
         }
         // Build DC code lists from all rows so every known DC shows as a column
-        if (r.distributor === "UNFI") unfiMap.set(r.dc_code, r.dc_name ?? r.dc_code);
-        else if (r.distributor === "KeHE") keheMap.set(r.dc_code, r.dc_name ?? r.dc_code);
+        if ((r.distributor ?? "").toUpperCase() === "UNFI") unfiMap.set(r.dc_code, r.dc_name ?? r.dc_code);
+        else if ((r.distributor ?? "").toUpperCase() === "KEHE") keheMap.set(r.dc_code, r.dc_name ?? r.dc_code);
       });
       if (rows.length < PAGE) break;
       from += PAGE;
@@ -1347,7 +1347,7 @@ export default function BrandProductsPage() {
               ...unfiCodes.map((dc) => ({ ...dc, distributor: "UNFI" as const })),
             ];
             if (allDcCodes.length === 0) {
-              return <p className="text-sm text-muted-foreground">No DC listings found for this brand. Use &quot;+ Add DC Listing&quot; to add one.</p>;
+              return <p className="text-sm text-muted-foreground">No DC listings found. Use &quot;+ Add DC Listing&quot; to add one.</p>;
             }
 
             const itemNumStyle = (bg: string, editable: boolean) => ({
