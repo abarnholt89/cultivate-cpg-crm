@@ -431,7 +431,7 @@ if (clientMessagesResult.error) {
           ...taskRows.map((t) => t.brand_id),
           ...agingRows.map((a) => a.brand_id),
           ...calendarRows.map((r) => r.brand_id),
-        ]),
+        ].filter((id): id is string => !!id)),
       ];
 
       const retailerIds = [
@@ -441,7 +441,7 @@ if (clientMessagesResult.error) {
           ...taskRows.map((t) => t.retailer_id),
           ...agingRows.map((a) => a.retailer_id),
           ...(calendarRows.map((r) => r.retailer_id).filter(Boolean) as string[]),
-        ]),
+        ].filter((id): id is string => !!id)),
       ];
 
       const calendarBrandIds = [...new Set(calendarRows.map((r) => r.brand_id))];
