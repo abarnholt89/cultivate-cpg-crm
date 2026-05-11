@@ -171,19 +171,10 @@ export default function ProductsLibraryPage() {
   const [aplAddSaving, setAplAddSaving] = useState(false);
   const [aplAddError, setAplAddError] = useState("");
 
-  // DC add-listing form
-  const [dcAddOpen, setDcAddOpen] = useState(false);
-  const [dcAddDistributor, setDcAddDistributor] = useState<"UNFI" | "KeHE">("UNFI");
-  const [dcAddCode, setDcAddCode] = useState("");
-  const [dcAddCustomCode, setDcAddCustomCode] = useState("");
-  const [dcAddProductId, setDcAddProductId] = useState("");
-  const [dcAddSkuSearch, setDcAddSkuSearch] = useState("");
-  const [dcAddSaving, setDcAddSaving] = useState(false);
-  const [dcAddError, setDcAddError] = useState("");
-
-  // Inline item-number editing (DC grid)
-  const [editItemNum, setEditItemNum] = useState<{ productId: string; field: "unfi_east_item" | "unfi_west_item" | "kehe_item" } | null>(null);
-  const [editItemNumVal, setEditItemNumVal] = useState("");
+  // DC edit mode
+  const [dcEditMode, setDcEditMode] = useState(false);
+  const [dcPending, setDcPending] = useState<Set<string>>(new Set());
+  const [dcError, setDcError] = useState("");
 
   const isRepOrAdmin = role === "admin" || role === "rep";
 
@@ -401,17 +392,53 @@ export default function ProductsLibraryPage() {
   }
 
   async function toggleDc(bpId: string, distributor: string, dcCode: string) {
-    const current = dcRows.find((r) => r.brand_product_id === bpId && r.distributor === distributor && r.dc_code === dcCode)?.listed ?? false;
-    const newVal = !current;
-    const { error: upsertErr } = await supabase.from("distributor_dc_listings").upsert(
-      { brand_product_id: bpId, distributor, dc_code: dcCode, listed: newVal },
+    if (!isRepOrAdmin || !dcEditMode) return;
+    const normDist = (distributor ?? "").toUpperCase();
+    const key = `${bpId}|${normDist}|${dcCode}`;
+    if (dcPending.has(key)) return;
+
+    const currentListed = dcLookup.get(key) ?? false;
+    const newListed = !currentListed;
+    const isNewRow = !dcRows.some(
+      (r) => r.brand_product_id === bpId && (r.distributor ?? "").toUpperCase() === normDist && r.dc_code === dcCode
+    );
+
+    // Optimistic update
+    setDcPending((prev) => new Set(prev).add(key));
+    if (isNewRow) {
+      const product = products.find((p) => p.id === bpId);
+      setDcRows((prev) => [...prev, {
+        id: "", brand_product_id: bpId, distributor, dc_code: dcCode, dc_name: null,
+        listed: true, description: product?.description ?? "", retail_upc: product?.retail_upc ?? null,
+        brand_id: product?.brand_id ?? "",
+      }]);
+    } else {
+      setDcRows((prev) => prev.map((r) =>
+        r.brand_product_id === bpId && (r.distributor ?? "").toUpperCase() === normDist && r.dc_code === dcCode
+          ? { ...r, listed: newListed } : r
+      ));
+    }
+
+    const { error } = await supabase.from("distributor_dc_listings").upsert(
+      { brand_product_id: bpId, distributor, dc_code: dcCode, listed: newListed },
       { onConflict: "brand_product_id,distributor,dc_code" }
     );
-    if (!upsertErr) {
-      setDcRows((prev) => prev.map((r) =>
-        r.brand_product_id === bpId && r.distributor === distributor && r.dc_code === dcCode
-          ? { ...r, listed: newVal } : r
-      ));
+
+    setDcPending((prev) => { const n = new Set(prev); n.delete(key); return n; });
+    if (error) {
+      // Revert optimistic update
+      if (isNewRow) {
+        setDcRows((prev) => prev.filter(
+          (r) => !(r.brand_product_id === bpId && (r.distributor ?? "").toUpperCase() === normDist && r.dc_code === dcCode)
+        ));
+      } else {
+        setDcRows((prev) => prev.map((r) =>
+          r.brand_product_id === bpId && (r.distributor ?? "").toUpperCase() === normDist && r.dc_code === dcCode
+            ? { ...r, listed: currentListed } : r
+        ));
+      }
+      setDcError(`Failed to update [${distributor}] ${dcCode}: ${error.message}`);
+      setTimeout(() => setDcError(""), 5000);
     }
   }
 
@@ -433,47 +460,6 @@ export default function ProductsLibraryPage() {
     setAplAddSaving(false);
   }
 
-  async function addDcListing() {
-    if (!dcAddProductId) { setDcAddError("Select a SKU"); return; }
-    const finalCode = dcAddCode === "__custom__" ? dcAddCustomCode.trim().toUpperCase() : dcAddCode;
-    if (!finalCode) { setDcAddError("Select or enter a DC code"); return; }
-    setDcAddSaving(true);
-    setDcAddError("");
-    const key = `${dcAddProductId}|${dcAddDistributor}|${finalCode}`;
-    const { error } = await supabase.from("distributor_dc_listings").upsert(
-      { brand_product_id: dcAddProductId, distributor: dcAddDistributor, dc_code: finalCode, listed: true },
-      { onConflict: "brand_product_id,distributor,dc_code" }
-    );
-    if (error) { setDcAddError(error.message); setDcAddSaving(false); return; }
-    const product = products.find((p) => p.id === dcAddProductId);
-    setDcRows((prev) => {
-      const existing = prev.findIndex((r) => r.brand_product_id === dcAddProductId && r.distributor === dcAddDistributor && r.dc_code === finalCode);
-      if (existing >= 0) return prev.map((r, i) => i === existing ? { ...r, listed: true } : r);
-      return [...prev, {
-        id: "",
-        brand_product_id: dcAddProductId,
-        distributor: dcAddDistributor,
-        dc_code: finalCode,
-        dc_name: null,
-        listed: true,
-        description: product?.description ?? "",
-        retail_upc: product?.retail_upc ?? null,
-        brand_id: product?.brand_id ?? "",
-      }];
-    });
-    setDcAddOpen(false);
-    setDcAddProductId(""); setDcAddCode(""); setDcAddCustomCode(""); setDcAddSkuSearch("");
-    setDcAddSaving(false);
-  }
-
-  async function saveItemNum(productId: string, field: "unfi_east_item" | "unfi_west_item" | "kehe_item", value: string) {
-    const trimmed = value.trim() || null;
-    setEditItemNum(null);
-    const { error } = await supabase.from("brand_products").update({ [field]: trimmed }).eq("id", productId);
-    if (!error) {
-      setProducts((prev) => prev.map((p) => p.id === productId ? { ...p, [field]: trimmed } : p));
-    }
-  }
 
   const filtered = useMemo(() => {
     return products
@@ -1217,79 +1203,21 @@ export default function ProductsLibraryPage() {
       {/* ─────────────── DC ASSORTMENT TAB ─────────────── */}
       {activeTab === "dc" && (
         <div className="space-y-4">
-          {/* Add button */}
+          {/* Edit Mode toggle */}
           {isRepOrAdmin && !dcLoading && dcLoaded && (
-            <div className="flex justify-end">
+            <div className="flex items-center justify-end gap-3">
+              {dcEditMode && (
+                <span className="text-xs text-muted-foreground">Click any cell to toggle listed status</span>
+              )}
               <button
-                onClick={() => { setDcAddOpen((v) => !v); setDcAddCode(""); setDcAddCustomCode(""); setDcAddProductId(""); setDcAddSkuSearch(""); setDcAddError(""); }}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:text-foreground transition-colors"
+                onClick={() => setDcEditMode((v) => !v)}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors"
+                style={dcEditMode
+                  ? { background: "#1e3a4a", color: "#fff", borderColor: "#1e3a4a" }
+                  : { background: "transparent", borderColor: "var(--border)", color: "var(--muted-foreground)" }}
               >
-                + Add DC Listing
+                {dcEditMode ? "✓ Edit Mode ON" : "Edit Mode"}
               </button>
-            </div>
-          )}
-
-          {/* Add DC Listing form */}
-          {dcAddOpen && isRepOrAdmin && (
-            <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-              <div className="text-sm font-semibold text-foreground">Add DC Listing</div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs text-muted-foreground mb-1">Distributor</label>
-                  <select value={dcAddDistributor} onChange={(e) => { setDcAddDistributor(e.target.value as "UNFI" | "KeHE"); setDcAddCode(""); }}
-                    className="rounded-lg px-3 py-2 text-sm w-full"
-                    style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}>
-                    <option value="UNFI">UNFI</option>
-                    <option value="KeHE">KeHE</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-muted-foreground mb-1">DC Code</label>
-                  <select value={dcAddCode} onChange={(e) => setDcAddCode(e.target.value)}
-                    className="rounded-lg px-3 py-2 text-sm w-full"
-                    style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}>
-                    <option value="">— Select DC —</option>
-                    {(dcAddDistributor === "UNFI" ? unfiCodes : keheCodes).map((dc) => (
-                      <option key={dc.code} value={dc.code}>{dc.code} — {dc.name}</option>
-                    ))}
-                    <option value="__custom__">— Enter new code —</option>
-                  </select>
-                  {dcAddCode === "__custom__" && (
-                    <input type="text" placeholder="e.g. DEN" value={dcAddCustomCode}
-                      onChange={(e) => setDcAddCustomCode(e.target.value.toUpperCase())}
-                      className="rounded-lg px-3 py-2 text-sm w-full mt-1.5 font-mono"
-                      style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-                  )}
-                </div>
-                <div>
-                  <label className="block text-xs text-muted-foreground mb-1">SKU</label>
-                  <input type="text" placeholder="Filter SKUs…" value={dcAddSkuSearch}
-                    onChange={(e) => setDcAddSkuSearch(e.target.value)}
-                    className="rounded-lg px-3 py-2 text-sm w-full mb-1.5"
-                    style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} />
-                  <select value={dcAddProductId} onChange={(e) => setDcAddProductId(e.target.value)}
-                    className="rounded-lg px-3 py-2 text-sm w-full"
-                    style={{ border: "1px solid var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}>
-                    <option value="">— Select SKU —</option>
-                    {dcProducts
-                      .filter((p) => !dcAddSkuSearch ||
-                        p.description.toLowerCase().includes(dcAddSkuSearch.toLowerCase()) ||
-                        (p.retail_upc ?? "").includes(dcAddSkuSearch))
-                      .map((p) => (
-                        <option key={p.id} value={p.id}>{(brandsById[p.brand_id]?.name ? `[${brandsById[p.brand_id].name}] ` : "")}{p.description}{p.retail_upc ? ` (${p.retail_upc})` : ""}</option>
-                      ))}
-                  </select>
-                </div>
-              </div>
-              {dcAddError && <p className="text-xs text-red-600">{dcAddError}</p>}
-              <div className="flex gap-2">
-                <button onClick={addDcListing} disabled={dcAddSaving}
-                  className="px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50"
-                  style={{ background: "var(--foreground)", color: "var(--background)" }}>
-                  {dcAddSaving ? "Saving…" : "Save"}
-                </button>
-                <button onClick={() => setDcAddOpen(false)} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
-              </div>
             </div>
           )}
 
@@ -1310,9 +1238,9 @@ export default function ProductsLibraryPage() {
                     Use &quot;+ Add DC Listing&quot; to add listings.
                   </p>
                   {isRepOrAdmin && (
-                    <button onClick={() => setDcAddOpen(true)}
+                    <button onClick={() => setDcEditMode(true)}
                       className="px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:text-foreground transition-colors mt-1">
-                      + Add DC Listing
+                      Enable Edit Mode
                     </button>
                   )}
                 </div>
@@ -1361,15 +1289,30 @@ export default function ProductsLibraryPage() {
                             </td>
                             <td style={{ ...mkBody(FROZEN_UPC_LEFT, FROZEN_UPC_W, rowBg, true), padding: "6px 12px", fontFamily: "monospace", color: "var(--muted-foreground)" }}>{p.retail_upc ?? "—"}</td>
                             {allDcCodes.map((dc, i) => {
-                              const isListed = dcLookup.get(`${p.id}|${dc.distributor.toUpperCase()}|${dc.code}`) ?? false;
+                              const cellKey = `${p.id}|${dc.distributor.toUpperCase()}|${dc.code}`;
+                              const isListed = dcLookup.get(cellKey) ?? false;
+                              const isPending = dcPending.has(cellKey);
                               const isFirstUnfi = dc.distributor === "UNFI" && (i === 0 || allDcCodes[i - 1].distributor === "KeHE");
+                              const canClick = isRepOrAdmin && dcEditMode;
                               return (
                                 <td key={`${dc.distributor}-${dc.code}`}
-                                  style={{ textAlign: "center", padding: "6px 4px", cursor: "default", background: isListed ? "rgba(22,163,74,0.12)" : rowBg, borderLeft: isFirstUnfi ? "2px solid rgba(59,130,246,0.2)" : "1px solid var(--border)", minWidth: 30, transition: "background 0.1s" }}
-                                  title={`[${dc.distributor}] ${dc.code} — ${isListed ? "Listed" : "Not listed"}`}>
-                                  {isListed
-                                    ? <span style={{ color: "#16a34a", fontWeight: 700, fontSize: "0.85rem" }}>✓</span>
-                                    : <span style={{ color: "var(--muted-foreground)", fontSize: "0.7rem" }}>—</span>}
+                                  onClick={canClick ? () => toggleDc(p.id, dc.distributor, dc.code) : undefined}
+                                  style={{
+                                    textAlign: "center", padding: "6px 4px",
+                                    cursor: canClick ? "pointer" : "default",
+                                    background: isPending ? "rgba(0,0,0,0.04)" : isListed ? "rgba(22,163,74,0.12)" : rowBg,
+                                    borderLeft: isFirstUnfi ? "2px solid rgba(59,130,246,0.2)" : "1px solid var(--border)",
+                                    minWidth: 30, transition: "background 0.1s",
+                                    opacity: isPending ? 0.5 : 1,
+                                  }}
+                                  title={canClick
+                                    ? `[${dc.distributor}] ${dc.code} — click to ${isListed ? "remove" : "add"}`
+                                    : `[${dc.distributor}] ${dc.code} — ${isListed ? "Listed" : "Not listed"}`}>
+                                  {isPending
+                                    ? <span style={{ color: "var(--muted-foreground)", fontSize: "0.65rem" }}>…</span>
+                                    : isListed
+                                      ? <span style={{ color: "#16a34a", fontWeight: 700, fontSize: "0.85rem" }}>✓</span>
+                                      : <span style={{ color: "var(--muted-foreground)", fontSize: "0.7rem" }}>—</span>}
                                 </td>
                               );
                             })}
@@ -1384,6 +1327,15 @@ export default function ProductsLibraryPage() {
           })()}
         </div>
       )}
+
+      {/* DC error toast */}
+      {dcError && (
+        <div className="fixed bottom-6 right-6 z-50 rounded-lg px-4 py-3 text-sm shadow-lg"
+          style={{ background: "#fee2e2", color: "#991b1b", border: "1px solid #fca5a5", maxWidth: 360 }}>
+          {dcError}
+        </div>
+      )}
+
       {tableModalHtml && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
