@@ -272,26 +272,39 @@ export default function BrandProductsPage() {
 
   async function loadDc(prods: Product[]) {
     if (dcLoaded || dcLoading) return;
-    if (!prods.length) return;
     setDcLoading(true);
-    const bpIds = prods.map((p) => p.id);
-    const allRows: { brand_product_id: string; distributor: string; dc_code: string; dc_name: string | null; listed: boolean }[] = [];
-    const PAGE = 1000;
-    for (let i = 0; i < bpIds.length; i += PAGE) {
-      const { data } = await supabase
-        .from("distributor_dc_listings")
-        .select("brand_product_id,distributor,dc_code,dc_name,listed")
-        .in("brand_product_id", bpIds.slice(i, i + PAGE));
-      if (data) allRows.push(...(data as typeof allRows));
-    }
+
+    // Build a set of this brand's product IDs for the listing map
+    const brandProductIds = new Set(prods.map((p) => p.id));
+
+    type DcRow = { brand_product_id: string; distributor: string; dc_code: string; dc_name: string | null; listed: boolean };
     const map = new Map<string, boolean>();
     const unfiMap = new Map<string, string>();
     const keheMap = new Map<string, string>();
-    allRows.forEach((r) => {
-      map.set(`${r.brand_product_id}|${r.distributor}|${r.dc_code}`, r.listed);
-      if (r.distributor === "UNFI") unfiMap.set(r.dc_code, r.dc_name ?? r.dc_code);
-      else if (r.distributor === "KeHE") keheMap.set(r.dc_code, r.dc_name ?? r.dc_code);
-    });
+    const PAGE = 1000;
+    let from = 0;
+    while (true) {
+      // Fetch ALL rows globally so every DC code shows as a column
+      const { data, error } = await supabase
+        .from("distributor_dc_listings")
+        .select("brand_product_id,distributor,dc_code,dc_name,listed")
+        .range(from, from + PAGE - 1)
+        .order("distributor")
+        .order("dc_code");
+      if (error) { console.error("[loadDc brands]", error); setError(`DC load error: ${error.message}`); setDcLoading(false); return; }
+      const rows = (data ?? []) as DcRow[];
+      rows.forEach((r) => {
+        // Only add to listing map for this brand's SKUs
+        if (brandProductIds.has(r.brand_product_id)) {
+          map.set(`${r.brand_product_id}|${r.distributor}|${r.dc_code}`, r.listed);
+        }
+        // Build DC code lists from all rows so every known DC shows as a column
+        if (r.distributor === "UNFI") unfiMap.set(r.dc_code, r.dc_name ?? r.dc_code);
+        else if (r.distributor === "KeHE") keheMap.set(r.dc_code, r.dc_name ?? r.dc_code);
+      });
+      if (rows.length < PAGE) break;
+      from += PAGE;
+    }
     setDcListings(map);
     setUnfiCodes([...unfiMap.entries()].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code)));
     setKeheCodes([...keheMap.entries()].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code)));

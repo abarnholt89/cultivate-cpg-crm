@@ -525,6 +525,13 @@ export default function ProductsLibraryPage() {
     return [...m.entries()].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code));
   }, [dcRows]);
 
+  // Fast O(1) lookup for pivot table cells
+  const dcLookup = useMemo<Map<string, boolean>>(() => {
+    const m = new Map<string, boolean>();
+    dcRows.forEach((r) => m.set(`${r.brand_product_id}|${r.distributor}|${r.dc_code}`, r.listed));
+    return m;
+  }, [dcRows]);
+
   function startEdit(product: Product) {
     setEditingId(product.id);
     setEditForm({
@@ -1269,26 +1276,16 @@ export default function ProductsLibraryPage() {
           {dcLoading && <p className="text-sm text-muted-foreground">Loading DC data…</p>}
 
           {!dcLoading && dcLoaded && (() => {
-            const th = (label: string, extra?: CSSProperties) => ({
-              position: "sticky" as const, top: 0, zIndex: 1, background: "#1e3a4a",
-              padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)",
-              textAlign: "left" as const, whiteSpace: "nowrap" as const, ...extra,
-            });
-            const td = (bg: string, extra?: CSSProperties) => ({
-              padding: "6px 12px", borderBottom: "1px solid var(--border)", background: bg, ...extra,
-            });
-
-            const filteredDcRows = brandFilter
-              ? dcRows.filter((r) => r.brand_id === brandFilter)
-              : dcRows;
-
-            if (dcRows.length === 0) {
+            const allDcCodes = [
+              ...keheCodes.map((dc) => ({ ...dc, distributor: "KeHE" as const })),
+              ...unfiCodes.map((dc) => ({ ...dc, distributor: "UNFI" as const })),
+            ];
+            if (allDcCodes.length === 0) {
               return (
                 <div className="rounded-xl border border-border bg-card p-6 space-y-2">
                   <p className="text-sm font-medium text-foreground">No DC listings found</p>
                   <p className="text-xs text-muted-foreground">
                     The <code className="font-mono bg-secondary px-1 rounded">distributor_dc_listings</code> table is empty.
-                    This can happen if brand products were re-imported (CASCADE delete removes all DC listings).
                     Use &quot;+ Add DC Listing&quot; to add listings.
                   </p>
                   {isRepOrAdmin && (
@@ -1300,51 +1297,61 @@ export default function ProductsLibraryPage() {
                 </div>
               );
             }
-
-            const brandCount = new Set(filteredDcRows.map((r) => r.brand_id)).size;
             return (
               <>
                 <div className="text-sm text-muted-foreground">
-                  {filteredDcRows.length.toLocaleString()} listing{filteredDcRows.length !== 1 ? "s" : ""}
-                  {" · "}{brandCount} brand{brandCount !== 1 ? "s" : ""}
-                  {" · "}{keheCodes.length} KeHE DC{keheCodes.length !== 1 ? "s" : ""}
-                  {" · "}{unfiCodes.length} UNFI DC{unfiCodes.length !== 1 ? "s" : ""}
+                  {dcProducts.length} SKU{dcProducts.length !== 1 ? "s" : ""} · {keheCodes.length} KeHE DC{keheCodes.length !== 1 ? "s" : ""} · {unfiCodes.length} UNFI DC{unfiCodes.length !== 1 ? "s" : ""}
                 </div>
                 <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "72vh", borderRadius: "0.75rem", border: "1px solid var(--border)" }}>
-                  <table style={{ borderCollapse: "collapse", fontSize: "0.75rem", width: "100%" }}>
+                  <table style={{ borderCollapse: "separate", borderSpacing: 0, fontSize: "0.75rem" }}>
                     <thead>
-                      <tr>
-                        <th style={th("Brand")}>Brand</th>
-                        <th style={th("Description")}>Description</th>
-                        <th style={th("UPC", { fontFamily: "monospace" })}>UPC</th>
-                        <th style={th("Distributor")}>Distributor</th>
-                        <th style={th("DC Code", { fontFamily: "monospace" })}>DC Code</th>
-                        <th style={th("DC Name")}>DC Name</th>
-                        <th style={th("Listed", { textAlign: "center" })}>Listed</th>
+                      <tr style={{ background: "#1e3a4a" }}>
+                        <th style={{ ...mkHead(0, FROZEN_BRAND_W), padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>Brand</th>
+                        <th style={{ ...mkHead(FROZEN_DESC_LEFT, FROZEN_DESC_W), padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>Description</th>
+                        <th style={{ ...mkHead(FROZEN_UPC_LEFT, FROZEN_UPC_W, true), padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>UPC</th>
+                        {allDcCodes.map((dc, i) => {
+                          const isFirstUnfi = dc.distributor === "UNFI" && (i === 0 || allDcCodes[i - 1].distributor === "KeHE");
+                          return (
+                            <th key={`${dc.distributor}-${dc.code}`} style={{
+                              position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a",
+                              writingMode: "vertical-rl", textOrientation: "mixed", transform: "rotate(180deg)",
+                              height: 110, width: 30, whiteSpace: "nowrap", textAlign: "left", verticalAlign: "bottom",
+                              padding: "8px 4px", fontWeight: 400, fontSize: "0.7rem",
+                              color: dc.distributor === "KeHE" ? "rgba(134,239,172,0.85)" : "rgba(147,197,253,0.85)",
+                              borderLeft: isFirstUnfi ? "2px solid rgba(59,130,246,0.4)" : "1px solid rgba(255,255,255,0.08)",
+                            }}>
+                              {dc.code} — {dc.name}
+                            </th>
+                          );
+                        })}
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredDcRows.map((r, idx) => {
+                      {dcProducts.map((p, idx) => {
                         const rowBg = idx % 2 === 0 ? "var(--card)" : "var(--secondary)";
-                        const brandName = brandsById[r.brand_id]?.name ?? "";
-                        const isKehe = r.distributor === "KeHE";
+                        const brandName = brandsById[p.brand_id]?.name ?? "";
                         return (
-                          <tr key={r.id || `${r.brand_product_id}-${r.distributor}-${r.dc_code}`}>
-                            <td style={td(rowBg, { color: "var(--muted-foreground)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })} title={brandName}>{brandName}</td>
-                            <td style={td(rowBg, { maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })} title={r.description}>{r.description}</td>
-                            <td style={td(rowBg, { fontFamily: "monospace", color: "var(--muted-foreground)" })}>{r.retail_upc ?? "—"}</td>
-                            <td style={td(rowBg)}>
-                              <span style={{ fontWeight: 600, fontSize: "0.7rem", padding: "2px 7px", borderRadius: 9999, background: isKehe ? "rgba(22,163,74,0.12)" : "rgba(37,99,235,0.12)", color: isKehe ? "#16a34a" : "#2563eb" }}>
-                                {r.distributor}
-                              </span>
+                          <tr key={p.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                            <td style={{ ...mkBody(0, FROZEN_BRAND_W, rowBg), padding: "6px 12px", color: "var(--muted-foreground)" }}>
+                              <div style={{ maxWidth: FROZEN_BRAND_W - 16, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={brandName}>{brandName}</div>
                             </td>
-                            <td style={td(rowBg, { fontFamily: "monospace", fontWeight: 600 })}>{r.dc_code}</td>
-                            <td style={td(rowBg, { color: "var(--muted-foreground)" })}>{r.dc_name ?? "—"}</td>
-                            <td style={td(rowBg, { textAlign: "center" })}>
-                              {r.listed
-                                ? <span style={{ color: "#16a34a", fontWeight: 700 }}>✓</span>
-                                : <span style={{ color: "var(--muted-foreground)" }}>—</span>}
+                            <td style={{ ...mkBody(FROZEN_DESC_LEFT, FROZEN_DESC_W, rowBg), padding: "6px 12px", fontWeight: 500, color: "var(--foreground)" }}>
+                              <div style={{ maxWidth: FROZEN_DESC_W - 24, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.description}>{p.description}</div>
                             </td>
+                            <td style={{ ...mkBody(FROZEN_UPC_LEFT, FROZEN_UPC_W, rowBg, true), padding: "6px 12px", fontFamily: "monospace", color: "var(--muted-foreground)" }}>{p.retail_upc ?? "—"}</td>
+                            {allDcCodes.map((dc, i) => {
+                              const isListed = dcLookup.get(`${p.id}|${dc.distributor}|${dc.code}`) ?? false;
+                              const isFirstUnfi = dc.distributor === "UNFI" && (i === 0 || allDcCodes[i - 1].distributor === "KeHE");
+                              return (
+                                <td key={`${dc.distributor}-${dc.code}`}
+                                  style={{ textAlign: "center", padding: "6px 4px", cursor: "default", background: isListed ? "rgba(22,163,74,0.12)" : rowBg, borderLeft: isFirstUnfi ? "2px solid rgba(59,130,246,0.2)" : "1px solid var(--border)", minWidth: 30, transition: "background 0.1s" }}
+                                  title={`[${dc.distributor}] ${dc.code} — ${isListed ? "Listed" : "Not listed"}`}>
+                                  {isListed
+                                    ? <span style={{ color: "#16a34a", fontWeight: 700, fontSize: "0.85rem" }}>✓</span>
+                                    : <span style={{ color: "var(--muted-foreground)", fontSize: "0.7rem" }}>—</span>}
+                                </td>
+                              );
+                            })}
                           </tr>
                         );
                       })}
