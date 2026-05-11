@@ -39,6 +39,17 @@ type Product = {
 type Brand = { id: string; name: string };
 type Retailer = { id: string; name: string; banner: string | null };
 type DcCode = { code: string; name: string };
+type DcFlatRow = {
+  id: string;
+  brand_product_id: string;
+  distributor: string;
+  dc_code: string;
+  dc_name: string | null;
+  listed: boolean;
+  description: string;
+  retail_upc: string | null;
+  brand_id: string;
+};
 
 type EditForm = {
   description: string;
@@ -150,9 +161,7 @@ export default function ProductsLibraryPage() {
   // DC state (global — all brands)
   const [dcLoaded, setDcLoaded] = useState(false);
   const [dcLoading, setDcLoading] = useState(false);
-  const [dcListings, setDcListings] = useState<Map<string, boolean>>(new Map());
-  const [unfiCodes, setUnfiCodes] = useState<DcCode[]>([]);
-  const [keheCodes, setKeheCodes] = useState<DcCode[]>([]);
+  const [dcRows, setDcRows] = useState<DcFlatRow[]>([]);
 
   // APL add-authorization form
   const [aplAddOpen, setAplAddOpen] = useState(false);
@@ -300,61 +309,50 @@ export default function ProductsLibraryPage() {
     if (dcLoaded || dcLoading) return;
     setDcLoading(true);
 
-    // Step 1: confirm the API can see the table at all
-    const { count, error: countErr } = await supabase
-      .from("distributor_dc_listings")
-      .select("*", { count: "exact", head: true });
-    console.log("[loadDc] table row count via API:", count, "countErr:", countErr);
-    if (countErr) {
-      setError(`DC load error: ${countErr.message}`);
-      setDcLoading(false);
-      return;
-    }
+    type RawRow = {
+      id: string;
+      brand_product_id: string;
+      distributor: string;
+      dc_code: string;
+      dc_name: string | null;
+      listed: boolean;
+      brand_products: { description: string; retail_upc: string | null; brand_id: string } | null;
+    };
 
-    // Step 2: fetch all rows without relying on .range() pagination —
-    // use .limit() with a high cap. Supabase's server max-rows cap can silently
-    // truncate .range() chunks to fewer rows than requested, breaking the
-    // `data.length < CHUNK` exit condition. Fetching in one shot avoids this.
-    type DcRow = { brand_product_id: string; distributor: string; dc_code: string; dc_name: string | null; listed: boolean };
-    let allRows: DcRow[] = [];
+    const all: DcFlatRow[] = [];
     const PAGE = 1000;
     let from = 0;
     while (true) {
       const { data, error } = await supabase
         .from("distributor_dc_listings")
-        .select("brand_product_id,distributor,dc_code,dc_name,listed")
+        .select("id,brand_product_id,distributor,dc_code,dc_name,listed,brand_products(description,retail_upc,brand_id)")
         .range(from, from + PAGE - 1)
-        .order("id");
+        .order("distributor")
+        .order("dc_code");
       if (error) {
-        console.error(`[loadDc] fetch error at offset ${from}:`, error);
+        console.error("[loadDc]", error);
         setError(`DC load error: ${error.message}`);
         setDcLoading(false);
         return;
       }
-      const rows = (data ?? []) as DcRow[];
-      console.log(`[loadDc] offset ${from}: got ${rows.length} rows`, rows.slice(0, 2));
-      allRows = allRows.concat(rows);
+      const rows = (data ?? []) as unknown as RawRow[];
+      rows.forEach((r) => {
+        all.push({
+          id: r.id,
+          brand_product_id: r.brand_product_id,
+          distributor: r.distributor,
+          dc_code: r.dc_code,
+          dc_name: r.dc_name,
+          listed: r.listed,
+          description: r.brand_products?.description ?? "",
+          retail_upc: r.brand_products?.retail_upc ?? null,
+          brand_id: r.brand_products?.brand_id ?? "",
+        });
+      });
       if (rows.length < PAGE) break;
       from += PAGE;
     }
-    console.log(`[loadDc] total rows: ${allRows.length}. Sample distributors:`,
-      [...new Set(allRows.slice(0, 20).map((r) => r.distributor))]);
-
-    const map = new Map<string, boolean>();
-    const unfiMap = new Map<string, string>();
-    const keheMap = new Map<string, string>();
-    allRows.forEach((r) => {
-      map.set(`${r.brand_product_id}|${r.distributor}|${r.dc_code}`, r.listed);
-      // case-insensitive match so "KEHE" / "kehe" / "KeHE" all work
-      const dist = (r.distributor ?? "").trim().toUpperCase();
-      if (dist === "UNFI") unfiMap.set(r.dc_code, r.dc_name ?? r.dc_code);
-      else if (dist === "KEHE") keheMap.set(r.dc_code, r.dc_name ?? r.dc_code);
-    });
-    console.log(`[loadDc] KeHE DC codes: ${keheMap.size}, UNFI DC codes: ${unfiMap.size}`);
-
-    setDcListings(map);
-    setUnfiCodes([...unfiMap.entries()].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code)));
-    setKeheCodes([...keheMap.entries()].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code)));
+    setDcRows(all);
     setDcLoaded(true);
     setDcLoading(false);
   }
@@ -384,15 +382,17 @@ export default function ProductsLibraryPage() {
   }
 
   async function toggleDc(bpId: string, distributor: string, dcCode: string) {
-    const key = `${bpId}|${distributor}|${dcCode}`;
-    const current = dcListings.get(key) ?? false;
+    const current = dcRows.find((r) => r.brand_product_id === bpId && r.distributor === distributor && r.dc_code === dcCode)?.listed ?? false;
     const newVal = !current;
     const { error: upsertErr } = await supabase.from("distributor_dc_listings").upsert(
       { brand_product_id: bpId, distributor, dc_code: dcCode, listed: newVal },
       { onConflict: "brand_product_id,distributor,dc_code" }
     );
     if (!upsertErr) {
-      setDcListings((prev) => { const n = new Map(prev); n.set(key, newVal); return n; });
+      setDcRows((prev) => prev.map((r) =>
+        r.brand_product_id === bpId && r.distributor === distributor && r.dc_code === dcCode
+          ? { ...r, listed: newVal } : r
+      ));
     }
   }
 
@@ -426,12 +426,22 @@ export default function ProductsLibraryPage() {
       { onConflict: "brand_product_id,distributor,dc_code" }
     );
     if (error) { setDcAddError(error.message); setDcAddSaving(false); return; }
-    setDcListings((prev) => { const n = new Map(prev); n.set(key, true); return n; });
-    if (dcAddDistributor === "UNFI" && !unfiCodes.find((c) => c.code === finalCode)) {
-      setUnfiCodes((prev) => [...prev, { code: finalCode, name: finalCode }].sort((a, b) => a.code.localeCompare(b.code)));
-    } else if (dcAddDistributor === "KeHE" && !keheCodes.find((c) => c.code === finalCode)) {
-      setKeheCodes((prev) => [...prev, { code: finalCode, name: finalCode }].sort((a, b) => a.code.localeCompare(b.code)));
-    }
+    const product = products.find((p) => p.id === dcAddProductId);
+    setDcRows((prev) => {
+      const existing = prev.findIndex((r) => r.brand_product_id === dcAddProductId && r.distributor === dcAddDistributor && r.dc_code === finalCode);
+      if (existing >= 0) return prev.map((r, i) => i === existing ? { ...r, listed: true } : r);
+      return [...prev, {
+        id: "",
+        brand_product_id: dcAddProductId,
+        distributor: dcAddDistributor,
+        dc_code: finalCode,
+        dc_name: null,
+        listed: true,
+        description: product?.description ?? "",
+        retail_upc: product?.retail_upc ?? null,
+        brand_id: product?.brand_id ?? "",
+      }];
+    });
     setDcAddOpen(false);
     setDcAddProductId(""); setDcAddCode(""); setDcAddCustomCode(""); setDcAddSkuSearch("");
     setDcAddSaving(false);
@@ -493,16 +503,27 @@ export default function ProductsLibraryPage() {
     );
   }, [aplRetailers, aplShowAll, aplProducts, aplAuthorized]);
 
-  // DC — all active products, optional brand filter
+  // DC — all active products (for Add DC Listing SKU selector)
   const dcProducts = useMemo(() => {
     return products
       .filter((p) => p.status === "active")
-      .filter((p) => !brandFilter || p.brand_id === brandFilter)
       .sort((a, b) => {
         const bn = (brandsById[a.brand_id]?.name ?? "").localeCompare(brandsById[b.brand_id]?.name ?? "");
         return bn !== 0 ? bn : a.description.localeCompare(b.description);
       });
-  }, [products, brandFilter, brandsById]);
+  }, [products, brandsById]);
+
+  // Derived DC code lists for the Add DC Listing dropdown
+  const unfiCodes = useMemo<DcCode[]>(() => {
+    const m = new Map<string, string>();
+    dcRows.forEach((r) => { if (r.distributor === "UNFI") m.set(r.dc_code, r.dc_name ?? r.dc_code); });
+    return [...m.entries()].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code));
+  }, [dcRows]);
+  const keheCodes = useMemo<DcCode[]>(() => {
+    const m = new Map<string, string>();
+    dcRows.forEach((r) => { if (r.distributor === "KeHE") m.set(r.dc_code, r.dc_name ?? r.dc_code); });
+    return [...m.entries()].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code));
+  }, [dcRows]);
 
   function startEdit(product: Product) {
     setEditingId(product.id);
@@ -1248,24 +1269,31 @@ export default function ProductsLibraryPage() {
           {dcLoading && <p className="text-sm text-muted-foreground">Loading DC data…</p>}
 
           {!dcLoading && dcLoaded && (() => {
-            const allDcCodes = [
-              ...keheCodes.map((dc) => ({ ...dc, distributor: "KeHE" as const })),
-              ...unfiCodes.map((dc) => ({ ...dc, distributor: "UNFI" as const })),
-            ];
-            if (allDcCodes.length === 0) {
+            const th = (label: string, extra?: CSSProperties) => ({
+              position: "sticky" as const, top: 0, zIndex: 1, background: "#1e3a4a",
+              padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)",
+              textAlign: "left" as const, whiteSpace: "nowrap" as const, ...extra,
+            });
+            const td = (bg: string, extra?: CSSProperties) => ({
+              padding: "6px 12px", borderBottom: "1px solid var(--border)", background: bg, ...extra,
+            });
+
+            const filteredDcRows = brandFilter
+              ? dcRows.filter((r) => r.brand_id === brandFilter)
+              : dcRows;
+
+            if (dcRows.length === 0) {
               return (
                 <div className="rounded-xl border border-border bg-card p-6 space-y-2">
                   <p className="text-sm font-medium text-foreground">No DC listings found</p>
                   <p className="text-xs text-muted-foreground">
                     The <code className="font-mono bg-secondary px-1 rounded">distributor_dc_listings</code> table is empty.
-                    This can happen if brand products were re-imported (the CASCADE delete removes all DC listings when brand_products rows are deleted).
-                    Use &quot;+ Add DC Listing&quot; to add listings, or restore from a backup.
+                    This can happen if brand products were re-imported (CASCADE delete removes all DC listings).
+                    Use &quot;+ Add DC Listing&quot; to add listings.
                   </p>
                   {isRepOrAdmin && (
-                    <button
-                      onClick={() => { setDcAddOpen(true); }}
-                      className="px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:text-foreground transition-colors mt-1"
-                    >
+                    <button onClick={() => setDcAddOpen(true)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:text-foreground transition-colors mt-1">
                       + Add DC Listing
                     </button>
                   )}
@@ -1273,107 +1301,56 @@ export default function ProductsLibraryPage() {
               );
             }
 
-            const itemNumStyle = (bg: string, editable: boolean) => ({
-              padding: "6px 12px", color: "var(--muted-foreground)", fontFamily: "monospace",
-              borderLeft: "1px solid var(--border)", background: bg, whiteSpace: "nowrap" as const,
-              cursor: editable ? "text" : "default", minWidth: 110,
-            });
-
+            const brandCount = new Set(filteredDcRows.map((r) => r.brand_id)).size;
             return (
               <>
                 <div className="text-sm text-muted-foreground">
-                  {dcProducts.length} SKU{dcProducts.length !== 1 ? "s" : ""} · {keheCodes.length} KeHE DC{keheCodes.length !== 1 ? "s" : ""} · {unfiCodes.length} UNFI DC{unfiCodes.length !== 1 ? "s" : ""}
-                  {isRepOrAdmin && <span className="ml-2 text-xs">· Click item # cells to edit inline</span>}
+                  {filteredDcRows.length.toLocaleString()} listing{filteredDcRows.length !== 1 ? "s" : ""}
+                  {" · "}{brandCount} brand{brandCount !== 1 ? "s" : ""}
+                  {" · "}{keheCodes.length} KeHE DC{keheCodes.length !== 1 ? "s" : ""}
+                  {" · "}{unfiCodes.length} UNFI DC{unfiCodes.length !== 1 ? "s" : ""}
                 </div>
                 <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "72vh", borderRadius: "0.75rem", border: "1px solid var(--border)" }}>
-                  <table style={{ borderCollapse: "separate", borderSpacing: 0, fontSize: "0.75rem" }}>
+                  <table style={{ borderCollapse: "collapse", fontSize: "0.75rem", width: "100%" }}>
                     <thead>
-                      <tr style={{ background: "#1e3a4a" }}>
-                        <th style={{ ...mkHead(0, FROZEN_BRAND_W), padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>Brand</th>
-                        <th style={{ ...mkHead(FROZEN_DESC_LEFT, FROZEN_DESC_W), padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>Description</th>
-                        <th style={{ ...mkHead(FROZEN_UPC_LEFT, FROZEN_UPC_W, true), padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left" }}>UPC</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a", padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left", whiteSpace: "nowrap", minWidth: 110, borderLeft: "2px solid rgba(16,163,74,0.4)" }}>KeHE Item #</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a", padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left", whiteSpace: "nowrap", minWidth: 110, borderLeft: "1px solid rgba(255,255,255,0.1)" }}>UNFI East #</th>
-                        <th style={{ position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a", padding: "8px 12px", fontWeight: 500, color: "rgba(255,255,255,0.8)", textAlign: "left", whiteSpace: "nowrap", minWidth: 110, borderLeft: "1px solid rgba(255,255,255,0.1)" }}>UNFI West #</th>
-                        {allDcCodes.map((dc, i) => {
-                          const isFirstUnfi = dc.distributor === "UNFI" && (i === 0 || allDcCodes[i - 1].distributor === "KeHE");
-                          return (
-                            <th key={`${dc.distributor}-${dc.code}`} style={{
-                              position: "sticky", top: 0, zIndex: 1, background: "#1e3a4a",
-                              writingMode: "vertical-rl", textOrientation: "mixed", transform: "rotate(180deg)",
-                              height: 110, width: 30, whiteSpace: "nowrap", textAlign: "left", verticalAlign: "bottom",
-                              padding: "8px 4px", fontWeight: 400, fontSize: "0.7rem",
-                              color: dc.distributor === "KeHE" ? "rgba(134,239,172,0.85)" : "rgba(147,197,253,0.85)",
-                              borderLeft: isFirstUnfi ? "2px solid rgba(59,130,246,0.4)" : "1px solid rgba(255,255,255,0.08)",
-                            }}>
-                              {dc.code} — {dc.name}
-                            </th>
-                          );
-                        })}
+                      <tr>
+                        <th style={th("Brand")}>Brand</th>
+                        <th style={th("Description")}>Description</th>
+                        <th style={th("UPC", { fontFamily: "monospace" })}>UPC</th>
+                        <th style={th("Distributor")}>Distributor</th>
+                        <th style={th("DC Code", { fontFamily: "monospace" })}>DC Code</th>
+                        <th style={th("DC Name")}>DC Name</th>
+                        <th style={th("Listed", { textAlign: "center" })}>Listed</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {dcProducts.map((p, idx) => {
+                      {filteredDcRows.map((r, idx) => {
                         const rowBg = idx % 2 === 0 ? "var(--card)" : "var(--secondary)";
-                        const brandName = brandsById[p.brand_id]?.name ?? "";
-
-                        const ItemNumCell = ({ field, value }: { field: "unfi_east_item" | "unfi_west_item" | "kehe_item"; value: string | null }) => {
-                          const isEditing = editItemNum?.productId === p.id && editItemNum?.field === field;
-                          if (isEditing) {
-                            return (
-                              <td style={itemNumStyle(rowBg, true)}>
-                                <input autoFocus type="text" value={editItemNumVal}
-                                  onChange={(e) => setEditItemNumVal(e.target.value)}
-                                  onBlur={() => saveItemNum(p.id, field, editItemNumVal)}
-                                  onKeyDown={(e) => { if (e.key === "Enter") saveItemNum(p.id, field, editItemNumVal); if (e.key === "Escape") setEditItemNum(null); }}
-                                  style={{ fontFamily: "monospace", fontSize: "0.75rem", background: "transparent", outline: "1px solid var(--border)", borderRadius: 3, padding: "1px 4px", width: "100%", color: "var(--foreground)" }} />
-                              </td>
-                            );
-                          }
-                          return (
-                            <td style={itemNumStyle(rowBg, isRepOrAdmin)}
-                              onClick={() => { if (!isRepOrAdmin) return; setEditItemNum({ productId: p.id, field }); setEditItemNumVal(value ?? ""); }}
-                              title={isRepOrAdmin ? "Click to edit" : undefined}>
-                              {value ?? <span style={{ color: "var(--muted-foreground)", opacity: 0.4 }}>—</span>}
-                            </td>
-                          );
-                        };
-
+                        const brandName = brandsById[r.brand_id]?.name ?? "";
+                        const isKehe = r.distributor === "KeHE";
                         return (
-                          <tr key={p.id} style={{ borderBottom: "1px solid var(--border)" }}>
-                            <td style={{ ...mkBody(0, FROZEN_BRAND_W, rowBg), padding: "6px 12px", color: "var(--muted-foreground)" }}>
-                              <div style={{ maxWidth: FROZEN_BRAND_W - 16, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={brandName}>{brandName}</div>
+                          <tr key={r.id || `${r.brand_product_id}-${r.distributor}-${r.dc_code}`}>
+                            <td style={td(rowBg, { color: "var(--muted-foreground)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })} title={brandName}>{brandName}</td>
+                            <td style={td(rowBg, { maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })} title={r.description}>{r.description}</td>
+                            <td style={td(rowBg, { fontFamily: "monospace", color: "var(--muted-foreground)" })}>{r.retail_upc ?? "—"}</td>
+                            <td style={td(rowBg)}>
+                              <span style={{ fontWeight: 600, fontSize: "0.7rem", padding: "2px 7px", borderRadius: 9999, background: isKehe ? "rgba(22,163,74,0.12)" : "rgba(37,99,235,0.12)", color: isKehe ? "#16a34a" : "#2563eb" }}>
+                                {r.distributor}
+                              </span>
                             </td>
-                            <td style={{ ...mkBody(FROZEN_DESC_LEFT, FROZEN_DESC_W, rowBg), padding: "6px 12px", fontWeight: 500, color: "var(--foreground)" }}>
-                              <div style={{ maxWidth: FROZEN_DESC_W - 24, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.description}>{p.description}</div>
+                            <td style={td(rowBg, { fontFamily: "monospace", fontWeight: 600 })}>{r.dc_code}</td>
+                            <td style={td(rowBg, { color: "var(--muted-foreground)" })}>{r.dc_name ?? "—"}</td>
+                            <td style={td(rowBg, { textAlign: "center" })}>
+                              {r.listed
+                                ? <span style={{ color: "#16a34a", fontWeight: 700 }}>✓</span>
+                                : <span style={{ color: "var(--muted-foreground)" }}>—</span>}
                             </td>
-                            <td style={{ ...mkBody(FROZEN_UPC_LEFT, FROZEN_UPC_W, rowBg, true), padding: "6px 12px", fontFamily: "monospace", color: "var(--muted-foreground)" }}>{p.retail_upc ?? "—"}</td>
-                            <ItemNumCell field="kehe_item" value={p.kehe_item} />
-                            <ItemNumCell field="unfi_east_item" value={p.unfi_east_item} />
-                            <ItemNumCell field="unfi_west_item" value={p.unfi_west_item} />
-                            {allDcCodes.map((dc, i) => {
-                              const key = `${p.id}|${dc.distributor}|${dc.code}`;
-                              const isListed = dcListings.get(key) ?? false;
-                              const isFirstUnfi = dc.distributor === "UNFI" && (i === 0 || allDcCodes[i - 1].distributor === "KeHE");
-                              return (
-                                <td key={`${dc.distributor}-${dc.code}`}
-                                  style={{ textAlign: "center", padding: "6px 4px", cursor: "default", background: isListed ? "rgba(22,163,74,0.12)" : rowBg, borderLeft: isFirstUnfi ? "2px solid rgba(59,130,246,0.2)" : "1px solid var(--border)", minWidth: 30, transition: "background 0.1s" }}
-                                  title={`[${dc.distributor}] ${dc.code} — ${isListed ? "Listed" : "Not listed"}`}>
-                                  {isListed
-                                    ? <span style={{ color: "#16a34a", fontWeight: 700, fontSize: "0.85rem" }}>✓</span>
-                                    : <span style={{ color: "var(--muted-foreground)", fontSize: "0.7rem" }}>·</span>}
-                                </td>
-                              );
-                            })}
                           </tr>
                         );
                       })}
                     </tbody>
                   </table>
                 </div>
-                {isRepOrAdmin && (
-                  <p className="text-xs text-muted-foreground">Click item # cells to edit inline</p>
-                )}
               </>
             );
           })()}
