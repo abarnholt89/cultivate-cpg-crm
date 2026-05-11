@@ -315,7 +315,7 @@ export default function BrandProductsPage() {
       rows.forEach((r) => {
         // Only add to listing map for this brand's SKUs
         if (brandProductIds.has(r.brand_product_id)) {
-          map.set(`${r.brand_product_id}|${r.distributor}|${r.dc_code}`, r.listed);
+          map.set(`${r.brand_product_id}|${(r.distributor ?? "").toUpperCase()}|${r.dc_code}`, r.listed);
         }
         // Build DC code lists from all rows so every known DC shows as a column
         if ((r.distributor ?? "").toUpperCase() === "UNFI") unfiMap.set(r.dc_code, r.dc_name ?? r.dc_code);
@@ -356,7 +356,7 @@ export default function BrandProductsPage() {
   }
 
   async function toggleDc(bpId: string, distributor: string, dcCode: string) {
-    const key = `${bpId}|${distributor}|${dcCode}`;
+    const key = `${bpId}|${distributor.toUpperCase()}|${dcCode}`;
     const current = dcListings.get(key) ?? false;
     const newVal = !current;
     const { error: upsertErr } = await supabase.from("distributor_dc_listings").upsert(
@@ -1424,7 +1424,7 @@ export default function BrandProductsPage() {
                             <ItemNumCell field="unfi_east_item" value={p.unfi_east_item} />
                             <ItemNumCell field="unfi_west_item" value={p.unfi_west_item} />
                             {allDcCodes.map((dc, i) => {
-                              const key = `${p.id}|${dc.distributor}|${dc.code}`;
+                              const key = `${p.id}|${dc.distributor.toUpperCase()}|${dc.code}`;
                               const isListed = dcListings.get(key) ?? false;
                               const isFirstUnfi = dc.distributor === "UNFI" && (i === 0 || allDcCodes[i - 1].distributor === "KeHE");
                               return (

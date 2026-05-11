@@ -544,10 +544,11 @@ export default function ProductsLibraryPage() {
     return [...m.entries()].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code));
   }, [dcRows]);
 
-  // Fast O(1) lookup for pivot table cells
+  // Fast O(1) lookup for pivot table cells — normalize distributor to uppercase so
+  // "kehe"/"KeHE"/"KEHE" all match the same bucket as the column headers
   const dcLookup = useMemo<Map<string, boolean>>(() => {
     const m = new Map<string, boolean>();
-    dcRows.forEach((r) => m.set(`${r.brand_product_id}|${r.distributor}|${r.dc_code}`, r.listed));
+    dcRows.forEach((r) => m.set(`${r.brand_product_id}|${(r.distributor ?? "").toUpperCase()}|${r.dc_code}`, r.listed));
     return m;
   }, [dcRows]);
 
@@ -1299,6 +1300,7 @@ export default function ProductsLibraryPage() {
               ...keheCodes.map((dc) => ({ ...dc, distributor: "KeHE" as const })),
               ...unfiCodes.map((dc) => ({ ...dc, distributor: "UNFI" as const })),
             ];
+            console.log("[DC render] dcRows:", dcRows.length, "keheCodes:", keheCodes.length, "unfiCodes:", unfiCodes.length, "allDcCodes:", allDcCodes.length, "dcProducts:", dcProducts.length);
             if (dcRows.length === 0) {
               return (
                 <div className="rounded-xl border border-border bg-card p-6 space-y-2">
@@ -1359,7 +1361,7 @@ export default function ProductsLibraryPage() {
                             </td>
                             <td style={{ ...mkBody(FROZEN_UPC_LEFT, FROZEN_UPC_W, rowBg, true), padding: "6px 12px", fontFamily: "monospace", color: "var(--muted-foreground)" }}>{p.retail_upc ?? "—"}</td>
                             {allDcCodes.map((dc, i) => {
-                              const isListed = dcLookup.get(`${p.id}|${dc.distributor}|${dc.code}`) ?? false;
+                              const isListed = dcLookup.get(`${p.id}|${dc.distributor.toUpperCase()}|${dc.code}`) ?? false;
                               const isFirstUnfi = dc.distributor === "UNFI" && (i === 0 || allDcCodes[i - 1].distributor === "KeHE");
                               return (
                                 <td key={`${dc.distributor}-${dc.code}`}
