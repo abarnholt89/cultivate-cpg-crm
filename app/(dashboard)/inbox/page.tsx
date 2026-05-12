@@ -200,6 +200,8 @@ export default function RepInboxPage() {
   const [dismissedInboxKeys, setDismissedInboxKeys] = useState<Set<string>>(new Set());
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [clientMessages, setClientMessages] = useState<ClientMessageInboxRow[]>([]);
+  const [doneMessageIds, setDoneMessageIds] = useState<Set<string>>(new Set());
+  const [hideDoneMessages, setHideDoneMessages] = useState(false);
   const [brandsById, setBrandsById] = useState<Record<string, Brand>>({});
   const [retailersById, setRetailersById] = useState<Record<string, Retailer>>({});
   const [status, setStatus] = useState("");
@@ -376,7 +378,7 @@ const calendarPromise =
 if (clientMessagesResult.error) {
   setStatus((prev) => prev || clientMessagesResult.error.message);
 } else {
-  let unreadClientMessages = clientMessageRows;
+  setClientMessages(clientMessageRows);
 
   if (clientMessageRows.length > 0) {
     const messageIds = clientMessageRows.map((m) => m.id);
@@ -387,15 +389,10 @@ if (clientMessagesResult.error) {
       .eq("user_id", userId)
       .in("message_id", messageIds);
 
-    if (readError) {
-      setStatus((prev) => prev || readError.message);
-    } else {
-      const readIds = new Set((readRows ?? []).map((r) => r.message_id));
-      unreadClientMessages = clientMessageRows.filter((m) => !readIds.has(m.id));
+    if (!readError) {
+      setDoneMessageIds(new Set((readRows ?? []).map((r: { message_id: string }) => r.message_id)));
     }
   }
-
-  setClientMessages(unreadClientMessages);
 }
 
       if (agingResult.error) {
@@ -690,6 +687,24 @@ if (clientMessagesResult.error) {
     );
   }
 
+  async function markMessageDone(messageId: string) {
+    if (!currentUserId) return;
+    setDoneMessageIds((prev) => new Set([...prev, messageId]));
+    await supabase
+      .from("message_reads")
+      .upsert({ user_id: currentUserId, message_id: messageId }, { onConflict: "user_id,message_id" });
+  }
+
+  async function unmarkMessageDone(messageId: string) {
+    if (!currentUserId) return;
+    setDoneMessageIds((prev) => { const n = new Set(prev); n.delete(messageId); return n; });
+    await supabase
+      .from("message_reads")
+      .delete()
+      .eq("user_id", currentUserId)
+      .eq("message_id", messageId);
+  }
+
   async function markTaskDone(id: string) {
     await fetch(`/api/tasks/${id}/done`, { method: "PATCH" });
     setTasks((prev) => prev.filter((t) => t.id !== id));
@@ -747,12 +762,12 @@ if (clientMessagesResult.error) {
 
   const counts = useMemo(
     () => ({
-      messages: clientMessages.length,
+      messages: clientMessages.filter((m) => !doneMessageIds.has(m.id)).length,
       nudges: tasks.length,
       upcoming: upcoming.length,
       aging: agingAccounts.length,
     }),
-    [clientMessages, tasks, upcoming, agingAccounts]
+    [clientMessages, doneMessageIds, tasks, upcoming, agingAccounts]
   );
 
   if (loading) {
@@ -799,8 +814,16 @@ if (clientMessagesResult.error) {
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
         <section className="space-y-4 rounded-xl border border-border bg-card p-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold text-foreground">Client Messages</h2>
+            {doneMessageIds.size > 0 && (
+              <button
+                onClick={() => setHideDoneMessages((v) => !v)}
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
+              >
+                {hideDoneMessages ? "Show done" : "Hide done"}
+              </button>
+            )}
           </div>
 
           {clientMessages.length === 0 ? (
@@ -808,6 +831,9 @@ if (clientMessagesResult.error) {
           ) : (
             <div className="space-y-3">
               {clientMessages.map((message) => {
+                const isDone = doneMessageIds.has(message.id);
+                if (hideDoneMessages && isDone) return null;
+
                 const brandName = brandsById[message.brand_id]?.name ?? "Brand";
                 const retailer = retailersById[message.retailer_id];
                 const retailerHeadline =
@@ -816,20 +842,51 @@ if (clientMessagesResult.error) {
                     : retailer?.name ?? "Retailer";
 
                 return (
-                  <Link
+                  <div
                     key={message.id}
-                    href={`/brands/${message.brand_id}/retailers#retailer-${message.retailer_id}`}
-                    className="block rounded-lg border border-border bg-card p-3 transition-colors hover:bg-accent"
+                    className="relative rounded-lg border p-3 transition-colors"
+                    style={{
+                      borderColor: isDone ? "var(--border)" : "var(--border)",
+                      background: isDone ? "var(--muted)" : "var(--card)",
+                      opacity: isDone ? 0.7 : 1,
+                    }}
                   >
-                    <div className="font-medium text-foreground">{retailerHeadline}</div>
-                    <div className="mt-1 text-sm text-muted-foreground">{brandName}</div>
-                    <div className="mt-2 text-xs text-muted-foreground">
-                      {message.sender_name ?? "Unknown"} • {prettyDateTime(message.created_at)}
-                    </div>
-                    <div className="mt-2 line-clamp-3 text-sm text-foreground/85">
-                      {message.body}
-                    </div>
-                  </Link>
+                    <button
+                      onClick={() => isDone ? unmarkMessageDone(message.id) : markMessageDone(message.id)}
+                      title={isDone ? "Mark as unread" : "Mark as done"}
+                      className="absolute top-2.5 right-2.5 flex h-5 w-5 items-center justify-center rounded-full border transition-colors"
+                      style={{
+                        borderColor: isDone ? "#16a34a" : "var(--border)",
+                        background: isDone ? "#16a34a" : "transparent",
+                        color: isDone ? "#fff" : "var(--muted-foreground)",
+                        fontSize: "0.65rem",
+                        lineHeight: 1,
+                      }}
+                    >
+                      {isDone ? "✓" : ""}
+                    </button>
+                    <Link
+                      href={`/brands/${message.brand_id}/retailers#retailer-${message.retailer_id}`}
+                      className="block pr-7 hover:underline"
+                    >
+                      <div
+                        className="font-medium text-foreground"
+                        style={{ textDecoration: isDone ? "line-through" : "none" }}
+                      >
+                        {retailerHeadline}
+                      </div>
+                      <div className="mt-1 text-sm text-muted-foreground">{brandName}</div>
+                      <div className="mt-2 text-xs text-muted-foreground">
+                        {message.sender_name ?? "Unknown"} • {prettyDateTime(message.created_at)}
+                      </div>
+                      <div
+                        className="mt-2 line-clamp-3 text-sm"
+                        style={{ color: isDone ? "var(--muted-foreground)" : "var(--foreground)" }}
+                      >
+                        {message.body}
+                      </div>
+                    </Link>
+                  </div>
                 );
               })}
             </div>
