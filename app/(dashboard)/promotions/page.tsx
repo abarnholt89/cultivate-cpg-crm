@@ -166,6 +166,33 @@ function isEdlpEdlcGroup(pg: { promo_type: string; promo_name: string | null }) 
   return t.includes("EDLP") || t.includes("EDLC") || n.includes("EDLP") || n.includes("EDLC");
 }
 
+function normalizeStageRow(r: any): PromotionRow {
+  return {
+    id: String(r.id),
+    brand_id: r.brand_id ?? null,
+    retailer_id: r.retailer_id ?? null,
+    brand_name: r.brand_name ?? "",
+    retailer_name: r.retailer_name ?? "",
+    retailer_banner: r.retailer_banner ?? null,
+    distributor: r.distributor ?? null,
+    cultivate_rep: r.cultivate_rep ?? null,
+    sku_description: r.sku_description ?? "",
+    unit_upc: r.unit_upc ?? null,
+    promo_year: Number(r.promo_year) || 0,
+    promo_month: Number(r.promo_month) || 0,
+    promo_name: r.promo_name ?? null,
+    promo_type: r.promo_type ?? "",
+    promo_status: r.promo_status ?? "",
+    promo_scope: r.promo_scope ?? null,
+    start_date: r.start_date ?? null,
+    end_date: r.end_date ?? null,
+    discount_percent: r.discount_percent != null ? Number(r.discount_percent) : null,
+    discount_amount: r.discount_amount != null ? Number(r.discount_amount) : null,
+    promo_text_raw: r.promo_text_raw ?? null,
+    notes: r.notes ?? null,
+  };
+}
+
 async function fetchAllRows<T>(query: any): Promise<T[]> {
   const pageSize = 1000;
   let from = 0;
@@ -409,30 +436,7 @@ function PromotionsInner() {
               }
             }
 
-            stageRows = [...exactRows, ...fuzzyRows].map((r: any): PromotionRow => ({
-              id: String(r.id),
-              brand_id: null,
-              retailer_id: r.retailer_id ?? null,
-              brand_name: r.brand_name ?? "",
-              retailer_name: r.retailer_name ?? "",
-              retailer_banner: r.retailer_banner ?? null,
-              distributor: r.distributor ?? null,
-              cultivate_rep: r.cultivate_rep ?? null,
-              sku_description: r.sku_description ?? "",
-              unit_upc: r.unit_upc ?? null,
-              promo_year: Number(r.promo_year) || 0,
-              promo_month: Number(r.promo_month) || 0,
-              promo_name: r.promo_name ?? null,
-              promo_type: r.promo_type ?? "",
-              promo_status: r.promo_status ?? "",
-              promo_scope: r.promo_scope ?? null,
-              start_date: r.start_date ?? null,
-              end_date: r.end_date ?? null,
-              discount_percent: r.discount_percent != null ? Number(r.discount_percent) : null,
-              discount_amount: r.discount_amount != null ? Number(r.discount_amount) : null,
-              promo_text_raw: r.promo_text_raw ?? null,
-              notes: r.notes ?? null,
-            }));
+            stageRows = [...exactRows, ...fuzzyRows].map(normalizeStageRow);
           }
 
           // Merge and sort by promo_year desc, promo_month asc, start_date asc
@@ -442,7 +446,12 @@ function PromotionsInner() {
             return (a.start_date ?? "").localeCompare(b.start_date ?? "");
           });
         } else {
-          rows = await fetchAllRows<PromotionRow>(supabase.from("promotions").select("*").order("promo_year", { ascending: false }).order("promo_month", { ascending: true }));
+          const rawRows = await fetchAllRows<any>(
+            supabase.from("promotions_stage").select("*")
+              .order("promo_year", { ascending: false })
+              .order("promo_month", { ascending: true })
+          );
+          rows = rawRows.map(normalizeStageRow);
         }
 
         setPromotions(rows);
@@ -471,7 +480,8 @@ function PromotionsInner() {
     if (yearFilter !== "all") rows = rows.filter((r) => String(r.promo_year) === yearFilter);
     if (statusFilter !== "all") rows = rows.filter((r) => r.promo_status === statusFilter);
     if (repFilter !== "all") rows = rows.filter((r) => (r.cultivate_rep || "") === repFilter);
-    if (scopeFilter !== "all") rows = rows.filter((r) => r.promo_scope === scopeFilter);
+    if (scopeFilter === "distributor") rows = rows.filter(isDistributorRow);
+    else if (scopeFilter === "retailer") rows = rows.filter((r) => !isDistributorRow(r));
     setFiltered(rows);
   }, [promotions, brandFilter, retailerFilter, monthFilter, yearFilter, statusFilter, repFilter, scopeFilter]);
 
