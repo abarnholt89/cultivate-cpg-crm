@@ -313,6 +313,7 @@ const clientMessagesPromise =
         .eq("visibility", "client")
         .in("retailer_id", ownedRetailerIds)
         .neq("sender_id", userId)
+        .or("source.is.null,source.neq.gmail_addon")
         .order("created_at", { ascending: false })
         .limit(50);
 

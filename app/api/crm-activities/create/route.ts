@@ -152,6 +152,7 @@ export async function POST(req: Request) {
             sender_name: senderName,
             body: clientMessage,
             created_at: sentAt,
+            source: "gmail_addon",
           });
         if (msgError) {
           console.error("[create-activity] brand_retailer_messages insert failed:", msgError.message);
