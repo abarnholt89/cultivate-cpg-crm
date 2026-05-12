@@ -9,7 +9,7 @@ type Role = "admin" | "rep" | "client" | null;
 
 type PromotionRow = {
   id: string;
-  brand_id: string;
+  brand_id: string | null;
   retailer_id: string | null;
   brand_name: string;
   retailer_name: string;
@@ -62,7 +62,7 @@ type RetailerPromoGroup = {
 
 type RetailerBrandGroup = {
   key: string;
-  brand_id: string;
+  brand_id: string | null;
   brand_name: string;
   rows: PromotionRow[];
   promoGroups: RetailerPromoGroup[];
@@ -373,7 +373,74 @@ function PromotionsInner() {
           const { data: brandUsers } = await supabase.from("brand_users").select("brand_id").eq("user_id", uid);
           const brandIds = (brandUsers ?? []).map((r: any) => r.brand_id);
           if (brandIds.length === 0) { setPromotions([]); setLoading(false); return; }
-          rows = await fetchAllRows<PromotionRow>(supabase.from("promotions").select("*").in("brand_id", brandIds).order("promo_year", { ascending: false }).order("promo_month", { ascending: true }));
+
+          // Resolve brand names for this client (needed for promotions_stage which has no brand_id)
+          const clientBrands = brandsList.filter((b) => brandIds.includes(b.id));
+          const brandNames = clientBrands.map((b) => b.name);
+
+          // Query 1: promotions table (filtered by brand_id)
+          const promotionsRows = await fetchAllRows<PromotionRow>(
+            supabase.from("promotions").select("*").in("brand_id", brandIds)
+          );
+
+          // Query 2: promotions_stage (no brand_id — match on brand_name)
+          let stageRows: PromotionRow[] = [];
+          if (brandNames.length > 0) {
+            // Exact match first
+            const { data: exactData } = await supabase
+              .from("promotions_stage")
+              .select("*")
+              .in("brand_name", brandNames);
+            const seenIds = new Set<string>((exactData ?? []).map((r: any) => String(r.id)));
+            const exactRows = (exactData ?? []) as any[];
+
+            // Fuzzy fallback: ilike on first word of each brand name, deduplicated
+            const fuzzyRows: any[] = [];
+            for (const name of brandNames) {
+              const firstWord = name.split(/\s+/)[0];
+              if (!firstWord || firstWord.length < 3) continue;
+              const { data: fuzzyData } = await supabase
+                .from("promotions_stage")
+                .select("*")
+                .ilike("brand_name", `${firstWord}%`);
+              for (const row of (fuzzyData ?? [])) {
+                const rid = String(row.id);
+                if (!seenIds.has(rid)) { seenIds.add(rid); fuzzyRows.push(row); }
+              }
+            }
+
+            stageRows = [...exactRows, ...fuzzyRows].map((r: any): PromotionRow => ({
+              id: String(r.id),
+              brand_id: null,
+              retailer_id: r.retailer_id ?? null,
+              brand_name: r.brand_name ?? "",
+              retailer_name: r.retailer_name ?? "",
+              retailer_banner: r.retailer_banner ?? null,
+              distributor: r.distributor ?? null,
+              cultivate_rep: r.cultivate_rep ?? null,
+              sku_description: r.sku_description ?? "",
+              unit_upc: r.unit_upc ?? null,
+              promo_year: Number(r.promo_year) || 0,
+              promo_month: Number(r.promo_month) || 0,
+              promo_name: r.promo_name ?? null,
+              promo_type: r.promo_type ?? "",
+              promo_status: r.promo_status ?? "",
+              promo_scope: r.promo_scope ?? null,
+              start_date: r.start_date ?? null,
+              end_date: r.end_date ?? null,
+              discount_percent: r.discount_percent != null ? Number(r.discount_percent) : null,
+              discount_amount: r.discount_amount != null ? Number(r.discount_amount) : null,
+              promo_text_raw: r.promo_text_raw ?? null,
+              notes: r.notes ?? null,
+            }));
+          }
+
+          // Merge and sort by promo_year desc, promo_month asc, start_date asc
+          rows = [...promotionsRows, ...stageRows].sort((a, b) => {
+            if (b.promo_year !== a.promo_year) return b.promo_year - a.promo_year;
+            if (a.promo_month !== b.promo_month) return a.promo_month - b.promo_month;
+            return (a.start_date ?? "").localeCompare(b.start_date ?? "");
+          });
         } else {
           rows = await fetchAllRows<PromotionRow>(supabase.from("promotions").select("*").order("promo_year", { ascending: false }).order("promo_month", { ascending: true }));
         }
@@ -432,7 +499,7 @@ function PromotionsInner() {
       r.promo_year === calYear && !isDistributorRow(r) && !isEdlpEdlc(r)
     );
     const brandsApplied = brandFilter !== "all" ? rows.filter((r) => r.brand_name === brandFilter) : rows;
-    const brandMap = new Map<string, { brand_id: string; months: Map<number, Set<string>> }>();
+    const brandMap = new Map<string, { brand_id: string | null; months: Map<number, Set<string>> }>();
     for (const row of brandsApplied) {
       if (!brandMap.has(row.brand_name)) brandMap.set(row.brand_name, { brand_id: row.brand_id, months: new Map() });
       const entry = brandMap.get(row.brand_name)!;
@@ -892,7 +959,9 @@ function PromotionsInner() {
                 {calendarData.map((row, idx) => (
                   <tr key={row.brand_name} className="border-b border-border last:border-0" style={{ background: idx % 2 === 0 ? "var(--card)" : "var(--secondary)" }}>
                     <td className="px-4 py-2 font-medium text-foreground whitespace-nowrap sticky left-0" style={{ background: idx % 2 === 0 ? "var(--card)" : "var(--secondary)" }}>
-                      <Link href={`/brands/${row.brand_id}/promotions`} className="hover:underline">{row.brand_name}</Link>
+                      {row.brand_id
+                        ? <Link href={`/brands/${row.brand_id}/promotions`} className="hover:underline">{row.brand_name}</Link>
+                        : <span>{row.brand_name}</span>}
                     </td>
                     {months.map((m) => {
                       const retailers = row.months.get(m);
