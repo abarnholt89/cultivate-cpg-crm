@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, Suspense } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -289,7 +289,7 @@ function groupRetailerActivations(rows: PromotionRow[]): RetailerGroup[] {
 
 // ── component ─────────────────────────────────────────────────────────────────
 
-export default function PromotionsPage() {
+function PromotionsInner() {
   const searchParams = useSearchParams();
   const brandIdParam = searchParams.get("brand");
 
@@ -1070,5 +1070,13 @@ export default function PromotionsPage() {
         </>
       )}
     </div>
+  );
+}
+
+export default function PromotionsPage() {
+  return (
+    <Suspense>
+      <PromotionsInner />
+    </Suspense>
   );
 }
