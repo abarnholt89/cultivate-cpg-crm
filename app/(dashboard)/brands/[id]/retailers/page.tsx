@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
@@ -275,7 +275,7 @@ const STATUS_FILTERS: Array<{ value: string; label: string }> = [
   { value: "authorized", label: "Authorized" },
 ];
 
-export default function BrandRetailersPage() {
+function BrandRetailersInner() {
   const params = useParams();
   const searchParams = useSearchParams();
 
@@ -2844,5 +2844,13 @@ export default function BrandRetailersPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function BrandRetailersPage() {
+  return (
+    <Suspense>
+      <BrandRetailersInner />
+    </Suspense>
   );
 }
