@@ -508,15 +508,15 @@ export default function ProductsLibraryPage() {
     );
   }, [aplRetailers, aplShowAll, aplProducts, aplAuthorized]);
 
-  // DC — all active products (for Add DC Listing SKU selector)
+  // DC — active products, filtered by brand dropdown when set
   const dcProducts = useMemo(() => {
     return products
-      .filter((p) => p.status === "active")
+      .filter((p) => p.status === "active" && (!brandFilter || p.brand_id === brandFilter))
       .sort((a, b) => {
         const bn = (brandsById[a.brand_id]?.name ?? "").localeCompare(brandsById[b.brand_id]?.name ?? "");
         return bn !== 0 ? bn : a.description.localeCompare(b.description);
       });
-  }, [products, brandsById]);
+  }, [products, brandsById, brandFilter]);
 
   // Derived DC code lists for the Add DC Listing dropdown
   const unfiCodes = useMemo<DcCode[]>(() => {
