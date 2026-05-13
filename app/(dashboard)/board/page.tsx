@@ -17,6 +17,7 @@ type TimingRow = {
   submitted_date: string | null;
   universal_category: string | null;
   category_review_date: string | null;
+  reset_date: string | null;
 };
 
 type CategoryEntry = {
@@ -25,6 +26,7 @@ type CategoryEntry = {
   universal_category: string | null;
   submittedDate: string | null;
   categoryReviewDate: string | null;
+  resetDate: string | null;
 };
 
 type Retailer = {
@@ -224,10 +226,11 @@ export default function AllBrandsBoardPage() {
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
   const [statusSaving, setStatusSaving] = useState<Record<string, boolean>>({});
 
-  // Inline review-date editing keyed by timingId
+  // Inline review-date / reset-date editing keyed by timingId
   const [reviewDateOverrides, setReviewDateOverrides] = useState<Record<string, string | null>>({});
-  const [reviewDateEditing, setReviewDateEditing] = useState<string | null>(null); // timingId
+  const [resetDateOverrides, setResetDateOverrides] = useState<Record<string, string | null>>({});
   const [reviewDateSaving, setReviewDateSaving] = useState<Record<string, boolean>>({});
+  const [resetDateSaving, setResetDateSaving] = useState<Record<string, boolean>>({});
 
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const errorToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -305,7 +308,7 @@ export default function AllBrandsBoardPage() {
     const { data: timing, error: timingErr } = await fetchAll<TimingRow>(() =>
       supabase
         .from("brand_retailer_timing")
-        .select("id, brand_id, retailer_id, account_status, submitted_date, universal_category, category_review_date")
+        .select("id, brand_id, retailer_id, account_status, submitted_date, universal_category, category_review_date, reset_date")
     );
 
     if (timingErr) { setError(timingErr); setLoading(false); return; }
@@ -528,6 +531,7 @@ export default function AllBrandsBoardPage() {
             universal_category: t.universal_category ?? null,
             submittedDate: t.submitted_date,
             categoryReviewDate: t.category_review_date ?? null,
+            resetDate: t.reset_date ?? null,
           })),
           latestClientNote: latestClient?.body ?? null,
           latestClientNoteDate: latestClient?.created_at ?? null,
@@ -676,7 +680,6 @@ export default function AllBrandsBoardPage() {
   async function saveReviewDate(timingId: string, dateValue: string) {
     const normalized = dateValue || null;
     setReviewDateOverrides((s) => ({ ...s, [timingId]: normalized }));
-    setReviewDateEditing(null);
     setReviewDateSaving((s) => ({ ...s, [timingId]: true }));
 
     const { error } = await supabase
@@ -695,6 +698,30 @@ export default function AllBrandsBoardPage() {
       });
       if (errorToastTimer.current) clearTimeout(errorToastTimer.current);
       setErrorToast("Failed to save review date.");
+      errorToastTimer.current = setTimeout(() => setErrorToast(null), 4000);
+    }
+  }
+
+  async function saveResetDate(timingId: string, dateValue: string) {
+    const normalized = dateValue || null;
+    setResetDateOverrides((s) => ({ ...s, [timingId]: normalized }));
+    setResetDateSaving((s) => ({ ...s, [timingId]: true }));
+
+    const { error } = await supabase
+      .from("brand_retailer_timing")
+      .update({ reset_date: normalized })
+      .eq("id", timingId);
+
+    setResetDateSaving((s) => ({ ...s, [timingId]: false }));
+
+    if (error) {
+      setResetDateOverrides((s) => {
+        const next = { ...s };
+        delete next[timingId];
+        return next;
+      });
+      if (errorToastTimer.current) clearTimeout(errorToastTimer.current);
+      setErrorToast("Failed to save reset date.");
       errorToastTimer.current = setTimeout(() => setErrorToast(null), 4000);
     }
   }
@@ -982,42 +1009,56 @@ export default function AllBrandsBoardPage() {
                                   </Link>
                                 </td>
 
-                                {/* Category + status pills + review date */}
+                                {/* Category + status pills + soonest review date */}
                                 <td className="px-4 py-2.5">
                                   <div className="flex flex-wrap items-center gap-1">
-                                    {row.categories.map((cat) => {
-                                      const status = statusOverrides[cat.timingId] ?? cat.accountStatus;
-                                      const label = cat.universal_category
-                                        ? `${cat.universal_category} · ${statusShortLabel(status)}`
-                                        : statusShortLabel(status);
-                                      const reviewDate =
-                                        cat.timingId in reviewDateOverrides
-                                          ? reviewDateOverrides[cat.timingId]
-                                          : cat.categoryReviewDate;
-                                      const reviewLabel = formatReviewDate(reviewDate ?? null);
+                                    {(() => {
+                                      const today = new Date().toISOString().split("T")[0];
+                                      // Soonest upcoming review date across all categories
+                                      const soonest = row.categories
+                                        .map((cat) =>
+                                          cat.timingId in reviewDateOverrides
+                                            ? reviewDateOverrides[cat.timingId]
+                                            : cat.categoryReviewDate
+                                        )
+                                        .filter((d): d is string => !!d && d >= today)
+                                        .sort()[0] ?? null;
+                                      const soonestLabel = formatReviewDate(soonest);
                                       return (
-                                        <span key={cat.timingId} className="inline-flex items-center gap-1">
-                                          <span
-                                            className="inline-block text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap"
-                                            style={{
-                                              background: statusPillBg(status),
-                                              color: statusPillFg(status),
-                                            }}
-                                          >
-                                            {label}
-                                          </span>
-                                          {/* Review date — only shown when a date exists; editing is in the expanded row */}
-                                          {reviewLabel && (
+                                        <>
+                                          {row.categories.map((cat) => {
+                                            const status = statusOverrides[cat.timingId] ?? cat.accountStatus;
+                                            const label = cat.universal_category
+                                              ? `${cat.universal_category} · ${statusShortLabel(status)}`
+                                              : statusShortLabel(status);
+                                            return (
+                                              <span
+                                                key={cat.timingId}
+                                                className="inline-block text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap"
+                                                style={{
+                                                  background: statusPillBg(status),
+                                                  color: statusPillFg(status),
+                                                }}
+                                              >
+                                                {label}
+                                              </span>
+                                            );
+                                          })}
+                                          {soonestLabel && (
                                             <span
-                                              className="text-xs whitespace-nowrap"
-                                              style={{ color: "var(--muted-foreground)" }}
+                                              className="text-xs whitespace-nowrap px-1.5 py-0.5 rounded"
+                                              style={{
+                                                color: "var(--muted-foreground)",
+                                                background: "var(--secondary)",
+                                                border: "1px solid var(--border)",
+                                              }}
                                             >
-                                              Review: {reviewLabel}
+                                              📅 {soonestLabel}
                                             </span>
                                           )}
-                                        </span>
+                                        </>
                                       );
-                                    })}
+                                    })()}
                                   </div>
                                 </td>
 
@@ -1054,12 +1095,6 @@ export default function AllBrandsBoardPage() {
                                       <div className="flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
                                         {row.categories.map((cat) => {
                                           const status = statusOverrides[cat.timingId] ?? cat.accountStatus;
-                                          const reviewDateVal =
-                                            cat.timingId in reviewDateOverrides
-                                              ? reviewDateOverrides[cat.timingId]
-                                              : cat.categoryReviewDate;
-                                          const reviewLabel = formatReviewDate(reviewDateVal ?? null);
-                                          const isEditingDate = reviewDateEditing === cat.timingId;
                                           return (
                                             <div key={cat.timingId} className="flex flex-col gap-0.5">
                                               {cat.universal_category && (
@@ -1083,38 +1118,80 @@ export default function AllBrandsBoardPage() {
                                                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                                                 ))}
                                               </select>
-                                              {/* Review date — always editable in expanded view */}
-                                              <div className="mt-0.5">
-                                                {isEditingDate ? (
-                                                  <input
-                                                    type="date"
-                                                    autoFocus
-                                                    defaultValue={reviewDateVal ?? ""}
-                                                    className="text-xs rounded px-1 py-0.5 focus:outline-none focus:ring-1"
-                                                    style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
-                                                    onClick={(e) => e.stopPropagation()}
-                                                    onBlur={(e) => { e.stopPropagation(); saveReviewDate(cat.timingId, e.target.value); }}
-                                                    onKeyDown={(e) => {
-                                                      e.stopPropagation();
-                                                      if (e.key === "Enter") saveReviewDate(cat.timingId, (e.target as HTMLInputElement).value);
-                                                      if (e.key === "Escape") setReviewDateEditing(null);
-                                                    }}
-                                                  />
-                                                ) : (
-                                                  <button
-                                                    type="button"
-                                                    className="text-xs whitespace-nowrap"
-                                                    style={{ color: "var(--muted-foreground)", opacity: reviewLabel ? 1 : 0.5 }}
-                                                    onClick={(e) => { e.stopPropagation(); setReviewDateEditing(cat.timingId); }}
-                                                  >
-                                                    {reviewLabel ? `Review: ${reviewLabel}` : "+ Review date"}
-                                                  </button>
-                                                )}
-                                              </div>
                                             </div>
                                           );
                                         })}
                                       </div>
+
+                                      {/* Review dates grid — category | review date | reset date */}
+                                      {row.categories.length > 0 && (
+                                        <div onClick={(e) => e.stopPropagation()}>
+                                          <table className="text-xs border-collapse" style={{ color: "var(--foreground)" }}>
+                                            <thead>
+                                              <tr style={{ color: "var(--muted-foreground)" }}>
+                                                <th className="text-left font-medium pr-4 pb-1">Category</th>
+                                                <th className="text-left font-medium pr-4 pb-1">Review Date</th>
+                                                <th className="text-left font-medium pb-1">Reset Date</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {row.categories.map((cat) => {
+                                                const reviewVal =
+                                                  cat.timingId in reviewDateOverrides
+                                                    ? (reviewDateOverrides[cat.timingId] ?? "")
+                                                    : (cat.categoryReviewDate ?? "");
+                                                const resetVal =
+                                                  cat.timingId in resetDateOverrides
+                                                    ? (resetDateOverrides[cat.timingId] ?? "")
+                                                    : (cat.resetDate ?? "");
+                                                return (
+                                                  <tr key={cat.timingId}>
+                                                    <td className="pr-4 py-0.5 font-medium whitespace-nowrap" style={{ color: "var(--muted-foreground)" }}>
+                                                      {cat.universal_category ?? "Primary"}
+                                                    </td>
+                                                    <td className="pr-4 py-0.5">
+                                                      <input
+                                                        type="date"
+                                                        value={reviewVal}
+                                                        disabled={reviewDateSaving[cat.timingId]}
+                                                        className="text-xs rounded px-1 py-0.5 focus:outline-none focus:ring-1"
+                                                        style={{
+                                                          border: "1px solid var(--border)",
+                                                          background: "var(--card)",
+                                                          color: "var(--foreground)",
+                                                          opacity: reviewDateSaving[cat.timingId] ? 0.5 : 1,
+                                                        }}
+                                                        onChange={(e) => {
+                                                          e.stopPropagation();
+                                                          saveReviewDate(cat.timingId, e.target.value);
+                                                        }}
+                                                      />
+                                                    </td>
+                                                    <td className="py-0.5">
+                                                      <input
+                                                        type="date"
+                                                        value={resetVal}
+                                                        disabled={resetDateSaving[cat.timingId]}
+                                                        className="text-xs rounded px-1 py-0.5 focus:outline-none focus:ring-1"
+                                                        style={{
+                                                          border: "1px solid var(--border)",
+                                                          background: "var(--card)",
+                                                          color: "var(--foreground)",
+                                                          opacity: resetDateSaving[cat.timingId] ? 0.5 : 1,
+                                                        }}
+                                                        onChange={(e) => {
+                                                          e.stopPropagation();
+                                                          saveResetDate(cat.timingId, e.target.value);
+                                                        }}
+                                                      />
+                                                    </td>
+                                                  </tr>
+                                                );
+                                              })}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      )}
 
                                       {/* 2-column note editor */}
                                       <div className="grid grid-cols-2 gap-4">
