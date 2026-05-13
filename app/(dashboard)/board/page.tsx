@@ -521,7 +521,8 @@ export default function AllBrandsBoardPage() {
       reset_date: string | null;
     }[]).forEach((r) => {
       if (!reviewDatesMap[r.retailer_id]) reviewDatesMap[r.retailer_id] = {};
-      reviewDatesMap[r.retailer_id][r.category] = {
+      // Normalize key to lowercase so "Nut butters" and "Nut Butters" both match
+      reviewDatesMap[r.retailer_id][r.category.toLowerCase()] = {
         id: r.id,
         categoryReviewDate: r.category_review_date ?? null,
         resetDate: r.reset_date ?? null,
@@ -1046,7 +1047,7 @@ export default function AllBrandsBoardPage() {
                                           const overrideKey = `${brand.id}__${row.retailerId}__${catKey}`;
                                           return overrideKey in reviewDateOverrides
                                             ? reviewDateOverrides[overrideKey]
-                                            : (row.reviewDates[catKey]?.categoryReviewDate ?? null);
+                                            : (row.reviewDates[catKey.toLowerCase()]?.categoryReviewDate ?? null);
                                         })
                                         .filter((d): d is string => !!d && d >= today)
                                         .sort()[0] ?? null;
@@ -1168,11 +1169,11 @@ export default function AllBrandsBoardPage() {
                                                 const reviewVal =
                                                   overrideKey in reviewDateOverrides
                                                     ? (reviewDateOverrides[overrideKey] ?? "")
-                                                    : (row.reviewDates[catKey]?.categoryReviewDate ?? "");
+                                                    : (row.reviewDates[catKey.toLowerCase()]?.categoryReviewDate ?? "");
                                                 const resetVal =
                                                   overrideKey in resetDateOverrides
                                                     ? (resetDateOverrides[overrideKey] ?? "")
-                                                    : (row.reviewDates[catKey]?.resetDate ?? "");
+                                                    : (row.reviewDates[catKey.toLowerCase()]?.resetDate ?? "");
                                                 return (
                                                   <tr key={cat.timingId}>
                                                     <td className="pr-4 py-0.5 font-medium whitespace-nowrap" style={{ color: "var(--muted-foreground)" }}>
