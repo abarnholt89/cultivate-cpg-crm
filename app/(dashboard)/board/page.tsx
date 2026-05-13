@@ -484,7 +484,7 @@ export default function AllBrandsBoardPage() {
         ? supabase
             .from("category_review_calendar")
             .select("retailer_name, universal_category, review_date, reset_date")
-            .in("universal_category", brandCats)
+            .or(brandCats.map((c) => `universal_category.ilike.${c}`).join(","))
         : Promise.resolve({ data: [], error: null }),
     ]);
 
@@ -1126,34 +1126,40 @@ export default function AllBrandsBoardPage() {
                                         })}
                                       </div>
 
-                                      {/* Review dates grid — sourced from brand_retailer_category_timing */}
-                                      {row.categories.length > 0 && (
-                                        <div onClick={(e) => e.stopPropagation()}>
-                                          <table className="text-xs border-collapse" style={{ color: "var(--foreground)" }}>
-                                            <tbody>
-                                              {row.categories.map((cat) => {
-                                                const reviewLabel = cat.calendarReviewDate
-                                                  ? formatReviewDate(cat.calendarReviewDate)
-                                                  : null;
-                                                const resetLabel = cat.calendarResetDate
-                                                  ? formatReviewDate(cat.calendarResetDate)
-                                                  : null;
-                                                if (!reviewLabel && !resetLabel) return null;
-                                                const parts: string[] = [];
-                                                if (reviewLabel) parts.push(`Review: ${reviewLabel}`);
-                                                if (resetLabel) parts.push(`Reset: ${resetLabel}`);
-                                                return (
-                                                  <tr key={cat.timingId}>
-                                                    <td className="py-0.5 text-xs" style={{ color: "var(--muted-foreground)" }}>
-                                                      {cat.universal_category ?? "Primary"} — {parts.join(" · ")}
-                                                    </td>
-                                                  </tr>
-                                                );
-                                              })}
-                                            </tbody>
-                                          </table>
-                                        </div>
-                                      )}
+                                      {/* Category review dates — read-only from category_review_calendar */}
+                                      {(() => {
+                                        const dateRows = row.categories
+                                          .map((cat) => {
+                                            const reviewLabel = cat.calendarReviewDate
+                                              ? formatReviewDate(cat.calendarReviewDate)
+                                              : null;
+                                            const resetLabel = cat.calendarResetDate
+                                              ? formatReviewDate(cat.calendarResetDate)
+                                              : null;
+                                            if (!reviewLabel && !resetLabel) return null;
+                                            return { cat, reviewLabel, resetLabel };
+                                          })
+                                          .filter(Boolean) as { cat: typeof row.categories[0]; reviewLabel: string | null; resetLabel: string | null }[];
+
+                                        if (dateRows.length === 0) return null;
+
+                                        return (
+                                          <div onClick={(e) => e.stopPropagation()}>
+                                            <p className="text-xs font-medium mb-1" style={{ color: "var(--muted-foreground)" }}>
+                                              Category Review Dates
+                                            </p>
+                                            <div className="space-y-0.5">
+                                              {dateRows.map(({ cat, reviewLabel, resetLabel }) => (
+                                                <p key={cat.timingId} className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+                                                  {cat.universal_category ?? "Primary"}
+                                                  {reviewLabel && ` — ${reviewLabel}`}
+                                                  {resetLabel && ` → Reset ${resetLabel}`}
+                                                </p>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        );
+                                      })()}
 
                                       {/* 2-column note editor */}
                                       <div className="grid grid-cols-2 gap-4">
