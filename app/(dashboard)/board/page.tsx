@@ -419,7 +419,11 @@ export default function AllBrandsBoardPage() {
   // ── On-demand brand detail load ───────────────────────────────────────────
 
   async function loadBrandRows(brandId: string) {
-    if (loadingBrand[brandId]) return;
+    console.log("[loadBrandRows] called for", brandId, "| loadingBrand:", loadingBrand[brandId], "| brandRows exists:", !!brandRows[brandId]);
+    if (loadingBrand[brandId]) {
+      console.log("[loadBrandRows] bailing — already loading");
+      return;
+    }
     setLoadingBrand((s) => ({ ...s, [brandId]: true }));
 
     // Always fetch brand_category_access fresh so the board reflects current
@@ -466,6 +470,12 @@ export default function AllBrandsBoardPage() {
       ? (catAccessData as { universal_category: string }[]).map((c) => c.universal_category)
       : [];
 
+    const calendarOrFilter = brandCats.map((c) => `universal_category.ilike.${c}`).join(",");
+    console.log("[calendar] brandId:", brandId);
+    console.log("[calendar] catAccessData:", catAccessData, "catAccessErr:", catAccessErr);
+    console.log("[calendar] brandCats:", brandCats);
+    console.log("[calendar] or filter string:", calendarOrFilter || "(empty — skipping query)");
+
     const [retailerRes, clientMsgsRes, internalMsgsRes, calendarRes] = await Promise.all([
       supabase.from("retailers").select("id, name, banner").in("id", retailerIds),
       supabase
@@ -484,9 +494,11 @@ export default function AllBrandsBoardPage() {
         ? supabase
             .from("category_review_calendar")
             .select("retailer_name, universal_category, review_date, reset_date")
-            .or(brandCats.map((c) => `universal_category.ilike.${c}`).join(","))
+            .or(calendarOrFilter)
         : Promise.resolve({ data: [], error: null }),
     ]);
+
+    console.log("[calendar] raw response — data:", calendarRes.data, "error:", calendarRes.error);
 
     if (retailerRes.error) {
       setLoadingBrand((s) => ({ ...s, [brandId]: false }));
@@ -535,6 +547,8 @@ export default function AllBrandsBoardPage() {
       }
     });
 
+    console.log("[calendar] calendarMap after build:", JSON.stringify(calendarMap, null, 2));
+
     // Resolve calendar entry for a given retailer + category via substring matching
     function lookupCalendar(retailerName: string, banner: string, category: string): CalEntry | null {
       const cKey = category.toLowerCase();
@@ -542,13 +556,20 @@ export default function AllBrandsBoardPage() {
       const calKeys = Object.keys(calendarMap);
       for (const candidate of candidates) {
         // Exact match first
-        if (calendarMap[candidate]?.[cKey]) return calendarMap[candidate][cKey];
+        if (calendarMap[candidate]?.[cKey]) {
+          console.log(`[calendar] lookupCalendar("${retailerName}", "${banner}", "${category}") → exact match via "${candidate}":`, calendarMap[candidate][cKey]);
+          return calendarMap[candidate][cKey];
+        }
         // Substring: calendar key is prefix of candidate or vice-versa (e.g. "sprouts" ⊂ "sprouts farmers market")
         const partial = calKeys.find(
           (k) => k && (candidate.startsWith(k) || k.startsWith(candidate))
         );
-        if (partial && calendarMap[partial]?.[cKey]) return calendarMap[partial][cKey];
+        if (partial && calendarMap[partial]?.[cKey]) {
+          console.log(`[calendar] lookupCalendar("${retailerName}", "${banner}", "${category}") → partial match via "${partial}":`, calendarMap[partial][cKey]);
+          return calendarMap[partial][cKey];
+        }
       }
+      console.log(`[calendar] lookupCalendar("${retailerName}", "${banner}", "${category}") → NO MATCH. calendarMap keys:`, Object.keys(calendarMap));
       return null;
     }
 
@@ -605,21 +626,27 @@ export default function AllBrandsBoardPage() {
   // ── Expand / collapse brand ───────────────────────────────────────────────
 
   function toggleBrand(brandId: string) {
+    const isExpanding = !expandedBrandIds.has(brandId);
     setExpandedBrandIds((prev) => {
       const next = new Set(prev);
       if (next.has(brandId)) {
         next.delete(brandId);
-        if (expandedKey?.startsWith(`${brandId}__`)) {
-          setExpandedKey(null);
-          setClientNoteText("");
-          setInternalNoteText("");
-        }
       } else {
         next.add(brandId);
-        loadBrandRows(brandId);
       }
       return next;
     });
+    if (!isExpanding) {
+      // collapsing — clear note editor if open for this brand
+      if (expandedKey?.startsWith(`${brandId}__`)) {
+        setExpandedKey(null);
+        setClientNoteText("");
+        setInternalNoteText("");
+      }
+    } else {
+      // expanding — load rows outside the state updater so it always runs
+      loadBrandRows(brandId);
+    }
   }
 
   // ── Note editor ───────────────────────────────────────────────────────────
