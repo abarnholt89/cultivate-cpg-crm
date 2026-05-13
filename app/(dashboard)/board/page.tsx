@@ -16,8 +16,6 @@ type TimingRow = {
   account_status: string;
   submitted_date: string | null;
   universal_category: string | null;
-  category_review_date: string | null;
-  reset_date: string | null;
 };
 
 type CategoryEntry = {
@@ -25,6 +23,11 @@ type CategoryEntry = {
   accountStatus: string;
   universal_category: string | null;
   submittedDate: string | null;
+};
+
+// One row from brand_retailer_category_timing, keyed by category name inside BoardRetailerRow
+type CategoryTimingEntry = {
+  id: string | null;           // null when the row doesn't exist yet (upsert will create it)
   categoryReviewDate: string | null;
   resetDate: string | null;
 };
@@ -46,6 +49,8 @@ type BoardRetailerRow = {
   retailerId: string;
   banner: string;
   categories: CategoryEntry[];   // sorted: null/primary first, then alpha
+  // Review/reset dates keyed by category name (matches universal_category or "" for primary)
+  reviewDates: Record<string, CategoryTimingEntry>;
   latestClientNote: string | null;
   latestClientNoteDate: string | null;
   latestInternalNote: string | null;
@@ -308,7 +313,7 @@ export default function AllBrandsBoardPage() {
     const { data: timing, error: timingErr } = await fetchAll<TimingRow>(() =>
       supabase
         .from("brand_retailer_timing")
-        .select("id, brand_id, retailer_id, account_status, submitted_date, universal_category, category_review_date, reset_date")
+        .select("id, brand_id, retailer_id, account_status, submitted_date, universal_category")
     );
 
     if (timingErr) { setError(timingErr); setLoading(false); return; }
@@ -467,7 +472,7 @@ export default function AllBrandsBoardPage() {
       return;
     }
 
-    const [retailerRes, clientMsgsRes, internalMsgsRes] = await Promise.all([
+    const [retailerRes, clientMsgsRes, internalMsgsRes, catTimingRes] = await Promise.all([
       supabase.from("retailers").select("id, name, banner").in("id", retailerIds),
       supabase
         .from("brand_retailer_messages")
@@ -481,6 +486,10 @@ export default function AllBrandsBoardPage() {
         .eq("brand_id", brandId)
         .eq("visibility", "internal")
         .order("created_at", { ascending: false }),
+      supabase
+        .from("brand_retailer_category_timing")
+        .select("id, retailer_id, category, category_review_date, reset_date")
+        .eq("brand_id", brandId),
     ]);
 
     if (retailerRes.error) {
@@ -499,6 +508,24 @@ export default function AllBrandsBoardPage() {
     const latestInternalMap: Record<string, Message> = {};
     ((internalMsgsRes.data as Message[]) ?? []).forEach((m) => {
       if (!latestInternalMap[m.retailer_id]) latestInternalMap[m.retailer_id] = m;
+    });
+
+    // Build reviewDates: retailerId → category → CategoryTimingEntry
+    // category is the raw category string from brand_retailer_category_timing
+    const reviewDatesMap: Record<string, Record<string, CategoryTimingEntry>> = {};
+    ((catTimingRes.data ?? []) as {
+      id: string;
+      retailer_id: string;
+      category: string;
+      category_review_date: string | null;
+      reset_date: string | null;
+    }[]).forEach((r) => {
+      if (!reviewDatesMap[r.retailer_id]) reviewDatesMap[r.retailer_id] = {};
+      reviewDatesMap[r.retailer_id][r.category] = {
+        id: r.id,
+        categoryReviewDate: r.category_review_date ?? null,
+        resetDate: r.reset_date ?? null,
+      };
     });
 
     // Group timing rows by retailer_id — one BoardRetailerRow per retailer
@@ -530,9 +557,8 @@ export default function AllBrandsBoardPage() {
             accountStatus: t.account_status,
             universal_category: t.universal_category ?? null,
             submittedDate: t.submitted_date,
-            categoryReviewDate: t.category_review_date ?? null,
-            resetDate: t.reset_date ?? null,
           })),
+          reviewDates: reviewDatesMap[retailerId] ?? {},
           latestClientNote: latestClient?.body ?? null,
           latestClientNoteDate: latestClient?.created_at ?? null,
           latestInternalNote: latestInternal?.body ?? null,
@@ -675,51 +701,49 @@ export default function AllBrandsBoardPage() {
     }
   }
 
-  // ── Inline review date update ─────────────────────────────────────────────
+  // ── Inline review / reset date update (brand_retailer_category_timing) ──────
+  // Keys for overrides/saving: `${brandId}__${retailerId}__${category}`
 
-  async function saveReviewDate(timingId: string, dateValue: string) {
+  async function saveReviewDate(brandId: string, retailerId: string, category: string, dateValue: string) {
+    const key = `${brandId}__${retailerId}__${category}`;
     const normalized = dateValue || null;
-    setReviewDateOverrides((s) => ({ ...s, [timingId]: normalized }));
-    setReviewDateSaving((s) => ({ ...s, [timingId]: true }));
+    setReviewDateOverrides((s) => ({ ...s, [key]: normalized }));
+    setReviewDateSaving((s) => ({ ...s, [key]: true }));
 
     const { error } = await supabase
-      .from("brand_retailer_timing")
-      .update({ category_review_date: normalized })
-      .eq("id", timingId);
+      .from("brand_retailer_category_timing")
+      .upsert(
+        { brand_id: brandId, retailer_id: retailerId, category, category_review_date: normalized },
+        { onConflict: "brand_id,retailer_id,category" }
+      );
 
-    setReviewDateSaving((s) => ({ ...s, [timingId]: false }));
+    setReviewDateSaving((s) => ({ ...s, [key]: false }));
 
     if (error) {
-      // Revert optimistic update on error
-      setReviewDateOverrides((s) => {
-        const next = { ...s };
-        delete next[timingId];
-        return next;
-      });
+      setReviewDateOverrides((s) => { const n = { ...s }; delete n[key]; return n; });
       if (errorToastTimer.current) clearTimeout(errorToastTimer.current);
       setErrorToast("Failed to save review date.");
       errorToastTimer.current = setTimeout(() => setErrorToast(null), 4000);
     }
   }
 
-  async function saveResetDate(timingId: string, dateValue: string) {
+  async function saveResetDate(brandId: string, retailerId: string, category: string, dateValue: string) {
+    const key = `${brandId}__${retailerId}__${category}`;
     const normalized = dateValue || null;
-    setResetDateOverrides((s) => ({ ...s, [timingId]: normalized }));
-    setResetDateSaving((s) => ({ ...s, [timingId]: true }));
+    setResetDateOverrides((s) => ({ ...s, [key]: normalized }));
+    setResetDateSaving((s) => ({ ...s, [key]: true }));
 
     const { error } = await supabase
-      .from("brand_retailer_timing")
-      .update({ reset_date: normalized })
-      .eq("id", timingId);
+      .from("brand_retailer_category_timing")
+      .upsert(
+        { brand_id: brandId, retailer_id: retailerId, category, reset_date: normalized },
+        { onConflict: "brand_id,retailer_id,category" }
+      );
 
-    setResetDateSaving((s) => ({ ...s, [timingId]: false }));
+    setResetDateSaving((s) => ({ ...s, [key]: false }));
 
     if (error) {
-      setResetDateOverrides((s) => {
-        const next = { ...s };
-        delete next[timingId];
-        return next;
-      });
+      setResetDateOverrides((s) => { const n = { ...s }; delete n[key]; return n; });
       if (errorToastTimer.current) clearTimeout(errorToastTimer.current);
       setErrorToast("Failed to save reset date.");
       errorToastTimer.current = setTimeout(() => setErrorToast(null), 4000);
@@ -1015,12 +1039,15 @@ export default function AllBrandsBoardPage() {
                                     {(() => {
                                       const today = new Date().toISOString().split("T")[0];
                                       // Soonest upcoming review date across all categories
+                                      // sourced from brand_retailer_category_timing via row.reviewDates
                                       const soonest = row.categories
-                                        .map((cat) =>
-                                          cat.timingId in reviewDateOverrides
-                                            ? reviewDateOverrides[cat.timingId]
-                                            : cat.categoryReviewDate
-                                        )
+                                        .map((cat) => {
+                                          const catKey = cat.universal_category ?? "";
+                                          const overrideKey = `${brand.id}__${row.retailerId}__${catKey}`;
+                                          return overrideKey in reviewDateOverrides
+                                            ? reviewDateOverrides[overrideKey]
+                                            : (row.reviewDates[catKey]?.categoryReviewDate ?? null);
+                                        })
                                         .filter((d): d is string => !!d && d >= today)
                                         .sort()[0] ?? null;
                                       const soonestLabel = formatReviewDate(soonest);
@@ -1123,7 +1150,7 @@ export default function AllBrandsBoardPage() {
                                         })}
                                       </div>
 
-                                      {/* Review dates grid — category | review date | reset date */}
+                                      {/* Review dates grid — sourced from brand_retailer_category_timing */}
                                       {row.categories.length > 0 && (
                                         <div onClick={(e) => e.stopPropagation()}>
                                           <table className="text-xs border-collapse" style={{ color: "var(--foreground)" }}>
@@ -1136,14 +1163,16 @@ export default function AllBrandsBoardPage() {
                                             </thead>
                                             <tbody>
                                               {row.categories.map((cat) => {
+                                                const catKey = cat.universal_category ?? "";
+                                                const overrideKey = `${brand.id}__${row.retailerId}__${catKey}`;
                                                 const reviewVal =
-                                                  cat.timingId in reviewDateOverrides
-                                                    ? (reviewDateOverrides[cat.timingId] ?? "")
-                                                    : (cat.categoryReviewDate ?? "");
+                                                  overrideKey in reviewDateOverrides
+                                                    ? (reviewDateOverrides[overrideKey] ?? "")
+                                                    : (row.reviewDates[catKey]?.categoryReviewDate ?? "");
                                                 const resetVal =
-                                                  cat.timingId in resetDateOverrides
-                                                    ? (resetDateOverrides[cat.timingId] ?? "")
-                                                    : (cat.resetDate ?? "");
+                                                  overrideKey in resetDateOverrides
+                                                    ? (resetDateOverrides[overrideKey] ?? "")
+                                                    : (row.reviewDates[catKey]?.resetDate ?? "");
                                                 return (
                                                   <tr key={cat.timingId}>
                                                     <td className="pr-4 py-0.5 font-medium whitespace-nowrap" style={{ color: "var(--muted-foreground)" }}>
@@ -1153,17 +1182,17 @@ export default function AllBrandsBoardPage() {
                                                       <input
                                                         type="date"
                                                         value={reviewVal}
-                                                        disabled={reviewDateSaving[cat.timingId]}
+                                                        disabled={reviewDateSaving[overrideKey]}
                                                         className="text-xs rounded px-1 py-0.5 focus:outline-none focus:ring-1"
                                                         style={{
                                                           border: "1px solid var(--border)",
                                                           background: "var(--card)",
                                                           color: "var(--foreground)",
-                                                          opacity: reviewDateSaving[cat.timingId] ? 0.5 : 1,
+                                                          opacity: reviewDateSaving[overrideKey] ? 0.5 : 1,
                                                         }}
                                                         onChange={(e) => {
                                                           e.stopPropagation();
-                                                          saveReviewDate(cat.timingId, e.target.value);
+                                                          saveReviewDate(brand.id, row.retailerId, catKey, e.target.value);
                                                         }}
                                                       />
                                                     </td>
@@ -1171,17 +1200,17 @@ export default function AllBrandsBoardPage() {
                                                       <input
                                                         type="date"
                                                         value={resetVal}
-                                                        disabled={resetDateSaving[cat.timingId]}
+                                                        disabled={resetDateSaving[overrideKey]}
                                                         className="text-xs rounded px-1 py-0.5 focus:outline-none focus:ring-1"
                                                         style={{
                                                           border: "1px solid var(--border)",
                                                           background: "var(--card)",
                                                           color: "var(--foreground)",
-                                                          opacity: resetDateSaving[cat.timingId] ? 0.5 : 1,
+                                                          opacity: resetDateSaving[overrideKey] ? 0.5 : 1,
                                                         }}
                                                         onChange={(e) => {
                                                           e.stopPropagation();
-                                                          saveResetDate(cat.timingId, e.target.value);
+                                                          saveResetDate(brand.id, row.retailerId, catKey, e.target.value);
                                                         }}
                                                       />
                                                     </td>
