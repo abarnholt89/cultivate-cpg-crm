@@ -16,8 +16,6 @@ type TimingRow = {
   account_status: string;
   submitted_date: string | null;
   universal_category: string | null;
-  category_review_date: string | null;
-  reset_date: string | null;
 };
 
 type CategoryEntry = {
@@ -25,8 +23,9 @@ type CategoryEntry = {
   accountStatus: string;
   universal_category: string | null;
   submittedDate: string | null;
-  categoryReviewDate: string | null;
-  resetDate: string | null;
+  // Read-only dates from category_review_calendar (not editable on the board)
+  calendarReviewDate: string | null;
+  calendarResetDate: string | null;
 };
 
 type Retailer = {
@@ -226,11 +225,6 @@ export default function AllBrandsBoardPage() {
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
   const [statusSaving, setStatusSaving] = useState<Record<string, boolean>>({});
 
-  // Inline review-date / reset-date editing keyed by timingId
-  const [reviewDateOverrides, setReviewDateOverrides] = useState<Record<string, string | null>>({});
-  const [resetDateOverrides, setResetDateOverrides] = useState<Record<string, string | null>>({});
-  const [reviewDateSaving, setReviewDateSaving] = useState<Record<string, boolean>>({});
-  const [resetDateSaving, setResetDateSaving] = useState<Record<string, boolean>>({});
 
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const errorToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -308,7 +302,7 @@ export default function AllBrandsBoardPage() {
     const { data: timing, error: timingErr } = await fetchAll<TimingRow>(() =>
       supabase
         .from("brand_retailer_timing")
-        .select("id, brand_id, retailer_id, account_status, submitted_date, universal_category, category_review_date, reset_date")
+        .select("id, brand_id, retailer_id, account_status, submitted_date, universal_category")
     );
 
     if (timingErr) { setError(timingErr); setLoading(false); return; }
@@ -467,7 +461,12 @@ export default function AllBrandsBoardPage() {
       return;
     }
 
-    const [retailerRes, clientMsgsRes, internalMsgsRes] = await Promise.all([
+    // Brand's canonical category list (needed for calendar lookup)
+    const brandCats: string[] = catAccessData
+      ? (catAccessData as { universal_category: string }[]).map((c) => c.universal_category)
+      : [];
+
+    const [retailerRes, clientMsgsRes, internalMsgsRes, calendarRes] = await Promise.all([
       supabase.from("retailers").select("id, name, banner").in("id", retailerIds),
       supabase
         .from("brand_retailer_messages")
@@ -481,6 +480,12 @@ export default function AllBrandsBoardPage() {
         .eq("brand_id", brandId)
         .eq("visibility", "internal")
         .order("created_at", { ascending: false }),
+      brandCats.length > 0
+        ? supabase
+            .from("category_review_calendar")
+            .select("retailer_name, universal_category, review_date, reset_date")
+            .in("universal_category", brandCats)
+        : Promise.resolve({ data: [], error: null }),
     ]);
 
     if (retailerRes.error) {
@@ -501,6 +506,52 @@ export default function AllBrandsBoardPage() {
       if (!latestInternalMap[m.retailer_id]) latestInternalMap[m.retailer_id] = m;
     });
 
+    // Build calendarMap: retailerNameLower → categoryLower → soonest upcoming {reviewDate, resetDate}
+    // category_review_calendar.retailer_name may differ in casing/length from retailers.name
+    // (e.g. "Sprouts" vs "Sprouts Farmers Market") — we match client-side via substring.
+    const today = new Date().toISOString().split("T")[0];
+    type CalEntry = { reviewDate: string | null; resetDate: string | null };
+    const calendarMap: Record<string, Record<string, CalEntry>> = {};
+    ((calendarRes.data ?? []) as {
+      retailer_name: string;
+      universal_category: string;
+      review_date: string | null;
+      reset_date: string | null;
+    }[]).forEach((row) => {
+      const rKey = (row.retailer_name ?? "").toLowerCase();
+      const cKey = (row.universal_category ?? "").toLowerCase();
+      if (!calendarMap[rKey]) calendarMap[rKey] = {};
+      const incoming: CalEntry = { reviewDate: row.review_date ?? null, resetDate: row.reset_date ?? null };
+      const existing = calendarMap[rKey][cKey];
+      // Prefer soonest upcoming; fall back to latest past
+      const inUpcoming = incoming.reviewDate && incoming.reviewDate >= today;
+      const exUpcoming = existing?.reviewDate && existing.reviewDate >= today;
+      if (
+        !existing ||
+        (inUpcoming && (!exUpcoming || incoming.reviewDate! < existing.reviewDate!)) ||
+        (!inUpcoming && !exUpcoming && (incoming.reviewDate ?? "") > (existing.reviewDate ?? ""))
+      ) {
+        calendarMap[rKey][cKey] = incoming;
+      }
+    });
+
+    // Resolve calendar entry for a given retailer + category via substring matching
+    function lookupCalendar(retailerName: string, banner: string, category: string): CalEntry | null {
+      const cKey = category.toLowerCase();
+      const candidates = [retailerName.toLowerCase(), banner.toLowerCase()];
+      const calKeys = Object.keys(calendarMap);
+      for (const candidate of candidates) {
+        // Exact match first
+        if (calendarMap[candidate]?.[cKey]) return calendarMap[candidate][cKey];
+        // Substring: calendar key is prefix of candidate or vice-versa (e.g. "sprouts" ⊂ "sprouts farmers market")
+        const partial = calKeys.find(
+          (k) => k && (candidate.startsWith(k) || k.startsWith(candidate))
+        );
+        if (partial && calendarMap[partial]?.[cKey]) return calendarMap[partial][cKey];
+      }
+      return null;
+    }
+
     // Group timing rows by retailer_id — one BoardRetailerRow per retailer
     const byRetailer = new Map<string, TimingRow[]>();
     for (const t of timing) {
@@ -512,6 +563,7 @@ export default function AllBrandsBoardPage() {
       .map(([retailerId, timingRows]) => {
         const retailer = retailerMap[retailerId];
         const banner = retailer?.banner?.trim() || retailer?.name || "Unknown Retailer";
+        const retailerName = retailer?.name || banner;
         const latestClient = latestClientMap[retailerId] ?? null;
         const latestInternal = latestInternalMap[retailerId] ?? null;
 
@@ -525,14 +577,19 @@ export default function AllBrandsBoardPage() {
         return {
           retailerId,
           banner,
-          categories: sortedTiming.map((t) => ({
-            timingId: t.id,
-            accountStatus: t.account_status,
-            universal_category: t.universal_category ?? null,
-            submittedDate: t.submitted_date,
-            categoryReviewDate: t.category_review_date ?? null,
-            resetDate: t.reset_date ?? null,
-          })),
+          categories: sortedTiming.map((t) => {
+            const cal = t.universal_category
+              ? lookupCalendar(retailerName, banner, t.universal_category)
+              : null;
+            return {
+              timingId: t.id,
+              accountStatus: t.account_status,
+              universal_category: t.universal_category ?? null,
+              submittedDate: t.submitted_date,
+              calendarReviewDate: cal?.reviewDate ?? null,
+              calendarResetDate: cal?.resetDate ?? null,
+            };
+          }),
           latestClientNote: latestClient?.body ?? null,
           latestClientNoteDate: latestClient?.created_at ?? null,
           latestInternalNote: latestInternal?.body ?? null,
@@ -671,49 +728,6 @@ export default function AllBrandsBoardPage() {
       setStatusOverrides((s) => ({ ...s, [timingId]: prevStatus }));
       if (errorToastTimer.current) clearTimeout(errorToastTimer.current);
       setErrorToast("Failed to update status. You may not have permission.");
-      errorToastTimer.current = setTimeout(() => setErrorToast(null), 4000);
-    }
-  }
-
-  // ── Inline review / reset date update (brand_retailer_timing) ───────────────
-  // Keyed by timingId (brand_retailer_timing.id)
-
-  async function saveReviewDate(timingId: string, dateValue: string) {
-    const normalized = dateValue || null;
-    setReviewDateOverrides((s) => ({ ...s, [timingId]: normalized }));
-    setReviewDateSaving((s) => ({ ...s, [timingId]: true }));
-
-    const { error } = await supabase
-      .from("brand_retailer_timing")
-      .update({ category_review_date: normalized })
-      .eq("id", timingId);
-
-    setReviewDateSaving((s) => ({ ...s, [timingId]: false }));
-
-    if (error) {
-      setReviewDateOverrides((s) => { const n = { ...s }; delete n[timingId]; return n; });
-      if (errorToastTimer.current) clearTimeout(errorToastTimer.current);
-      setErrorToast("Failed to save review date.");
-      errorToastTimer.current = setTimeout(() => setErrorToast(null), 4000);
-    }
-  }
-
-  async function saveResetDate(timingId: string, dateValue: string) {
-    const normalized = dateValue || null;
-    setResetDateOverrides((s) => ({ ...s, [timingId]: normalized }));
-    setResetDateSaving((s) => ({ ...s, [timingId]: true }));
-
-    const { error } = await supabase
-      .from("brand_retailer_timing")
-      .update({ reset_date: normalized })
-      .eq("id", timingId);
-
-    setResetDateSaving((s) => ({ ...s, [timingId]: false }));
-
-    if (error) {
-      setResetDateOverrides((s) => { const n = { ...s }; delete n[timingId]; return n; });
-      if (errorToastTimer.current) clearTimeout(errorToastTimer.current);
-      setErrorToast("Failed to save reset date.");
       errorToastTimer.current = setTimeout(() => setErrorToast(null), 4000);
     }
   }
@@ -1007,13 +1021,9 @@ export default function AllBrandsBoardPage() {
                                     {(() => {
                                       const today = new Date().toISOString().split("T")[0];
                                       // Soonest upcoming review date across all categories
-                                      // sourced from brand_retailer_timing via cat.categoryReviewDate
+                                      // sourced from category_review_calendar (read-only)
                                       const soonest = row.categories
-                                        .map((cat) =>
-                                          cat.timingId in reviewDateOverrides
-                                            ? reviewDateOverrides[cat.timingId]
-                                            : cat.categoryReviewDate
-                                        )
+                                        .map((cat) => cat.calendarReviewDate)
                                         .filter((d): d is string => !!d && d >= today)
                                         .sort()[0] ?? null;
                                       const soonestLabel = formatReviewDate(soonest);
@@ -1120,63 +1130,22 @@ export default function AllBrandsBoardPage() {
                                       {row.categories.length > 0 && (
                                         <div onClick={(e) => e.stopPropagation()}>
                                           <table className="text-xs border-collapse" style={{ color: "var(--foreground)" }}>
-                                            <thead>
-                                              <tr style={{ color: "var(--muted-foreground)" }}>
-                                                <th className="text-left font-medium pr-4 pb-1">Category</th>
-                                                <th className="text-left font-medium pr-4 pb-1">Review Date</th>
-                                                <th className="text-left font-medium pb-1">Reset Date</th>
-                                              </tr>
-                                            </thead>
                                             <tbody>
                                               {row.categories.map((cat) => {
-                                                const reviewVal =
-                                                  cat.timingId in reviewDateOverrides
-                                                    ? (reviewDateOverrides[cat.timingId] ?? "")
-                                                    : (cat.categoryReviewDate ?? "");
-                                                const resetVal =
-                                                  cat.timingId in resetDateOverrides
-                                                    ? (resetDateOverrides[cat.timingId] ?? "")
-                                                    : (cat.resetDate ?? "");
+                                                const reviewLabel = cat.calendarReviewDate
+                                                  ? formatReviewDate(cat.calendarReviewDate)
+                                                  : null;
+                                                const resetLabel = cat.calendarResetDate
+                                                  ? formatReviewDate(cat.calendarResetDate)
+                                                  : null;
+                                                if (!reviewLabel && !resetLabel) return null;
+                                                const parts: string[] = [];
+                                                if (reviewLabel) parts.push(`Review: ${reviewLabel}`);
+                                                if (resetLabel) parts.push(`Reset: ${resetLabel}`);
                                                 return (
                                                   <tr key={cat.timingId}>
-                                                    <td className="pr-4 py-0.5 font-medium whitespace-nowrap" style={{ color: "var(--muted-foreground)" }}>
-                                                      {cat.universal_category ?? "Primary"}
-                                                    </td>
-                                                    <td className="pr-4 py-0.5">
-                                                      <input
-                                                        type="date"
-                                                        value={reviewVal}
-                                                        disabled={reviewDateSaving[cat.timingId]}
-                                                        className="text-xs rounded px-1 py-0.5 focus:outline-none focus:ring-1"
-                                                        style={{
-                                                          border: "1px solid var(--border)",
-                                                          background: "var(--card)",
-                                                          color: "var(--foreground)",
-                                                          opacity: reviewDateSaving[cat.timingId] ? 0.5 : 1,
-                                                        }}
-                                                        onChange={(e) => {
-                                                          e.stopPropagation();
-                                                          saveReviewDate(cat.timingId, e.target.value);
-                                                        }}
-                                                      />
-                                                    </td>
-                                                    <td className="py-0.5">
-                                                      <input
-                                                        type="date"
-                                                        value={resetVal}
-                                                        disabled={resetDateSaving[cat.timingId]}
-                                                        className="text-xs rounded px-1 py-0.5 focus:outline-none focus:ring-1"
-                                                        style={{
-                                                          border: "1px solid var(--border)",
-                                                          background: "var(--card)",
-                                                          color: "var(--foreground)",
-                                                          opacity: resetDateSaving[cat.timingId] ? 0.5 : 1,
-                                                        }}
-                                                        onChange={(e) => {
-                                                          e.stopPropagation();
-                                                          saveResetDate(cat.timingId, e.target.value);
-                                                        }}
-                                                      />
+                                                    <td className="py-0.5 text-xs" style={{ color: "var(--muted-foreground)" }}>
+                                                      {cat.universal_category ?? "Primary"} — {parts.join(" · ")}
                                                     </td>
                                                   </tr>
                                                 );
