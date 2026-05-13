@@ -427,23 +427,28 @@ export default function AllBrandsBoardPage() {
 
     // Always fetch brand_category_access fresh so the board reflects current
     // category assignments even if they changed since the page loaded.
-    const { data: catAccessData } = await supabase
+    const { data: catAccessData, error: catAccessErr } = await supabase
       .from("brand_category_access")
       .select("universal_category")
       .eq("brand_id", brandId);
 
-    const validCategories = new Set(
-      ((catAccessData ?? []) as { universal_category: string }[]).map((c) =>
-        (c.universal_category ?? "").toLowerCase().trim()
-      )
-    );
+    // Only apply the category filter when the fetch succeeded and returned rows.
+    // If there are no access rows (fetch error or brand truly has none), skip filtering
+    // rather than silently showing everything (which was the old silent-fallback bug).
+    const validCategories: Set<string> | null =
+      !catAccessErr && catAccessData && catAccessData.length > 0
+        ? new Set(
+            (catAccessData as { universal_category: string }[]).map((c) =>
+              (c.universal_category ?? "").toLowerCase().trim()
+            )
+          )
+        : null;
 
     const allTiming = timingByBrand[brandId] ?? [];
     // Filter timing rows to only those whose category is currently in brand_category_access.
     // Rows with no universal_category (primary/null) are always kept.
-    // If brand_category_access is empty, fall back to all timing rows.
     const timing =
-      validCategories.size > 0
+      validCategories !== null
         ? allTiming.filter(
             (t) =>
               !t.universal_category ||
@@ -550,7 +555,7 @@ export default function AllBrandsBoardPage() {
         }
       } else {
         next.add(brandId);
-        if (!brandRows[brandId]) loadBrandRows(brandId);
+        loadBrandRows(brandId);
       }
       return next;
     });
@@ -990,7 +995,6 @@ export default function AllBrandsBoardPage() {
                                           ? reviewDateOverrides[cat.timingId]
                                           : cat.categoryReviewDate;
                                       const reviewLabel = formatReviewDate(reviewDate ?? null);
-                                      const isEditingDate = reviewDateEditing === cat.timingId;
                                       return (
                                         <span key={cat.timingId} className="inline-flex items-center gap-1">
                                           <span
@@ -1002,41 +1006,14 @@ export default function AllBrandsBoardPage() {
                                           >
                                             {label}
                                           </span>
-                                          {/* Review date inline */}
-                                          {isEditingDate ? (
-                                            <input
-                                              type="date"
-                                              autoFocus
-                                              defaultValue={reviewDate ?? ""}
-                                              className="text-xs rounded px-1 py-0.5 focus:outline-none focus:ring-1"
-                                              style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
-                                              onClick={(e) => e.stopPropagation()}
-                                              onBlur={(e) => { e.stopPropagation(); saveReviewDate(cat.timingId, e.target.value); }}
-                                              onKeyDown={(e) => {
-                                                e.stopPropagation();
-                                                if (e.key === "Enter") saveReviewDate(cat.timingId, (e.target as HTMLInputElement).value);
-                                                if (e.key === "Escape") setReviewDateEditing(null);
-                                              }}
-                                            />
-                                          ) : reviewLabel ? (
-                                            <button
-                                              type="button"
+                                          {/* Review date — only shown when a date exists; editing is in the expanded row */}
+                                          {reviewLabel && (
+                                            <span
                                               className="text-xs whitespace-nowrap"
                                               style={{ color: "var(--muted-foreground)" }}
-                                              title="Click to edit review date"
-                                              onClick={(e) => { e.stopPropagation(); setReviewDateEditing(cat.timingId); }}
                                             >
                                               Review: {reviewLabel}
-                                            </button>
-                                          ) : (
-                                            <button
-                                              type="button"
-                                              className="text-xs whitespace-nowrap opacity-40 hover:opacity-70"
-                                              style={{ color: "var(--muted-foreground)" }}
-                                              onClick={(e) => { e.stopPropagation(); setReviewDateEditing(cat.timingId); }}
-                                            >
-                                              + Review date
-                                            </button>
+                                            </span>
                                           )}
                                         </span>
                                       );
@@ -1077,6 +1054,12 @@ export default function AllBrandsBoardPage() {
                                       <div className="flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
                                         {row.categories.map((cat) => {
                                           const status = statusOverrides[cat.timingId] ?? cat.accountStatus;
+                                          const reviewDateVal =
+                                            cat.timingId in reviewDateOverrides
+                                              ? reviewDateOverrides[cat.timingId]
+                                              : cat.categoryReviewDate;
+                                          const reviewLabel = formatReviewDate(reviewDateVal ?? null);
+                                          const isEditingDate = reviewDateEditing === cat.timingId;
                                           return (
                                             <div key={cat.timingId} className="flex flex-col gap-0.5">
                                               {cat.universal_category && (
@@ -1100,6 +1083,34 @@ export default function AllBrandsBoardPage() {
                                                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                                                 ))}
                                               </select>
+                                              {/* Review date — always editable in expanded view */}
+                                              <div className="mt-0.5">
+                                                {isEditingDate ? (
+                                                  <input
+                                                    type="date"
+                                                    autoFocus
+                                                    defaultValue={reviewDateVal ?? ""}
+                                                    className="text-xs rounded px-1 py-0.5 focus:outline-none focus:ring-1"
+                                                    style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                    onBlur={(e) => { e.stopPropagation(); saveReviewDate(cat.timingId, e.target.value); }}
+                                                    onKeyDown={(e) => {
+                                                      e.stopPropagation();
+                                                      if (e.key === "Enter") saveReviewDate(cat.timingId, (e.target as HTMLInputElement).value);
+                                                      if (e.key === "Escape") setReviewDateEditing(null);
+                                                    }}
+                                                  />
+                                                ) : (
+                                                  <button
+                                                    type="button"
+                                                    className="text-xs whitespace-nowrap"
+                                                    style={{ color: "var(--muted-foreground)", opacity: reviewLabel ? 1 : 0.5 }}
+                                                    onClick={(e) => { e.stopPropagation(); setReviewDateEditing(cat.timingId); }}
+                                                  >
+                                                    {reviewLabel ? `Review: ${reviewLabel}` : "+ Review date"}
+                                                  </button>
+                                                )}
+                                              </div>
                                             </div>
                                           );
                                         })}
