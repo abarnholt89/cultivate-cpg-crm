@@ -499,7 +499,11 @@ function PromotionsInner() {
 
   const distributorOiKeys = useMemo(() => {
     const rows = promotions.filter(isDistributorRow);
-    return new Set(rows.map((r) => [r.brand_id, r.distributor || "", r.promo_year, r.promo_month].join("||")));
+    return new Set(rows.map((r) => [
+      (r.brand_name || "").toLowerCase(),
+      r.promo_year,
+      r.promo_month,
+    ].join("||")));
   }, [promotions]);
 
   // ── Calendar data (Feature 3) ──────────────────────────────────────────────
@@ -689,7 +693,7 @@ function PromotionsInner() {
                   {visibleBrandGroups.map((brandGroup) => {
                     const brandPromoCount = brandGroup.promoGroups.length;
                     const brandSkuCount = uniqueSkuCount(brandGroup.promoGroups.flatMap((pg) => pg.rows));
-                    const hasAnyOiLoaded = brandGroup.promoGroups.some((pg) => pg.rows.some((item) => distributorOiKeys.has([item.brand_id, item.distributor || "", item.promo_year, item.promo_month].join("||"))));
+                    const hasAnyOiLoaded = brandGroup.promoGroups.some((pg) => pg.rows.some((item) => distributorOiKeys.has([(item.brand_name || "").toLowerCase(), item.promo_year, item.promo_month].join("||"))));
                     return (
                       <div key={brandGroup.key} className="border rounded bg-white">
                         <button type="button" className="w-full text-left p-3 hover:bg-gray-50" onClick={(e) => { e.stopPropagation(); setExpandedBrands((prev) => ({ ...prev, [brandGroup.key]: !prev[brandGroup.key] })); }}>
@@ -705,7 +709,7 @@ function PromotionsInner() {
                           <div className="px-3 pb-3 space-y-2">
                             {brandGroup.promoGroups.map((promoGroup) => {
                               const promoSkuCount = uniqueSkuCount(promoGroup.rows);
-                              const hasOiLoaded = promoGroup.rows.some((item) => distributorOiKeys.has([item.brand_id, item.distributor || "", item.promo_year, item.promo_month].join("||")));
+                              const hasOiLoaded = promoGroup.rows.some((item) => distributorOiKeys.has([(item.brand_name || "").toLowerCase(), item.promo_year, item.promo_month].join("||")));
                               return (
                                 <div key={promoGroup.key} className="border rounded bg-gray-50">
                                   <button type="button" className="w-full text-left p-3 hover:bg-gray-100" onClick={(e) => { e.stopPropagation(); setExpandedPromoGroups((prev) => ({ ...prev, [promoGroup.key]: !prev[promoGroup.key] })); }}>
