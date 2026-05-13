@@ -426,36 +426,8 @@ export default function AllBrandsBoardPage() {
     }
     setLoadingBrand((s) => ({ ...s, [brandId]: true }));
 
-    // Always fetch brand_category_access fresh so the board reflects current
-    // category assignments even if they changed since the page loaded.
-    const { data: catAccessData, error: catAccessErr } = await supabase
-      .from("brand_category_access")
-      .select("universal_category")
-      .eq("brand_id", brandId);
-
-    // Only apply the category filter when the fetch succeeded and returned rows.
-    // If there are no access rows (fetch error or brand truly has none), skip filtering
-    // rather than silently showing everything (which was the old silent-fallback bug).
-    const validCategories: Set<string> | null =
-      !catAccessErr && catAccessData && catAccessData.length > 0
-        ? new Set(
-            (catAccessData as { universal_category: string }[]).map((c) =>
-              (c.universal_category ?? "").toLowerCase().trim()
-            )
-          )
-        : null;
-
     const allTiming = timingByBrand[brandId] ?? [];
-    // Filter timing rows to only those whose category is currently in brand_category_access.
-    // Rows with no universal_category (primary/null) are always kept.
-    const timing =
-      validCategories !== null
-        ? allTiming.filter(
-            (t) =>
-              !t.universal_category ||
-              validCategories.has((t.universal_category ?? "").toLowerCase().trim())
-          )
-        : allTiming;
+    const timing = allTiming;
 
     const retailerIds = [...new Set(timing.map((t) => t.retailer_id))];
 
@@ -465,15 +437,14 @@ export default function AllBrandsBoardPage() {
       return;
     }
 
-    // Brand's canonical category list (needed for calendar lookup)
-    const brandCats: string[] = catAccessData
-      ? (catAccessData as { universal_category: string }[]).map((c) => c.universal_category)
-      : [];
+    // Derive brand categories from already-loaded timing rows (avoids RLS issues with brand_category_access)
+    const brandCats: string[] = [
+      ...new Set(timing.map((t) => t.universal_category).filter((c): c is string => !!c)),
+    ];
 
     const calendarOrFilter = brandCats.map((c) => `universal_category.ilike.${c}`).join(",");
     console.log("[calendar] brandId:", brandId);
-    console.log("[calendar] catAccessData:", catAccessData, "catAccessErr:", catAccessErr);
-    console.log("[calendar] brandCats:", brandCats);
+    console.log("[calendar] brandCats (from timing rows):", brandCats);
     console.log("[calendar] or filter string:", calendarOrFilter || "(empty — skipping query)");
 
     const [retailerRes, clientMsgsRes, internalMsgsRes, calendarRes] = await Promise.all([
