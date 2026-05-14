@@ -1209,6 +1209,16 @@ export default function AllBrandsBoardPage() {
 
                                       {/* Category review dates */}
                                       {(() => {
+                                        console.log(
+                                          `[board] expanded row ${brand.id}__${row.retailerId}`,
+                                          "categories:", row.categories.map((c) => ({
+                                            universal_category: c.universal_category,
+                                            calendarReviewDate: c.calendarReviewDate,
+                                            calendarResetDate: c.calendarResetDate,
+                                            manualReviewDate: c.manualReviewDate,
+                                            manualResetDate: c.manualResetDate,
+                                          }))
+                                        );
                                         const catsWithCategory = row.categories.filter((cat) => cat.universal_category);
                                         if (catsWithCategory.length === 0) return null;
                                         return (
