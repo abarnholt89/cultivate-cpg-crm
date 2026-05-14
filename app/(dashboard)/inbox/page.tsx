@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -100,6 +100,16 @@ type ClientMessageInboxRow = {
   created_at: string;
 };
 
+type SubmissionRow = {
+  id: string;
+  brand_id: string;
+  retailer_id: string;
+  submitted_date: string;
+  notes: string | null;
+  brand: { name: string } | null;
+  retailer: { name: string; banner: string | null; rep_owner_user_id: string | null } | null;
+};
+
 type ActivityRow = {
   user_id: string;
   brand_id: string | null;
@@ -182,6 +192,13 @@ function prettyDateTime(value: string | null) {
   return d.toLocaleString();
 }
 
+function prettyDateLong(value: string | null) {
+  if (!value) return "—";
+  const d = new Date(value + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
 export default function RepInboxPage() {
   const router = useRouter();
 
@@ -214,7 +231,16 @@ export default function RepInboxPage() {
     stalled: 0,
     upcoming: 0,
     reminders: 0,
+    submissionsThisMonth: 0,
   });
+
+  // Submissions section
+  const ownedRetailerIdsRef = useRef<string[]>([]);
+  const [submissionRows, setSubmissionRows] = useState<SubmissionRow[]>([]);
+  const [submissionsRepFilter, setSubmissionsRepFilter] = useState("");
+  const [submissionsDateRange, setSubmissionsDateRange] = useState<"this_month" | "last_30" | "last_90">("last_30");
+  const [submissionsVisible, setSubmissionsVisible] = useState(25);
+  const [submissionsLoading, setSubmissionsLoading] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -259,6 +285,7 @@ export default function RepInboxPage() {
       const monthStart = new Date();
       monthStart.setDate(1);
       monthStart.setHours(0, 0, 0, 0);
+      const monthStartISO = `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, "0")}-01`;
 
       let ownedRetailerIds: string[] = [];
 
@@ -278,6 +305,7 @@ export default function RepInboxPage() {
   }
 
   ownedRetailerIds = (ownedRetailers ?? []).map((r) => r.id);
+  ownedRetailerIdsRef.current = ownedRetailerIds;
 }
 
 const followUpCountPromise =
@@ -465,7 +493,20 @@ if (clientMessagesResult.error) {
 
       const calendarBrandIds = [...new Set(calendarRows.map((r) => r.brand_id))];
 
-      const [brandsResult, retailersResult, repProfilesResult, dismissalsResult] = await Promise.all([
+      const subMonthQueryPromise = (() => {
+        if (nextRole === "rep" && ownedRetailerIds.length === 0) {
+          return Promise.resolve({ data: [] as { brand_id: string; retailer_id: string }[], error: null });
+        }
+        const q = supabase
+          .from("brand_retailer_timing")
+          .select("brand_id,retailer_id")
+          .not("submitted_date", "is", null)
+          .gte("submitted_date", monthStartISO)
+          .lte("submitted_date", today);
+        return nextRole === "rep" ? q.in("retailer_id", ownedRetailerIds) : q;
+      })();
+
+      const [brandsResult, retailersResult, repProfilesResult, dismissalsResult, subMonthResult] = await Promise.all([
         brandIds.length
           ? supabase.from("brands").select("id,name").in("id", brandIds)
           : Promise.resolve({ data: [], error: null }),
@@ -481,6 +522,7 @@ if (clientMessagesResult.error) {
               .select("retailer_name,universal_category,retailer_category_review_name")
               .in("brand_id", calendarBrandIds)
           : Promise.resolve({ data: [], error: null }),
+        subMonthQueryPromise,
       ]);
 
       if (brandsResult.error) {
@@ -684,11 +726,15 @@ if (clientMessagesResult.error) {
       upcomingItems.sort((a, b) => a.milestone_date.localeCompare(b.milestone_date));
       setUpcoming(upcomingItems);
 
+      const subMonthData = (subMonthResult.data ?? []) as { brand_id: string; retailer_id: string }[];
+      const subMonthPairs = new Set(subMonthData.map((r) => `${r.brand_id}__${r.retailer_id}`));
+
       setPulse({
         followUps,
         stalled: agingRows.length,
         upcoming: upcomingItems.length,
         reminders: taskRows.length,
+        submissionsThisMonth: subMonthPairs.size,
       });
 
       setLoading(false);
@@ -801,6 +847,75 @@ if (clientMessagesResult.error) {
     }
   }
 
+  async function fetchAndSetSubmissions(
+    currentRole: Role,
+    dateRange: "this_month" | "last_30" | "last_90"
+  ) {
+    const currentOwnedRetailerIds = ownedRetailerIdsRef.current;
+    setSubmissionsLoading(true);
+    const today = todayISO();
+    const now = new Date();
+    let startDate: string;
+    if (dateRange === "this_month") {
+      startDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    } else if (dateRange === "last_30") {
+      startDate = addDaysISO(today, -30);
+    } else {
+      startDate = addDaysISO(today, -90);
+    }
+
+    if (currentRole === "rep" && currentOwnedRetailerIds.length === 0) {
+      setSubmissionRows([]);
+      setSubmissionsLoading(false);
+      return;
+    }
+
+    const baseQuery = supabase
+      .from("brand_retailer_timing")
+      .select("id,brand_id,retailer_id,submitted_date,notes,brand:brands(name),retailer:retailers(name,banner,rep_owner_user_id)")
+      .not("submitted_date", "is", null)
+      .gte("submitted_date", startDate)
+      .lte("submitted_date", today)
+      .order("submitted_date", { ascending: false })
+      .limit(100);
+
+    const { data, error } = await (
+      currentRole === "rep"
+        ? baseQuery.in("retailer_id", currentOwnedRetailerIds)
+        : baseQuery
+    );
+
+    setSubmissionsLoading(false);
+    if (error || !data) return;
+
+    // Deduplicate by brand_id + retailer_id, keeping most recent submitted_date
+    const byKey = new Map<string, SubmissionRow>();
+    (data as unknown as SubmissionRow[]).forEach((row) => {
+      const k = `${row.brand_id}__${row.retailer_id}`;
+      if (!byKey.has(k) || row.submitted_date > byKey.get(k)!.submitted_date) {
+        byKey.set(k, row);
+      }
+    });
+    setSubmissionRows(
+      [...byKey.values()].sort((a, b) => b.submitted_date.localeCompare(a.submitted_date))
+    );
+    setSubmissionsVisible(25);
+  }
+
+  // Re-fetch submissions when date range changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!authorized || role === null) return;
+    fetchAndSetSubmissions(role, submissionsDateRange);
+  }, [authorized, submissionsDateRange]);
+
+  const filteredSubmissions = useMemo(() => {
+    if (!submissionsRepFilter) return submissionRows;
+    return submissionRows.filter(
+      (row) => row.retailer?.rep_owner_user_id === submissionsRepFilter
+    );
+  }, [submissionRows, submissionsRepFilter]);
+
   const counts = useMemo(
     () => ({
       messages: clientMessages.filter((m) => !doneMessageIds.has(m.id)).length,
@@ -838,11 +953,12 @@ if (clientMessagesResult.error) {
           Rep Performance Pulse
         </div>
 
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
           <PulseMetric label="Needs Follow Up" value={pulse.followUps} />
           <PulseMetric label="Stalled Accounts" value={pulse.stalled} />
           <PulseMetric label="Review Activity" value={pulse.upcoming} />
           <PulseMetric label="Open Tasks" value={pulse.reminders} />
+          <PulseMetric label="Submissions This Month" value={pulse.submissionsThisMonth} />
         </div>
       </div>
 
@@ -1149,43 +1265,89 @@ if (clientMessagesResult.error) {
           )}
         </section>
 
-        {role === "admin" ? (
-          <section className="space-y-4 rounded-xl border border-border bg-card p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-foreground">
-                Team Activity This Month
-              </h2>
-            </div>
-
-            {leaderboard.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No team activity recorded yet this month.
-              </p>
-            ) : (
-              <div className="space-y-3">
-                {leaderboard.map((row, index) => (
-                  <div
-                    key={row.user_id}
-                    className="flex items-center justify-between gap-4 rounded-lg border border-border bg-card p-3"
-                  >
-                    <div>
-                      <div className="font-medium text-foreground">
-                        {index + 1}. {row.full_name}
-                      </div>
-                      <div className="mt-1 text-sm text-muted-foreground">
-                        {row.accountsTouched} accounts touched
-                      </div>
-                    </div>
-
-                    <div className="text-sm text-foreground/85">
-                      {row.activityCount} activities
-                    </div>
-                  </div>
+        <section className="space-y-4 rounded-xl border border-border bg-card p-4">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <h2 className="text-lg font-semibold text-foreground mr-auto">Submissions</h2>
+            {role === "admin" && repProfiles.length > 0 && (
+              <select
+                value={submissionsRepFilter}
+                onChange={(e) => setSubmissionsRepFilter(e.target.value)}
+                className="text-sm border border-border rounded px-2 py-1 bg-card text-foreground"
+              >
+                <option value="">All Reps</option>
+                {repProfiles.map((rep) => (
+                  <option key={rep.id} value={rep.id}>{rep.full_name}</option>
                 ))}
-              </div>
+              </select>
             )}
-          </section>
-        ) : null}
+            <div className="flex gap-1">
+              {(["this_month", "last_30", "last_90"] as const).map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setSubmissionsDateRange(r)}
+                  className="text-xs px-2.5 py-1 rounded-full border transition-colors"
+                  style={{
+                    background: submissionsDateRange === r ? "var(--foreground)" : "var(--card)",
+                    color: submissionsDateRange === r ? "var(--background)" : "var(--muted-foreground)",
+                    borderColor: submissionsDateRange === r ? "var(--foreground)" : "var(--border)",
+                  }}
+                >
+                  {r === "this_month" ? "This Month" : r === "last_30" ? "Last 30 Days" : "Last 90 Days"}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {submissionsLoading ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : filteredSubmissions.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No submissions in this period.</p>
+          ) : (
+            <>
+              <div className="space-y-3">
+                {filteredSubmissions.slice(0, submissionsVisible).map((row) => {
+                  const repName = row.retailer?.rep_owner_user_id
+                    ? (repProfiles.find((p) => p.id === row.retailer?.rep_owner_user_id)?.full_name ?? null)
+                    : null;
+                  const headline = row.retailer?.banner?.trim()
+                    ? row.retailer.banner
+                    : row.retailer?.name ?? "Retailer";
+                  return (
+                    <Link
+                      key={`${row.brand_id}__${row.retailer_id}`}
+                      href={`/brands/${row.brand_id}/retailers#retailer-${row.retailer_id}`}
+                      className="block rounded-lg border border-border bg-card p-3 transition-colors hover:bg-accent"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <span className="font-medium text-foreground">{row.brand?.name ?? "Brand"}</span>
+                          <span className="text-muted-foreground"> · {headline}</span>
+                        </div>
+                        {repName && (
+                          <span className="text-xs text-muted-foreground shrink-0">{repName}</span>
+                        )}
+                      </div>
+                      <div className="mt-1 text-sm font-medium" style={{ color: "#0F6E56" }}>
+                        Submitted {prettyDateLong(row.submitted_date)}
+                      </div>
+                      {row.notes && (
+                        <div className="mt-1 text-xs text-muted-foreground">{row.notes}</div>
+                      )}
+                    </Link>
+                  );
+                })}
+              </div>
+              {filteredSubmissions.length > submissionsVisible && (
+                <button
+                  onClick={() => setSubmissionsVisible((v) => v + 25)}
+                  className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Load more ({filteredSubmissions.length - submissionsVisible} remaining)
+                </button>
+              )}
+            </>
+          )}
+        </section>
       </div>
     </div>
   );
