@@ -454,7 +454,18 @@ export default function BrandDashboardPage() {
       return 2;                                            // moderate
     }
 
-    return [...pipelineRows]
+    // Deduplicate by retailer_id — brand_retailer_timing has one row per
+    // (brand, retailer, category), so retailers with multiple categories appear
+    // more than once. Keep the row with the latest activity signal per retailer.
+    const byRetailer = new Map<string, PipelineRow>();
+    for (const row of pipelineRows) {
+      const existing = byRetailer.get(row.retailer_id);
+      if (!existing || getLatest(row) > getLatest(existing)) {
+        byRetailer.set(row.retailer_id, row);
+      }
+    }
+
+    return [...byRetailer.values()]
       .filter((r) => r.submitted_date || r.notes || messagesByRetailer[r.retailer_id])
       .sort((a, b) => {
         const pa = sortPriority(a);
