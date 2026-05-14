@@ -45,10 +45,21 @@ type Message = {
   created_at: string;
 };
 
+type CatDateEntry = {
+  key: string;           // "${retailerId}__${category.toLowerCase()}" — used for state keying
+  category: string;      // display name
+  calendarReviewDate: string | null;
+  calendarResetDate: string | null;
+  manualTimingId: string | null;
+  manualReviewDate: string | null;
+  manualResetDate: string | null;
+};
+
 type BoardRetailerRow = {
   retailerId: string;
   banner: string;
   categories: CategoryEntry[];   // sorted: null/primary first, then alpha
+  catDateEntries: CatDateEntry[];
   latestClientNote: string | null;
   latestClientNoteDate: string | null;
   latestInternalNote: string | null;
@@ -466,14 +477,24 @@ export default function AllBrandsBoardPage() {
       return;
     }
 
-    // Derive brand categories from already-loaded timing rows (avoids RLS issues with brand_category_access)
+    // Derive brand categories from already-loaded timing rows
     const brandCats: string[] = [
       ...new Set(timing.map((t) => t.universal_category).filter((c): c is string => !!c)),
     ];
 
-    const calendarOrFilter = brandCats.map((c) => `universal_category.ilike.${c}`).join(",");
+    // Fetch brand_category_access for fallback categories (may return [] due to RLS — handled gracefully)
+    const { data: brandCatAccessData } = await supabase
+      .from("brand_category_access")
+      .select("universal_category")
+      .eq("brand_id", brandId);
+    const accessCats = ((brandCatAccessData ?? []) as { universal_category: string }[])
+      .map((r) => r.universal_category)
+      .filter(Boolean);
+
+    const effectiveBrandCats: string[] = [...new Set([...brandCats, ...accessCats])];
+    const calendarOrFilter = effectiveBrandCats.map((c) => `universal_category.ilike.${c}`).join(",");
     console.log("[calendar] brandId:", brandId);
-    console.log("[calendar] brandCats (from timing rows):", brandCats);
+    console.log("[calendar] effectiveBrandCats:", effectiveBrandCats, "(timing:", brandCats, "+ access:", accessCats, ")");
     console.log("[calendar] or filter string:", calendarOrFilter || "(empty — skipping query)");
 
     const [retailerRes, clientMsgsRes, internalMsgsRes, calendarRes, catTimingRes] = await Promise.all([
@@ -490,7 +511,7 @@ export default function AllBrandsBoardPage() {
         .eq("brand_id", brandId)
         .eq("visibility", "internal")
         .order("created_at", { ascending: false }),
-      brandCats.length > 0
+      effectiveBrandCats.length > 0
         ? supabase
             .from("category_review_calendar")
             .select("retailer_name, universal_category, review_date, reset_date")
@@ -614,6 +635,38 @@ export default function AllBrandsBoardPage() {
           return (a.universal_category ?? "").localeCompare(b.universal_category ?? "");
         });
 
+        // Build catDateEntries from effectiveBrandCats (timing rows + brand_category_access)
+        // Union with categories already in catTimingMap for this retailer
+        const catTimingKeysForRetailer = Object.keys(catTimingMap[retailerId] ?? {});
+        const timingRowCatKeys = sortedTiming
+          .filter((t) => t.universal_category)
+          .map((t) => (t.universal_category as string).toLowerCase());
+        const effectiveCatKeys = [
+          ...new Set([
+            ...timingRowCatKeys,
+            ...catTimingKeysForRetailer,
+            ...effectiveBrandCats.map((c) => c.toLowerCase()),
+          ]),
+        ].sort();
+
+        const catDateEntries: CatDateEntry[] = effectiveCatKeys.map((catLower) => {
+          const displayCat =
+            effectiveBrandCats.find((c) => c.toLowerCase() === catLower) ??
+            sortedTiming.find((t) => t.universal_category?.toLowerCase() === catLower)?.universal_category ??
+            catLower;
+          const cal = lookupCalendar(retailerName, banner, displayCat);
+          const manual = catTimingMap[retailerId]?.[catLower] ?? null;
+          return {
+            key: `${retailerId}__${catLower}`,
+            category: displayCat,
+            calendarReviewDate: cal?.reviewDate ?? null,
+            calendarResetDate: cal?.resetDate ?? null,
+            manualTimingId: manual?.id ?? null,
+            manualReviewDate: manual?.reviewDate ?? null,
+            manualResetDate: manual?.resetDate ?? null,
+          };
+        });
+
         return {
           retailerId,
           banner,
@@ -636,6 +689,7 @@ export default function AllBrandsBoardPage() {
               manualResetDate: manual?.resetDate ?? null,
             };
           }),
+          catDateEntries,
           latestClientNote: latestClient?.body ?? null,
           latestClientNoteDate: latestClient?.created_at ?? null,
           latestInternalNote: latestInternal?.body ?? null,
@@ -787,14 +841,14 @@ export default function AllBrandsBoardPage() {
   // ── Category timing override (brand_retailer_category_timing) ───────────
 
   async function saveCatTiming(
-    timingId: string,
+    key: string,  // CatDateEntry.key — used for state tracking
     brandId: string,
     retailerId: string,
     category: string,
     reviewDate: string,
     resetDate: string
   ) {
-    setCatTimingSaving((s) => ({ ...s, [timingId]: true }));
+    setCatTimingSaving((s) => ({ ...s, [key]: true }));
     const { error } = await supabase
       .from("brand_retailer_category_timing")
       .upsert(
@@ -807,17 +861,17 @@ export default function AllBrandsBoardPage() {
         },
         { onConflict: "brand_id,retailer_id,category" }
       );
-    setCatTimingSaving((s) => ({ ...s, [timingId]: false }));
+    setCatTimingSaving((s) => ({ ...s, [key]: false }));
     if (!error) {
       setBrandRows((prev) => {
         const updated: typeof prev = {};
         for (const bid of Object.keys(prev)) {
           updated[bid] = prev[bid].map((row) => ({
             ...row,
-            categories: row.categories.map((cat) => {
-              if (cat.timingId !== timingId) return cat;
+            catDateEntries: row.catDateEntries.map((entry) => {
+              if (entry.key !== key) return entry;
               return {
-                ...cat,
+                ...entry,
                 manualReviewDate: reviewDate || null,
                 manualResetDate: resetDate || null,
               };
@@ -826,8 +880,8 @@ export default function AllBrandsBoardPage() {
         }
         return updated;
       });
-      setCatTimingOverrideActive((s) => { const n = { ...s }; delete n[timingId]; return n; });
-      setCatTimingDateEdits((s) => { const n = { ...s }; delete n[timingId]; return n; });
+      setCatTimingOverrideActive((s) => { const n = { ...s }; delete n[key]; return n; });
+      setCatTimingDateEdits((s) => { const n = { ...s }; delete n[key]; return n; });
     } else {
       if (errorToastTimer.current) clearTimeout(errorToastTimer.current);
       setErrorToast("Failed to save review date.");
@@ -1235,117 +1289,121 @@ export default function AllBrandsBoardPage() {
                                       </div>
 
                                       {/* Category review dates */}
-                                      {(() => {
-                                        console.log(
-                                          `[board] expanded row ${brand.id}__${row.retailerId}`,
-                                          "categories:", row.categories.map((c) => ({
-                                            universal_category: c.universal_category,
-                                            calendarReviewDate: c.calendarReviewDate,
-                                            calendarResetDate: c.calendarResetDate,
-                                            manualReviewDate: c.manualReviewDate,
-                                            manualResetDate: c.manualResetDate,
-                                          }))
-                                        );
-                                        const catsWithCategory = row.categories.filter((cat) => cat.universal_category);
-                                        if (catsWithCategory.length === 0) return null;
-                                        return (
-                                          <div onClick={(e) => e.stopPropagation()}>
-                                            <p className="text-xs font-medium mb-1.5" style={{ color: "var(--muted-foreground)" }}>
-                                              Category Review Dates
-                                            </p>
-                                            <div className="space-y-2">
-                                              {catsWithCategory.map((cat) => {
-                                                const isOverrideActive =
-                                                  catTimingOverrideActive[cat.timingId] ||
-                                                  !!cat.manualReviewDate ||
-                                                  !!cat.manualResetDate;
-                                                const edits = catTimingDateEdits[cat.timingId];
-                                                const reviewVal = edits !== undefined ? edits.reviewDate : (cat.manualReviewDate ?? "");
-                                                const resetVal = edits !== undefined ? edits.resetDate : (cat.manualResetDate ?? "");
-                                                const saving = catTimingSaving[cat.timingId];
-                                                const canSave = !saving && (edits !== undefined || !!cat.manualReviewDate || !!cat.manualResetDate);
-
+                                      {row.catDateEntries.length > 0 && (
+                                        <div onClick={(e) => e.stopPropagation()}>
+                                          <p className="text-xs font-medium mb-1.5" style={{ color: "var(--muted-foreground)" }}>
+                                            Category Review Dates
+                                          </p>
+                                          <div className="space-y-2">
+                                            {row.catDateEntries.map((entry) => {
+                                              if (role === "client") {
+                                                // Read-only display for clients
+                                                const reviewDate = entry.manualReviewDate ?? entry.calendarReviewDate;
+                                                const resetDate = entry.manualResetDate ?? entry.calendarResetDate;
                                                 return (
-                                                  <div key={cat.timingId} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                                  <div key={entry.key} className="flex flex-wrap items-center gap-x-3 gap-y-1">
                                                     <span className="text-xs font-medium shrink-0" style={{ color: "var(--muted-foreground)", minWidth: "6rem" }}>
-                                                      {cat.universal_category}
+                                                      {entry.category}
                                                     </span>
-
-                                                    {!isOverrideActive && cat.calendarReviewDate ? (
-                                                      // Universe date — read-only with Override link
-                                                      <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>
-                                                        {formatReviewDate(cat.calendarReviewDate)}
-                                                        {cat.calendarResetDate && ` → Reset ${formatReviewDate(cat.calendarResetDate)}`}
-                                                        <button
-                                                          className="ml-2 underline text-xs"
-                                                          style={{ color: "var(--muted-foreground)" }}
-                                                          onClick={() => {
-                                                            setCatTimingOverrideActive((s) => ({ ...s, [cat.timingId]: true }));
-                                                            setCatTimingDateEdits((s) => ({
-                                                              ...s,
-                                                              [cat.timingId]: {
-                                                                reviewDate: cat.manualReviewDate ?? "",
-                                                                resetDate: cat.manualResetDate ?? "",
-                                                              },
-                                                            }));
-                                                          }}
-                                                        >
-                                                          Override
-                                                        </button>
-                                                      </span>
-                                                    ) : (
-                                                      // Editable inputs (no universe date, or override active, or manual date exists)
-                                                      <>
-                                                        <div className="flex items-center gap-1">
-                                                          <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>Review</span>
-                                                          <input
-                                                            type="date"
-                                                            value={reviewVal}
-                                                            disabled={saving}
-                                                            className="text-xs rounded px-1 py-0.5 focus:outline-none focus:ring-1"
-                                                            style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)", opacity: saving ? 0.5 : 1 }}
-                                                            onChange={(e) => setCatTimingDateEdits((s) => ({
-                                                              ...s,
-                                                              [cat.timingId]: { reviewDate: e.target.value, resetDate: s[cat.timingId]?.resetDate ?? cat.manualResetDate ?? "" },
-                                                            }))}
-                                                          />
-                                                        </div>
-                                                        <div className="flex items-center gap-1">
-                                                          <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>Reset</span>
-                                                          <input
-                                                            type="date"
-                                                            value={resetVal}
-                                                            disabled={saving}
-                                                            className="text-xs rounded px-1 py-0.5 focus:outline-none focus:ring-1"
-                                                            style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)", opacity: saving ? 0.5 : 1 }}
-                                                            onChange={(e) => setCatTimingDateEdits((s) => ({
-                                                              ...s,
-                                                              [cat.timingId]: { reviewDate: s[cat.timingId]?.reviewDate ?? cat.manualReviewDate ?? "", resetDate: e.target.value },
-                                                            }))}
-                                                          />
-                                                        </div>
-                                                        <button
-                                                          disabled={!canSave}
-                                                          onClick={() => saveCatTiming(cat.timingId, brand.id, row.retailerId, cat.universal_category!, reviewVal, resetVal)}
-                                                          className="text-xs px-2 py-0.5 rounded"
-                                                          style={{ background: "var(--foreground)", color: "var(--background)", opacity: canSave ? 1 : 0.4, cursor: canSave ? "pointer" : "not-allowed" }}
-                                                        >
-                                                          {saving ? "Saving…" : "Save"}
-                                                        </button>
-                                                        {cat.calendarReviewDate && (
-                                                          <span className="text-xs" style={{ color: "var(--muted-foreground)", opacity: 0.6 }}>
-                                                            Universe: {formatReviewDate(cat.calendarReviewDate)}
-                                                          </span>
-                                                        )}
-                                                      </>
-                                                    )}
+                                                    <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+                                                      {formatReviewDate(reviewDate) ?? "—"}
+                                                      {resetDate && ` → Reset ${formatReviewDate(resetDate)}`}
+                                                    </span>
                                                   </div>
                                                 );
-                                              })}
-                                            </div>
+                                              }
+
+                                              // Editable for reps/admins
+                                              const isOverrideActive =
+                                                catTimingOverrideActive[entry.key] ||
+                                                !!entry.manualReviewDate ||
+                                                !!entry.manualResetDate;
+                                              const edits = catTimingDateEdits[entry.key];
+                                              const reviewVal = edits !== undefined ? edits.reviewDate : (entry.manualReviewDate ?? "");
+                                              const resetVal = edits !== undefined ? edits.resetDate : (entry.manualResetDate ?? "");
+                                              const saving = catTimingSaving[entry.key];
+                                              const canSave = !saving && (edits !== undefined || !!entry.manualReviewDate || !!entry.manualResetDate);
+
+                                              return (
+                                                <div key={entry.key} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                                  <span className="text-xs font-medium shrink-0" style={{ color: "var(--muted-foreground)", minWidth: "6rem" }}>
+                                                    {entry.category}
+                                                  </span>
+
+                                                  {!isOverrideActive && entry.calendarReviewDate ? (
+                                                    // Universe date — read-only with Override link
+                                                    <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+                                                      {formatReviewDate(entry.calendarReviewDate)}
+                                                      {entry.calendarResetDate && ` → Reset ${formatReviewDate(entry.calendarResetDate)}`}
+                                                      <button
+                                                        className="ml-2 underline text-xs"
+                                                        style={{ color: "var(--muted-foreground)" }}
+                                                        onClick={() => {
+                                                          setCatTimingOverrideActive((s) => ({ ...s, [entry.key]: true }));
+                                                          setCatTimingDateEdits((s) => ({
+                                                            ...s,
+                                                            [entry.key]: {
+                                                              reviewDate: entry.manualReviewDate ?? "",
+                                                              resetDate: entry.manualResetDate ?? "",
+                                                            },
+                                                          }));
+                                                        }}
+                                                      >
+                                                        Override
+                                                      </button>
+                                                    </span>
+                                                  ) : (
+                                                    // Editable inputs (no universe date, or override active, or manual date exists)
+                                                    <>
+                                                      <div className="flex items-center gap-1">
+                                                        <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>Review</span>
+                                                        <input
+                                                          type="date"
+                                                          value={reviewVal}
+                                                          disabled={saving}
+                                                          className="text-xs rounded px-1 py-0.5 focus:outline-none focus:ring-1"
+                                                          style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)", opacity: saving ? 0.5 : 1 }}
+                                                          onChange={(e) => setCatTimingDateEdits((s) => ({
+                                                            ...s,
+                                                            [entry.key]: { reviewDate: e.target.value, resetDate: s[entry.key]?.resetDate ?? entry.manualResetDate ?? "" },
+                                                          }))}
+                                                        />
+                                                      </div>
+                                                      <div className="flex items-center gap-1">
+                                                        <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>Reset</span>
+                                                        <input
+                                                          type="date"
+                                                          value={resetVal}
+                                                          disabled={saving}
+                                                          className="text-xs rounded px-1 py-0.5 focus:outline-none focus:ring-1"
+                                                          style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)", opacity: saving ? 0.5 : 1 }}
+                                                          onChange={(e) => setCatTimingDateEdits((s) => ({
+                                                            ...s,
+                                                            [entry.key]: { reviewDate: s[entry.key]?.reviewDate ?? entry.manualReviewDate ?? "", resetDate: e.target.value },
+                                                          }))}
+                                                        />
+                                                      </div>
+                                                      <button
+                                                        disabled={!canSave}
+                                                        onClick={() => saveCatTiming(entry.key, brand.id, row.retailerId, entry.category, reviewVal, resetVal)}
+                                                        className="text-xs px-2 py-0.5 rounded"
+                                                        style={{ background: "var(--foreground)", color: "var(--background)", opacity: canSave ? 1 : 0.4, cursor: canSave ? "pointer" : "not-allowed" }}
+                                                      >
+                                                        {saving ? "Saving…" : "Save"}
+                                                      </button>
+                                                      {entry.calendarReviewDate && (
+                                                        <span className="text-xs" style={{ color: "var(--muted-foreground)", opacity: 0.6 }}>
+                                                          Universe: {formatReviewDate(entry.calendarReviewDate)}
+                                                        </span>
+                                                      )}
+                                                    </>
+                                                  )}
+                                                </div>
+                                              );
+                                            })}
                                           </div>
-                                        );
-                                      })()}
+                                        </div>
+                                      )}
 
                                       {/* Note editor — 2-col for reps/admins, 1-col for clients */}
                                       <div className={`grid ${role !== "client" ? "grid-cols-2" : "grid-cols-1"} gap-4`}>

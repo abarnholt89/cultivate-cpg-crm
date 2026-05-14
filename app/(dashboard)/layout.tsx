@@ -17,6 +17,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const [ready, setReady] = useState(false);
   const [role, setRole] = useState<Role>(null);
+  const [clientBrandId, setClientBrandId] = useState<string | null>(null);
   const [inboxCount, setInboxCount] = useState(0);
 
   useEffect(() => {
@@ -59,6 +60,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       const nextRole = (profile?.role as Role) ?? null;
       setRole(nextRole);
+
+      if (nextRole === "client") {
+        const { data: brandUserData } = await supabase
+          .from("brand_users")
+          .select("brand_id")
+          .eq("user_id", userId)
+          .limit(1)
+          .maybeSingle();
+        if (mounted) setClientBrandId(brandUserData?.brand_id ?? null);
+      }
+
+      if (!mounted) return;
       setReady(true);
     }
 
@@ -260,16 +273,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 )}
               </span>
             </Link>
-          ) : inBrandContext && brandId ? (
-            <Link href={`/brands/${brandId}/category-review`} className={linkClass(`/brands/${brandId}/category-review`)}>
-              <span className="relative inline-block pb-1">
-                Category Review
-                {isActive(`/brands/${brandId}/category-review`) && (
-                  <span className="absolute -bottom-[17px] left-0 h-[3px] w-full rounded-full bg-primary" />
-                )}
-              </span>
-            </Link>
-          ) : null}
+          ) : (() => {
+            const catReviewHref = inBrandContext && brandId
+              ? `/brands/${brandId}/category-review`
+              : clientBrandId
+                ? `/brands/${clientBrandId}/category-review`
+                : "/brands";
+            return (
+              <Link href={catReviewHref} className={linkClass(catReviewHref)}>
+                <span className="relative inline-block pb-1">
+                  Category Review
+                  {isActive(catReviewHref) && (
+                    <span className="absolute -bottom-[17px] left-0 h-[3px] w-full rounded-full bg-primary" />
+                  )}
+                </span>
+              </Link>
+            );
+          })()}
 
           <div className="ml-auto flex items-center gap-4">
             <Link
