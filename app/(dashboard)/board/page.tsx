@@ -523,8 +523,6 @@ export default function AllBrandsBoardPage() {
         .eq("brand_id", brandId),
     ]);
 
-    console.log("[calendar] raw response — data:", calendarRes.data, "error:", calendarRes.error);
-
     if (retailerRes.error) {
       setLoadingBrand((s) => ({ ...s, [brandId]: false }));
       return;
@@ -543,24 +541,28 @@ export default function AllBrandsBoardPage() {
       if (!latestInternalMap[m.retailer_id]) latestInternalMap[m.retailer_id] = m;
     });
 
-    // Build calendarMap: retailerNameLower → categoryLower → soonest upcoming {reviewDate, resetDate}
-    // category_review_calendar.retailer_name may differ in casing/length from retailers.name
-    // (e.g. "Sprouts" vs "Sprouts Farmers Market") — we match client-side via substring.
+    // Strip everything except a-z and 0-9 for retailer name comparison.
+    // "Sprouts Farmers Market" → "sproutsfarmersmarket", "MOM'S" → "moms", "Nugget" → "nugget"
+    function normalizeStr(s: string): string {
+      return s.toLowerCase().trim().replace(/[^a-z0-9]/g, "");
+    }
+
+    // Build calendarMap: `${normCat}__${normRetailerName}` → soonest upcoming CalEntry
+    // All calendar rows for the brand's categories are fetched upfront; fuzzy retailer
+    // matching is done entirely client-side, so short names like "Nugget" match "Nugget Markets".
     const today = new Date().toISOString().split("T")[0];
     type CalEntry = { reviewDate: string | null; resetDate: string | null };
-    const calendarMap: Record<string, Record<string, CalEntry>> = {};
+    const calendarMap: Record<string, CalEntry> = {};
     ((calendarRes.data ?? []) as {
       retailer_name: string;
       universal_category: string;
       review_date: string | null;
       reset_date: string | null;
     }[]).forEach((row) => {
-      const rKey = (row.retailer_name ?? "").toLowerCase();
-      const cKey = (row.universal_category ?? "").toLowerCase();
-      if (!calendarMap[rKey]) calendarMap[rKey] = {};
+      const mapKey = `${normalizeStr(row.universal_category ?? "")}__${normalizeStr(row.retailer_name ?? "")}`;
       const incoming: CalEntry = { reviewDate: row.review_date ?? null, resetDate: row.reset_date ?? null };
-      const existing = calendarMap[rKey][cKey];
-      // Prefer soonest upcoming; fall back to latest past
+      const existing = calendarMap[mapKey];
+      // Prefer soonest upcoming date; fall back to latest past date
       const inUpcoming = incoming.reviewDate && incoming.reviewDate >= today;
       const exUpcoming = existing?.reviewDate && existing.reviewDate >= today;
       if (
@@ -568,58 +570,38 @@ export default function AllBrandsBoardPage() {
         (inUpcoming && (!exUpcoming || incoming.reviewDate! < existing.reviewDate!)) ||
         (!inUpcoming && !exUpcoming && (incoming.reviewDate ?? "") > (existing.reviewDate ?? ""))
       ) {
-        calendarMap[rKey][cKey] = incoming;
+        calendarMap[mapKey] = incoming;
       }
     });
 
-    console.log("[calendar] calendarMap after build:", JSON.stringify(calendarMap, null, 2));
-
-    // Normalize a retailer name for fuzzy matching: trim, lowercase, strip punctuation
-    function normalizeRetailerName(s: string): string {
-      return s.toLowerCase().trim().replace(/[''`.,\-]/g, "");
-    }
-
-    // Resolve calendar entry for a given retailer + category via fuzzy matching.
-    // Tries (in order) for each candidate (retailer name, then banner):
-    //   a. Exact match (normalized)
-    //   b. Calendar key is contained within the candidate ("nugget" in "nugget markets")
-    //   c. Candidate starts with the calendar key ("sprouts farmers" starts with "sprouts")
-    //   d. Calendar key starts with the candidate ("moms organic" starts with "moms")
+    // Look up a calendar entry for a board retailer + category.
+    // For each candidate name (retailer name, then banner), tries:
+    //   a. Exact normalized match
+    //   b. One normalized string contains the other
+    //      ("nugget" ⊂ "nuggetmarkets", "sprouts" ⊂ "sproutsfarmersmarket")
+    let fuzzyMatchLogged = false;
     function lookupCalendar(retailerName: string, banner: string, category: string): CalEntry | null {
-      const cKey = category.toLowerCase();
-      const rawCandidates = [retailerName, banner].filter(Boolean);
-      // Deduplicate so the same string isn't tried twice
-      const seen = new Set<string>();
-      const candidates = rawCandidates.map(normalizeRetailerName).filter((c) => {
-        if (seen.has(c)) return false;
-        seen.add(c);
-        return true;
-      });
-
-      const calKeys = Object.keys(calendarMap);
+      const nCat = normalizeStr(category);
+      const candidates = [...new Set([retailerName, banner].filter(Boolean).map(normalizeStr))];
 
       for (const candidate of candidates) {
         // a. Exact match
-        if (calendarMap[candidate]?.[cKey]) {
-          return calendarMap[candidate][cKey];
-        }
+        const exactKey = `${nCat}__${candidate}`;
+        if (calendarMap[exactKey]) return calendarMap[exactKey];
 
-        // b–d. Fuzzy: find a calendarMap key that matches via containment
-        const fuzzyKey = calKeys.find((k) => {
-          if (!k || !calendarMap[k]?.[cKey]) return false;
-          const nk = normalizeRetailerName(k);
-          // b. Calendar key contained in candidate ("nugget" in "nugget markets")
-          if (candidate.includes(nk)) return true;
-          // c. Candidate starts with calendar key ("sprouts farmers market" starts with "sprouts")
-          if (candidate.startsWith(nk)) return true;
-          // d. Calendar key starts with candidate ("moms organic market" starts with "moms")
-          if (nk.startsWith(candidate)) return true;
-          return false;
+        // b. Fuzzy: find a calendar key for this category where the retailer parts contain each other
+        const fuzzyKey = Object.keys(calendarMap).find((k) => {
+          if (!k.startsWith(`${nCat}__`)) return false;
+          const kRetailer = k.slice(nCat.length + 2);
+          return candidate.includes(kRetailer) || kRetailer.includes(candidate);
         });
 
         if (fuzzyKey) {
-          console.log(`[calendar] fuzzy match: "${retailerName}" → calendarMap key "${fuzzyKey}" (category "${category}"):`, calendarMap[fuzzyKey][cKey]);
-          return calendarMap[fuzzyKey][cKey];
+          if (!fuzzyMatchLogged) {
+            console.log(`[calendar][${brandId}] fuzzy retailer match: "${retailerName}" → key "${fuzzyKey}"`, calendarMap[fuzzyKey]);
+            fuzzyMatchLogged = true;
+          }
+          return calendarMap[fuzzyKey];
         }
       }
 
