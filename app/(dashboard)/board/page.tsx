@@ -905,11 +905,15 @@ export default function AllBrandsBoardPage() {
 
       <div>
         <h1 className="text-3xl font-bold" style={{ color: "var(--foreground)" }}>
-          All Brands Board
+          {role === "client"
+            ? (brandSummaries.length === 1 ? brandSummaries[0].name : "My Board")
+            : "All Brands Board"}
         </h1>
-        <p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>
-          Click a brand to expand · click a retailer row to add notes.
-        </p>
+        {role !== "client" && (
+          <p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>
+            Click a brand to expand · click a retailer row to add notes.
+          </p>
+        )}
       </div>
 
       {/* Filter row — hidden for client users */}
@@ -1348,7 +1352,7 @@ export default function AllBrandsBoardPage() {
                                         {/* Client-facing note */}
                                         <div className="space-y-2">
                                           <p className="text-xs font-semibold" style={{ color: "var(--foreground)" }}>
-                                            Client-facing note
+                                            {role === "client" ? "Message" : "Client-facing note"}
                                           </p>
                                           {row.latestClientNote && (
                                             <p className="text-xs rounded px-2 py-1.5 line-clamp-2" style={{ background: "var(--card)", color: "var(--muted-foreground)", border: "1px solid var(--border)" }}>
@@ -1380,7 +1384,7 @@ export default function AllBrandsBoardPage() {
                                             disabled={saving === "client" || !clientNoteText.trim()}
                                             onClick={(e) => { e.stopPropagation(); saveNote(brand.id, row.retailerId, "client"); }}
                                           >
-                                            {saving === "client" ? "Saving…" : "Save Client Note"}
+                                            {saving === "client" ? "Saving…" : role === "client" ? "Send Message" : "Save Client Note"}
                                           </button>
                                         </div>
 
