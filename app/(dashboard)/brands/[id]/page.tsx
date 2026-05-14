@@ -357,6 +357,7 @@ export default function BrandDashboardPage() {
     const today = todayISO();
     const prev30 = addDaysISO(today, -30);
     const next30 = addDaysISO(today, 30);
+    const ninetyDaysAgo = addDaysISO(today, -90);
     let upcomingReviews = 0;
     let awaitingSubmission = 0;
     let inProcess = 0;
@@ -366,11 +367,16 @@ export default function BrandDashboardPage() {
     manualTimingRows.forEach((r) => {
       if (r.category_review_date && isBetweenInclusive(r.category_review_date, prev30, next30)) upcomingReviews++;
     });
+    // Deduplicate by retailer_id for submitted accounts count
+    const submittedRetailers = new Set<string>();
     pipelineRows.forEach((r) => {
       if (isAwaitingSubmission(r.account_status)) awaitingSubmission++;
       if (isInProcess(r.account_status)) inProcess++;
+      if (r.submitted_date && r.submitted_date.slice(0, 10) >= ninetyDaysAgo) {
+        submittedRetailers.add(r.retailer_id);
+      }
     });
-    return { upcomingReviews, awaitingSubmission, inProcess };
+    return { upcomingReviews, awaitingSubmission, inProcess, submittedAccounts: submittedRetailers.size };
   }, [pipelineRows, calendarRows, manualTimingRows]);
 
   // Distinct retailers with at least one client-visible message in the last 7 days
@@ -500,6 +506,24 @@ export default function BrandDashboardPage() {
       .slice(0, 8);
   }, [promotionRows]);
 
+  const recentSubmissions = useMemo(() => {
+    const today = todayISO();
+    const ninetyDaysAgo = addDaysISO(today, -90);
+    // Deduplicate by retailer_id, keeping the most recent submitted_date per retailer
+    const byRetailer = new Map<string, PipelineRow>();
+    pipelineRows
+      .filter((r) => !!r.submitted_date && r.submitted_date.slice(0, 10) >= ninetyDaysAgo)
+      .forEach((r) => {
+        const existing = byRetailer.get(r.retailer_id);
+        if (!existing || (r.submitted_date ?? "") > (existing.submitted_date ?? "")) {
+          byRetailer.set(r.retailer_id, r);
+        }
+      });
+    return [...byRetailer.values()].sort(
+      (a, b) => (b.submitted_date ?? "").localeCompare(a.submitted_date ?? "")
+    );
+  }, [pipelineRows]);
+
   async function dismissReview(item: ReviewActivityItem) {
     if (!userId || !brandId) return;
     const key = `${item.retailer_name}||${item.universal_category}||${item.retailer_category_review_name ?? ""}`;
@@ -594,7 +618,7 @@ export default function BrandDashboardPage() {
       )}
 
       {/* ── KPI tiles ───────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
         <SummaryCard
           label="Upcoming Reviews"
           value={summary.upcomingReviews}
@@ -613,6 +637,13 @@ export default function BrandDashboardPage() {
           href={`/brands/${brandId}/retailers?filter=in_process`}
           accentColor="#86efac"
           accentFg="#14532d"
+        />
+        <SummaryCard
+          label="Submitted Accounts"
+          value={summary.submittedAccounts}
+          href={`/brands/${brandId}/retailers`}
+          accentColor="#dbeafe"
+          accentFg="#1e40af"
         />
         <SummaryCard
           label="Recent Updates"
@@ -801,6 +832,44 @@ export default function BrandDashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* ── Recent Submissions ───────────────────────────────────────────── */}
+      {recentSubmissions.length > 0 && (
+        <div className="border rounded-xl p-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Recent Submissions</h2>
+            {recentSubmissions.length > 5 && (
+              <Link href={`/brands/${brandId}/retailers`} className="text-sm underline">
+                View all
+              </Link>
+            )}
+          </div>
+          <div className="space-y-3 mt-4">
+            {recentSubmissions.slice(0, 5).map((row, index) => {
+              const retailer = retailersById[row.retailer_id];
+              const headline = retailer?.banner?.trim() ? retailer.banner : retailer?.name ?? "Retailer";
+              return (
+                <Link
+                  key={`${row.retailer_id}-${index}`}
+                  href={`/brands/${brandId}/retailers#retailer-${row.retailer_id}`}
+                  className="flex flex-col gap-0.5 rounded-lg p-3 hover:bg-gray-50 transition"
+                  style={{ border: "1px solid #e5e7eb", borderLeft: "3px solid #3b82f6" }}
+                >
+                  <div className="font-medium text-sm">{headline}</div>
+                  <div className="text-xs" style={{ color: "#6b7280" }}>
+                    Submitted {prettyDate(row.submitted_date)}
+                  </div>
+                  {row.notes && (
+                    <div className="text-xs mt-0.5" style={{ color: "#9ca3af" }}>
+                      {row.notes}
+                    </div>
+                  )}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ── Upcoming Promotions ───────────────────────────────────────────── */}
       {upcomingPromos.length > 0 && (
