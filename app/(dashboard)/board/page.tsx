@@ -23,9 +23,13 @@ type CategoryEntry = {
   accountStatus: string;
   universal_category: string | null;
   submittedDate: string | null;
-  // Read-only dates from category_review_calendar (not editable on the board)
+  // Universe dates from category_review_calendar (read-only unless overridden)
   calendarReviewDate: string | null;
   calendarResetDate: string | null;
+  // Rep-specific dates from brand_retailer_category_timing (override the universe dates)
+  manualTimingId: string | null;
+  manualReviewDate: string | null;
+  manualResetDate: string | null;
 };
 
 type Retailer = {
@@ -224,6 +228,10 @@ export default function AllBrandsBoardPage() {
   // Inline status editing — no intermediate edit-mode; select is always visible
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
   const [statusSaving, setStatusSaving] = useState<Record<string, boolean>>({});
+  // brand_retailer_category_timing inline editor (keyed by brand_retailer_timing.id)
+  const [catTimingOverrideActive, setCatTimingOverrideActive] = useState<Record<string, boolean>>({});
+  const [catTimingDateEdits, setCatTimingDateEdits] = useState<Record<string, { reviewDate: string; resetDate: string }>>({});
+  const [catTimingSaving, setCatTimingSaving] = useState<Record<string, boolean>>({});
 
 
   const [errorToast, setErrorToast] = useState<string | null>(null);
@@ -447,7 +455,7 @@ export default function AllBrandsBoardPage() {
     console.log("[calendar] brandCats (from timing rows):", brandCats);
     console.log("[calendar] or filter string:", calendarOrFilter || "(empty — skipping query)");
 
-    const [retailerRes, clientMsgsRes, internalMsgsRes, calendarRes] = await Promise.all([
+    const [retailerRes, clientMsgsRes, internalMsgsRes, calendarRes, catTimingRes] = await Promise.all([
       supabase.from("retailers").select("id, name, banner").in("id", retailerIds),
       supabase
         .from("brand_retailer_messages")
@@ -467,6 +475,10 @@ export default function AllBrandsBoardPage() {
             .select("retailer_name, universal_category, review_date, reset_date")
             .or(calendarOrFilter)
         : Promise.resolve({ data: [], error: null }),
+      supabase
+        .from("brand_retailer_category_timing")
+        .select("id, retailer_id, category, category_review_date, reset_date")
+        .eq("brand_id", brandId),
     ]);
 
     console.log("[calendar] raw response — data:", calendarRes.data, "error:", calendarRes.error);
@@ -544,6 +556,21 @@ export default function AllBrandsBoardPage() {
       return null;
     }
 
+    // Build catTimingMap: retailer_id → category_lower → manual timing entry
+    type CatTimingEntry = { id: string; reviewDate: string | null; resetDate: string | null };
+    const catTimingMap: Record<string, Record<string, CatTimingEntry>> = {};
+    ((catTimingRes.data ?? []) as {
+      id: string; retailer_id: string; category: string;
+      category_review_date: string | null; reset_date: string | null;
+    }[]).forEach((row) => {
+      if (!catTimingMap[row.retailer_id]) catTimingMap[row.retailer_id] = {};
+      catTimingMap[row.retailer_id][(row.category ?? "").toLowerCase()] = {
+        id: row.id,
+        reviewDate: row.category_review_date ?? null,
+        resetDate: row.reset_date ?? null,
+      };
+    });
+
     // Group timing rows by retailer_id — one BoardRetailerRow per retailer
     const byRetailer = new Map<string, TimingRow[]>();
     for (const t of timing) {
@@ -573,6 +600,9 @@ export default function AllBrandsBoardPage() {
             const cal = t.universal_category
               ? lookupCalendar(retailerName, banner, t.universal_category)
               : null;
+            const manual = t.universal_category
+              ? (catTimingMap[t.retailer_id]?.[(t.universal_category ?? "").toLowerCase()] ?? null)
+              : null;
             return {
               timingId: t.id,
               accountStatus: t.account_status,
@@ -580,6 +610,9 @@ export default function AllBrandsBoardPage() {
               submittedDate: t.submitted_date,
               calendarReviewDate: cal?.reviewDate ?? null,
               calendarResetDate: cal?.resetDate ?? null,
+              manualTimingId: manual?.id ?? null,
+              manualReviewDate: manual?.reviewDate ?? null,
+              manualResetDate: manual?.resetDate ?? null,
             };
           }),
           latestClientNote: latestClient?.body ?? null,
@@ -726,6 +759,57 @@ export default function AllBrandsBoardPage() {
       setStatusOverrides((s) => ({ ...s, [timingId]: prevStatus }));
       if (errorToastTimer.current) clearTimeout(errorToastTimer.current);
       setErrorToast("Failed to update status. You may not have permission.");
+      errorToastTimer.current = setTimeout(() => setErrorToast(null), 4000);
+    }
+  }
+
+  // ── Category timing override (brand_retailer_category_timing) ───────────
+
+  async function saveCatTiming(
+    timingId: string,
+    brandId: string,
+    retailerId: string,
+    category: string,
+    reviewDate: string,
+    resetDate: string
+  ) {
+    setCatTimingSaving((s) => ({ ...s, [timingId]: true }));
+    const { error } = await supabase
+      .from("brand_retailer_category_timing")
+      .upsert(
+        {
+          brand_id: brandId,
+          retailer_id: retailerId,
+          category,
+          category_review_date: reviewDate || null,
+          reset_date: resetDate || null,
+        },
+        { onConflict: "brand_id,retailer_id,category" }
+      );
+    setCatTimingSaving((s) => ({ ...s, [timingId]: false }));
+    if (!error) {
+      setBrandRows((prev) => {
+        const updated: typeof prev = {};
+        for (const bid of Object.keys(prev)) {
+          updated[bid] = prev[bid].map((row) => ({
+            ...row,
+            categories: row.categories.map((cat) => {
+              if (cat.timingId !== timingId) return cat;
+              return {
+                ...cat,
+                manualReviewDate: reviewDate || null,
+                manualResetDate: resetDate || null,
+              };
+            }),
+          }));
+        }
+        return updated;
+      });
+      setCatTimingOverrideActive((s) => { const n = { ...s }; delete n[timingId]; return n; });
+      setCatTimingDateEdits((s) => { const n = { ...s }; delete n[timingId]; return n; });
+    } else {
+      if (errorToastTimer.current) clearTimeout(errorToastTimer.current);
+      setErrorToast("Failed to save review date.");
       errorToastTimer.current = setTimeout(() => setErrorToast(null), 4000);
     }
   }
@@ -1018,10 +1102,9 @@ export default function AllBrandsBoardPage() {
                                   <div className="flex flex-wrap items-center gap-1">
                                     {(() => {
                                       const today = new Date().toISOString().split("T")[0];
-                                      // Soonest upcoming review date across all categories
-                                      // sourced from category_review_calendar (read-only)
+                                      // Soonest upcoming review date — manual overrides calendar
                                       const soonest = row.categories
-                                        .map((cat) => cat.calendarReviewDate)
+                                        .map((cat) => cat.manualReviewDate ?? cat.calendarReviewDate)
                                         .filter((d): d is string => !!d && d >= today)
                                         .sort()[0] ?? null;
                                       const soonestLabel = formatReviewDate(soonest);
@@ -1124,36 +1207,104 @@ export default function AllBrandsBoardPage() {
                                         })}
                                       </div>
 
-                                      {/* Category review dates — read-only from category_review_calendar */}
+                                      {/* Category review dates */}
                                       {(() => {
-                                        const dateRows = row.categories
-                                          .map((cat) => {
-                                            const reviewLabel = cat.calendarReviewDate
-                                              ? formatReviewDate(cat.calendarReviewDate)
-                                              : null;
-                                            const resetLabel = cat.calendarResetDate
-                                              ? formatReviewDate(cat.calendarResetDate)
-                                              : null;
-                                            if (!reviewLabel && !resetLabel) return null;
-                                            return { cat, reviewLabel, resetLabel };
-                                          })
-                                          .filter(Boolean) as { cat: typeof row.categories[0]; reviewLabel: string | null; resetLabel: string | null }[];
-
-                                        if (dateRows.length === 0) return null;
-
+                                        const catsWithCategory = row.categories.filter((cat) => cat.universal_category);
+                                        if (catsWithCategory.length === 0) return null;
                                         return (
                                           <div onClick={(e) => e.stopPropagation()}>
-                                            <p className="text-xs font-medium mb-1" style={{ color: "var(--muted-foreground)" }}>
+                                            <p className="text-xs font-medium mb-1.5" style={{ color: "var(--muted-foreground)" }}>
                                               Category Review Dates
                                             </p>
-                                            <div className="space-y-0.5">
-                                              {dateRows.map(({ cat, reviewLabel, resetLabel }) => (
-                                                <p key={cat.timingId} className="text-xs" style={{ color: "var(--muted-foreground)" }}>
-                                                  {cat.universal_category ?? "Primary"}
-                                                  {reviewLabel && ` — ${reviewLabel}`}
-                                                  {resetLabel && ` → Reset ${resetLabel}`}
-                                                </p>
-                                              ))}
+                                            <div className="space-y-2">
+                                              {catsWithCategory.map((cat) => {
+                                                const isOverrideActive =
+                                                  catTimingOverrideActive[cat.timingId] ||
+                                                  !!cat.manualReviewDate ||
+                                                  !!cat.manualResetDate;
+                                                const edits = catTimingDateEdits[cat.timingId];
+                                                const reviewVal = edits !== undefined ? edits.reviewDate : (cat.manualReviewDate ?? "");
+                                                const resetVal = edits !== undefined ? edits.resetDate : (cat.manualResetDate ?? "");
+                                                const saving = catTimingSaving[cat.timingId];
+                                                const canSave = !saving && (edits !== undefined || !!cat.manualReviewDate || !!cat.manualResetDate);
+
+                                                return (
+                                                  <div key={cat.timingId} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                                    <span className="text-xs font-medium shrink-0" style={{ color: "var(--muted-foreground)", minWidth: "6rem" }}>
+                                                      {cat.universal_category}
+                                                    </span>
+
+                                                    {!isOverrideActive && cat.calendarReviewDate ? (
+                                                      // Universe date — read-only with Override link
+                                                      <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+                                                        {formatReviewDate(cat.calendarReviewDate)}
+                                                        {cat.calendarResetDate && ` → Reset ${formatReviewDate(cat.calendarResetDate)}`}
+                                                        <button
+                                                          className="ml-2 underline text-xs"
+                                                          style={{ color: "var(--muted-foreground)" }}
+                                                          onClick={() => {
+                                                            setCatTimingOverrideActive((s) => ({ ...s, [cat.timingId]: true }));
+                                                            setCatTimingDateEdits((s) => ({
+                                                              ...s,
+                                                              [cat.timingId]: {
+                                                                reviewDate: cat.manualReviewDate ?? "",
+                                                                resetDate: cat.manualResetDate ?? "",
+                                                              },
+                                                            }));
+                                                          }}
+                                                        >
+                                                          Override
+                                                        </button>
+                                                      </span>
+                                                    ) : (
+                                                      // Editable inputs (no universe date, or override active, or manual date exists)
+                                                      <>
+                                                        <div className="flex items-center gap-1">
+                                                          <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>Review</span>
+                                                          <input
+                                                            type="date"
+                                                            value={reviewVal}
+                                                            disabled={saving}
+                                                            className="text-xs rounded px-1 py-0.5 focus:outline-none focus:ring-1"
+                                                            style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)", opacity: saving ? 0.5 : 1 }}
+                                                            onChange={(e) => setCatTimingDateEdits((s) => ({
+                                                              ...s,
+                                                              [cat.timingId]: { reviewDate: e.target.value, resetDate: s[cat.timingId]?.resetDate ?? cat.manualResetDate ?? "" },
+                                                            }))}
+                                                          />
+                                                        </div>
+                                                        <div className="flex items-center gap-1">
+                                                          <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>Reset</span>
+                                                          <input
+                                                            type="date"
+                                                            value={resetVal}
+                                                            disabled={saving}
+                                                            className="text-xs rounded px-1 py-0.5 focus:outline-none focus:ring-1"
+                                                            style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)", opacity: saving ? 0.5 : 1 }}
+                                                            onChange={(e) => setCatTimingDateEdits((s) => ({
+                                                              ...s,
+                                                              [cat.timingId]: { reviewDate: s[cat.timingId]?.reviewDate ?? cat.manualReviewDate ?? "", resetDate: e.target.value },
+                                                            }))}
+                                                          />
+                                                        </div>
+                                                        <button
+                                                          disabled={!canSave}
+                                                          onClick={() => saveCatTiming(cat.timingId, brand.id, row.retailerId, cat.universal_category!, reviewVal, resetVal)}
+                                                          className="text-xs px-2 py-0.5 rounded"
+                                                          style={{ background: "var(--foreground)", color: "var(--background)", opacity: canSave ? 1 : 0.4, cursor: canSave ? "pointer" : "not-allowed" }}
+                                                        >
+                                                          {saving ? "Saving…" : "Save"}
+                                                        </button>
+                                                        {cat.calendarReviewDate && (
+                                                          <span className="text-xs" style={{ color: "var(--muted-foreground)", opacity: 0.6 }}>
+                                                            Universe: {formatReviewDate(cat.calendarReviewDate)}
+                                                          </span>
+                                                        )}
+                                                      </>
+                                                    )}
+                                                  </div>
+                                                );
+                                              })}
                                             </div>
                                           </div>
                                         );

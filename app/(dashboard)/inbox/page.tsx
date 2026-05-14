@@ -328,6 +328,17 @@ const calendarPromise =
         .gte("review_date", prev30)
         .lte("review_date", next30);
 
+const catTimingPromise =
+  ownedRetailerIds.length === 0
+    ? Promise.resolve({ data: [], error: null })
+    : supabase
+        .from("brand_retailer_category_timing")
+        .select("id,brand_id,retailer_id,category,category_review_date,reset_date")
+        .in("retailer_id", ownedRetailerIds)
+        .not("category_review_date", "is", null)
+        .gte("category_review_date", prev30)
+        .lte("category_review_date", next30);
+
       const tasksBaseQuery = supabase
         .from("tasks")
         .select("id,title,notes,due_date,assigned_to,brand_id,retailer_id,status,created_at,assigned_profile:profiles!assigned_to(full_name),created_profile:profiles!created_by(full_name),brand:brands(name),retailer:retailers(name,banner)")
@@ -347,6 +358,7 @@ const calendarPromise =
         agingResult,
         activitiesResult,
         calendarResult,
+        catTimingResult,
       ] = await Promise.all([
         followUpCountPromise,
         tasksQuery,
@@ -361,6 +373,7 @@ const calendarPromise =
           .select("user_id,brand_id,retailer_id,created_at")
           .gte("created_at", monthStart.toISOString()),
         calendarPromise,
+        catTimingPromise,
       ]);
 
       const taskRows = (tasksResult.data as unknown as Task[]) ?? [];
@@ -422,6 +435,12 @@ if (clientMessagesResult.error) {
 
       const calendarRows = ((calendarResult.data as CalendarViewRow[]) ?? []);
 
+      type CatTimingInboxRow = {
+        id: string; brand_id: string; retailer_id: string;
+        category: string | null; category_review_date: string;
+      };
+      const catTimingRows = ((catTimingResult.data ?? []) as CatTimingInboxRow[]);
+
       const brandIds = [
         ...new Set([
           ...timingRows.map((r) => r.brand_id),
@@ -429,6 +448,7 @@ if (clientMessagesResult.error) {
           ...taskRows.map((t) => t.brand_id),
           ...agingRows.map((a) => a.brand_id),
           ...calendarRows.map((r) => r.brand_id),
+          ...catTimingRows.map((r) => r.brand_id),
         ].filter((id): id is string => !!id)),
       ];
 
@@ -439,6 +459,7 @@ if (clientMessagesResult.error) {
           ...taskRows.map((t) => t.retailer_id),
           ...agingRows.map((a) => a.retailer_id),
           ...(calendarRows.map((r) => r.retailer_id).filter(Boolean) as string[]),
+          ...catTimingRows.map((r) => r.retailer_id),
         ].filter((id): id is string => !!id)),
       ];
 
@@ -638,6 +659,25 @@ if (clientMessagesResult.error) {
           account_status: "upcoming_review",
           universal_category: row.universal_category,
           retailer_category_review_name: row.retailer_category_review_name ?? null,
+        });
+      });
+
+      catTimingRows.forEach((row) => {
+        const brand = nextBrandsById[row.brand_id];
+        const retailer = nextRetailersById[row.retailer_id];
+        const retailerHeadline =
+          retailer?.banner?.trim() ? retailer.banner : retailer?.name ?? "Retailer";
+        upcomingItems.push({
+          id: `cattiming-${row.id}`,
+          brand_id: row.brand_id,
+          brand_name: brand?.name ?? "Brand",
+          retailer_id: row.retailer_id,
+          retailer_name: retailer?.name ?? "Retailer",
+          retailer_headline: retailerHeadline,
+          milestone_type: "Category Review",
+          milestone_date: row.category_review_date,
+          account_status: "upcoming_review",
+          universal_category: row.category ?? undefined,
         });
       });
 
