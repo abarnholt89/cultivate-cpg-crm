@@ -282,6 +282,14 @@ export default function AllBrandsBoardPage() {
     }
   }, [search, brandSummaries]);
 
+  // Auto-expand all brands for client users once summaries are loaded
+  useEffect(() => {
+    if (role !== "client" || brandSummaries.length === 0) return;
+    setExpandedBrandIds(new Set(brandSummaries.map((b) => b.id)));
+    brandSummaries.forEach((b) => loadBrandRows(b.id));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, brandSummaries.length]);
+
   // ── Initial summary load ──────────────────────────────────────────────────
 
   async function loadSummaries() {
@@ -299,13 +307,26 @@ export default function AllBrandsBoardPage() {
 
     const resolvedRole = (profileData?.role as Role) ?? "client";
     setRole(resolvedRole);
-    if (resolvedRole === "client") { router.replace("/brands"); return; }
 
     const { data: brandsData, error: brandsError } = await supabase
       .from("brands").select("id, name").order("name", { ascending: true });
 
     if (brandsError) { setError(brandsError.message); setLoading(false); return; }
-    const brands = (brandsData as Brand[]) ?? [];
+    let brands = (brandsData as Brand[]) ?? [];
+
+    // Clients only see brands they are explicitly associated with via brand_users
+    if (resolvedRole === "client") {
+      const { data: clientBrands } = await supabase
+        .from("brand_users")
+        .select("brand_id")
+        .eq("user_id", uid);
+      if (clientBrands && clientBrands.length > 0) {
+        const allowed = new Set((clientBrands as { brand_id: string }[]).map((r) => r.brand_id));
+        brands = brands.filter((b) => allowed.has(b.id));
+      } else {
+        brands = [];
+      }
+    }
 
     const { data: timing, error: timingErr } = await fetchAll<TimingRow>(() =>
       supabase
@@ -891,7 +912,8 @@ export default function AllBrandsBoardPage() {
         </p>
       </div>
 
-      {/* Filter row */}
+      {/* Filter row — hidden for client users */}
+      {role !== "client" && (
       <div className="flex flex-wrap items-center gap-3">
         <input
           type="text"
@@ -930,6 +952,7 @@ export default function AllBrandsBoardPage() {
           </div>
         ) : null}
       </div>
+      )} {/* end role !== "client" filter row */}
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 
@@ -1320,8 +1343,8 @@ export default function AllBrandsBoardPage() {
                                         );
                                       })()}
 
-                                      {/* 2-column note editor */}
-                                      <div className="grid grid-cols-2 gap-4">
+                                      {/* Note editor — 2-col for reps/admins, 1-col for clients */}
+                                      <div className={`grid ${role !== "client" ? "grid-cols-2" : "grid-cols-1"} gap-4`}>
                                         {/* Client-facing note */}
                                         <div className="space-y-2">
                                           <p className="text-xs font-semibold" style={{ color: "var(--foreground)" }}>
@@ -1361,7 +1384,8 @@ export default function AllBrandsBoardPage() {
                                           </button>
                                         </div>
 
-                                        {/* Internal note */}
+                                        {/* Internal note — hidden for client users */}
+                                        {role !== "client" && (
                                         <div className="space-y-2">
                                           <p className="text-xs font-semibold" style={{ color: "var(--foreground)" }}>
                                             Internal only
@@ -1399,6 +1423,7 @@ export default function AllBrandsBoardPage() {
                                             {saving === "internal" ? "Saving…" : "Save Internal Note"}
                                           </button>
                                         </div>
+                                        )}
                                       </div>
 
                                       <div className="flex items-center gap-3 flex-wrap pt-1">
