@@ -574,27 +574,55 @@ export default function AllBrandsBoardPage() {
 
     console.log("[calendar] calendarMap after build:", JSON.stringify(calendarMap, null, 2));
 
-    // Resolve calendar entry for a given retailer + category via substring matching
+    // Normalize a retailer name for fuzzy matching: trim, lowercase, strip punctuation
+    function normalizeRetailerName(s: string): string {
+      return s.toLowerCase().trim().replace(/[''`.,\-]/g, "");
+    }
+
+    // Resolve calendar entry for a given retailer + category via fuzzy matching.
+    // Tries (in order) for each candidate (retailer name, then banner):
+    //   a. Exact match (normalized)
+    //   b. Calendar key is contained within the candidate ("nugget" in "nugget markets")
+    //   c. Candidate starts with the calendar key ("sprouts farmers" starts with "sprouts")
+    //   d. Calendar key starts with the candidate ("moms organic" starts with "moms")
     function lookupCalendar(retailerName: string, banner: string, category: string): CalEntry | null {
       const cKey = category.toLowerCase();
-      const candidates = [retailerName.toLowerCase(), banner.toLowerCase()];
+      const rawCandidates = [retailerName, banner].filter(Boolean);
+      // Deduplicate so the same string isn't tried twice
+      const seen = new Set<string>();
+      const candidates = rawCandidates.map(normalizeRetailerName).filter((c) => {
+        if (seen.has(c)) return false;
+        seen.add(c);
+        return true;
+      });
+
       const calKeys = Object.keys(calendarMap);
+
       for (const candidate of candidates) {
-        // Exact match first
+        // a. Exact match
         if (calendarMap[candidate]?.[cKey]) {
-          console.log(`[calendar] lookupCalendar("${retailerName}", "${banner}", "${category}") → exact match via "${candidate}":`, calendarMap[candidate][cKey]);
           return calendarMap[candidate][cKey];
         }
-        // Substring: calendar key is prefix of candidate or vice-versa (e.g. "sprouts" ⊂ "sprouts farmers market")
-        const partial = calKeys.find(
-          (k) => k && (candidate.startsWith(k) || k.startsWith(candidate))
-        );
-        if (partial && calendarMap[partial]?.[cKey]) {
-          console.log(`[calendar] lookupCalendar("${retailerName}", "${banner}", "${category}") → partial match via "${partial}":`, calendarMap[partial][cKey]);
-          return calendarMap[partial][cKey];
+
+        // b–d. Fuzzy: find a calendarMap key that matches via containment
+        const fuzzyKey = calKeys.find((k) => {
+          if (!k || !calendarMap[k]?.[cKey]) return false;
+          const nk = normalizeRetailerName(k);
+          // b. Calendar key contained in candidate ("nugget" in "nugget markets")
+          if (candidate.includes(nk)) return true;
+          // c. Candidate starts with calendar key ("sprouts farmers market" starts with "sprouts")
+          if (candidate.startsWith(nk)) return true;
+          // d. Calendar key starts with candidate ("moms organic market" starts with "moms")
+          if (nk.startsWith(candidate)) return true;
+          return false;
+        });
+
+        if (fuzzyKey) {
+          console.log(`[calendar] fuzzy match: "${retailerName}" → calendarMap key "${fuzzyKey}" (category "${category}"):`, calendarMap[fuzzyKey][cKey]);
+          return calendarMap[fuzzyKey][cKey];
         }
       }
-      console.log(`[calendar] lookupCalendar("${retailerName}", "${banner}", "${category}") → NO MATCH. calendarMap keys:`, Object.keys(calendarMap));
+
       return null;
     }
 
