@@ -75,7 +75,7 @@ export default function ChangePasswordPage() {
             className="rounded-md object-contain"
           />
           <span className="text-lg font-bold" style={{ color: "#78f5cd" }}>
-            Cultivate CPG
+            The Hub
           </span>
         </div>
 
@@ -89,7 +89,7 @@ export default function ChangePasswordPage() {
         </div>
 
         <p className="text-xs" style={{ color: "rgba(255,255,255,0.3)" }}>
-          © {new Date().getFullYear()} Cultivate CPG
+          © {new Date().getFullYear()} Cultivate CPG · The Hub
         </p>
       </div>
 
@@ -99,7 +99,7 @@ export default function ChangePasswordPage() {
           {/* Mobile logo */}
           <div className="flex items-center gap-2 lg:hidden">
             <img src="/cultivate-icon.jpeg" alt="Cultivate" width={28} height={28} className="rounded object-contain" />
-            <span className="font-bold text-base" style={{ color: "#123b52" }}>Cultivate CPG</span>
+            <span className="font-bold text-base" style={{ color: "#123b52" }}>The Hub</span>
           </div>
 
           <div>

@@ -27,7 +27,7 @@ function buildEmailHtml({
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>New message from Cultivate</title>
+  <title>New message from The Hub</title>
 </head>
 <body style="margin:0;padding:0;background:#f4f6f8;font-family:Inter,Helvetica,Arial,sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f8;padding:32px 0;">
@@ -41,12 +41,12 @@ function buildEmailHtml({
               <table cellpadding="0" cellspacing="0">
                 <tr>
                   <td style="vertical-align:middle;padding-right:12px;">
-                    <img src="${LOGO_URL}" alt="Cultivate" width="36" height="36"
+                    <img src="${LOGO_URL}" alt="The Hub" width="36" height="36"
                          style="border-radius:6px;display:block;" />
                   </td>
                   <td style="vertical-align:middle;">
                     <span style="color:#78f5cd;font-size:18px;font-weight:700;letter-spacing:-0.3px;">
-                      Cultivate CPG
+                      The Hub
                     </span>
                   </td>
                 </tr>
@@ -83,7 +83,7 @@ function buildEmailHtml({
               <a href="${replyUrl}"
                  style="display:inline-block;background:#123b52;color:#78f5cd;text-decoration:none;
                         font-size:14px;font-weight:600;padding:12px 24px;border-radius:8px;">
-                Reply in CRM →
+                Reply in The Hub →
               </a>
             </td>
           </tr>
@@ -92,7 +92,7 @@ function buildEmailHtml({
           <tr>
             <td style="padding:20px 32px;border-top:1px solid #e2e8f0;">
               <p style="margin:0;font-size:12px;color:#a0aec0;">
-                You're receiving this because you're a client of ${brandName} on the Cultivate CPG CRM.
+                You're receiving this because you're a client of ${brandName} on The Hub.
               </p>
             </td>
           </tr>
@@ -122,7 +122,7 @@ export async function POST(req: Request) {
     const brandName: string = body.brand_name || "Brand";
     const retailerName: string = body.retailer_name || "Retailer";
     const messageBody: string = body.message_body || "";
-    const actorName: string = body.actor_name || "Cultivate";
+    const actorName: string = body.actor_name || "The Hub";
     const brandId: string = body.brand_id || "";
     const retailerId: string = body.retailer_id || "";
 

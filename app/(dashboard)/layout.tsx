@@ -204,7 +204,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="flex items-center gap-4 px-6 py-4">
           <img
             src="/cultivate-icon.jpeg"
-            alt="Cultivate"
+            alt="The Hub"
             width={26}
             height={26}
             className="h-[26px] w-[26px] object-contain"

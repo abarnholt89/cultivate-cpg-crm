@@ -215,7 +215,7 @@ async function runPromoAlerts() {
               `Ends: ${promo.end_date || "TBD"}\n` +
               `${promo.promo_text_raw || ""}`,
             recipients: [recipient],
-            actor_name: "Cultivate CRM",
+            actor_name: "The Hub",
             event_type: "promo_starting",
           }),
         }

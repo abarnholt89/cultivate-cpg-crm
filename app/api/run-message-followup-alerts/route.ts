@@ -314,7 +314,7 @@ export async function GET(req: Request) {
             retailer_name: retailerName,
             message_body: `Unanswered client message (24h)\n\n${message.sender_name ?? "Client"} wrote:\n${message.body}`,
             recipients: [repEmail],
-            actor_name: "Cultivate CRM",
+            actor_name: "The Hub",
             event_type: "message_followup",
           }),
         }).catch(() => null);
@@ -350,7 +350,7 @@ export async function GET(req: Request) {
             retailer_name: retailerName,
             message_body: `Still unanswered after 48h\n\nAssigned rep: ${repName}\n\n${message.sender_name ?? "Client"} wrote:\n${message.body}`,
             recipients: [adminEmail],
-            actor_name: "Cultivate CRM",
+            actor_name: "The Hub",
             event_type: "message_followup",
           }),
         }).catch(() => null);

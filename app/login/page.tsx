@@ -70,7 +70,7 @@ function LoginInner() {
             className="rounded-md object-contain"
           />
           <span className="text-lg font-bold" style={{ color: "#78f5cd" }}>
-            Cultivate CPG
+            The Hub
           </span>
         </div>
 
@@ -85,7 +85,7 @@ function LoginInner() {
         </div>
 
         <p className="text-xs" style={{ color: "rgba(255,255,255,0.3)" }}>
-          © {new Date().getFullYear()} Cultivate CPG. All rights reserved.
+          © {new Date().getFullYear()} Cultivate CPG. All rights reserved. · The Hub
         </p>
       </div>
 
@@ -95,7 +95,7 @@ function LoginInner() {
           {/* Mobile logo */}
           <div className="flex items-center gap-2 lg:hidden">
             <img src="/cultivate-icon.jpeg" alt="Cultivate" width={28} height={28} className="rounded object-contain" />
-            <span className="font-bold text-base" style={{ color: "#123b52" }}>Cultivate CPG</span>
+            <span className="font-bold text-base" style={{ color: "#123b52" }}>The Hub</span>
           </div>
 
           <div>
@@ -105,7 +105,7 @@ function LoginInner() {
             <p className="mt-1 text-sm" style={{ color: "#5b6e7a" }}>
               {showForgot
                 ? "Enter your email and we'll send a reset link."
-                : "Sign in to your Cultivate CRM account."}
+                : "Sign in to your Hub account."}
             </p>
           </div>
 
