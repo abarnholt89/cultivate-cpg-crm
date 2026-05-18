@@ -57,6 +57,7 @@ type TimingRow = {
   category_review_date: string | null;
   reset_date: string | null;
   next_follow_up_at: string | null;
+  submitted_date: string | null;
 };
 
 type Retailer = {
@@ -79,6 +80,8 @@ type UpcomingItem = {
   // present only for Category Review items — used for dismissal
   universal_category?: string;
   retailer_category_review_name?: string | null;
+  // raw calendar retailer_name (may differ from resolved retailer name)
+  calendar_retailer_name?: string;
 };
 
 type CalendarViewRow = {
@@ -328,7 +331,7 @@ const timingPromise =
     : supabase
         .from("brand_retailer_timing")
         .select(
-          "id,brand_id,retailer_id,account_status,category_review_date,reset_date,next_follow_up_at"
+          "id,brand_id,retailer_id,account_status,category_review_date,reset_date,next_follow_up_at,submitted_date"
         )
         .in("retailer_id", ownedRetailerIds);
 
@@ -450,7 +453,17 @@ if (clientMessagesResult.error) {
         return;
       }
 
-      const timingRows = ((timingResult.data as TimingRow[]) ?? []).filter((row) => {
+      const allTimingRows = (timingResult.data as TimingRow[]) ?? [];
+
+      // Build a set of brand+retailer pairs that have been submitted — these
+      // should not appear in Review Activity regardless of review dates.
+      const submittedPairs = new Set<string>(
+        allTimingRows
+          .filter((r) => !!r.submitted_date)
+          .map((r) => `${r.brand_id}:${r.retailer_id}`)
+      );
+
+      const timingRows = allTimingRows.filter((row) => {
         return (
           (row.category_review_date &&
             isBetweenInclusive(row.category_review_date, prev30, next30)) ||
@@ -521,6 +534,7 @@ if (clientMessagesResult.error) {
               .from("brand_category_review_dismissals")
               .select("category_review_id")
               .in("brand_id", calendarBrandIds)
+              .eq("dismissed_by_user_id", userId)
           : Promise.resolve({ data: [], error: null }),
         subMonthQueryPromise,
       ]);
@@ -625,8 +639,10 @@ if (clientMessagesResult.error) {
         const retailer = nextRetailersById[row.retailer_id];
         const retailerHeadline =
           retailer?.banner?.trim() ? retailer.banner : retailer?.name ?? "Retailer";
+        const isSubmitted = submittedPairs.has(`${row.brand_id}:${row.retailer_id}`);
 
         if (
+          !isSubmitted &&
           row.category_review_date &&
           isBetweenInclusive(row.category_review_date, prev30, next30)
         ) {
@@ -643,7 +659,7 @@ if (clientMessagesResult.error) {
           });
         }
 
-        if (row.reset_date && isBetweenInclusive(row.reset_date, prev30, next30)) {
+        if (!isSubmitted && row.reset_date && isBetweenInclusive(row.reset_date, prev30, next30)) {
           upcomingItems.push({
             id: `${row.id}-reset_date`,
             brand_id: row.brand_id,
@@ -691,8 +707,11 @@ if (clientMessagesResult.error) {
 
       calendarRows.forEach((row, idx) => {
         if (!row.review_date) return;
+        // row.retailer_name is the calendar's own retailer name (e.g. "Sprouts"),
+        // used for both the dismissal key and the DB lookup.
         const dKey = `${row.retailer_name}||${row.universal_category}||${row.retailer_category_review_name ?? ""}`;
         if (inboxDismissedKeys.has(dKey)) return;
+        if (row.retailer_id && submittedPairs.has(`${row.brand_id}:${row.retailer_id}`)) return;
         const brand = nextBrandsById[row.brand_id];
         const retailer = row.retailer_id ? nextRetailersById[row.retailer_id] : null;
         const retailerHeadline =
@@ -709,6 +728,8 @@ if (clientMessagesResult.error) {
           account_status: "upcoming_review",
           universal_category: row.universal_category,
           retailer_category_review_name: row.retailer_category_review_name ?? null,
+          // preserve the raw calendar name for accurate DB lookup on dismiss
+          calendar_retailer_name: row.retailer_name,
         });
       });
 
@@ -765,14 +786,18 @@ if (clientMessagesResult.error) {
 
   async function dismissInboxReview(item: UpcomingItem) {
     if (!currentUserId || item.milestone_type !== "Category Review" || !item.universal_category) return;
-    const key = `${item.retailer_name}||${item.universal_category}||${item.retailer_category_review_name ?? ""}`;
+    // Use calendar_retailer_name (the raw calendar name, e.g. "Sprouts") for the
+    // dismissal key and DB lookup — item.retailer_name may be the resolved name
+    // from the retailers table (e.g. "Sprouts Farmers Market") which won't match.
+    const calRetailerName = item.calendar_retailer_name ?? item.retailer_name;
+    const key = `${calRetailerName}||${item.universal_category}||${item.retailer_category_review_name ?? ""}`;
     setDismissedInboxKeys((prev) => new Set([...prev, key]));
     setUpcoming((prev) => prev.filter((u) => u.id !== item.id));
 
     const { data: calRow } = await supabase
       .from("category_review_calendar")
       .select("id")
-      .eq("retailer_name", item.retailer_name)
+      .eq("retailer_name", calRetailerName)
       .eq("retailer_category_review_name", item.retailer_category_review_name ?? "")
       .eq("universal_category", item.universal_category)
       .maybeSingle();
