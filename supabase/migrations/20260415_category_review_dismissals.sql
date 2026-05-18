@@ -3,14 +3,10 @@
 CREATE TABLE IF NOT EXISTS brand_category_review_dismissals (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   brand_id uuid NOT NULL REFERENCES brands(id) ON DELETE CASCADE,
-  retailer_name text NOT NULL,
-  retailer_id uuid REFERENCES retailers(id) ON DELETE SET NULL,
-  universal_category text NOT NULL,
-  retailer_category_review_name text NOT NULL DEFAULT '',
-  review_date date,
+  category_review_id uuid NOT NULL REFERENCES category_review_calendar(id) ON DELETE CASCADE,
   dismissed_by_user_id uuid REFERENCES profiles(id) ON DELETE SET NULL,
   dismissed_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (brand_id, retailer_name, universal_category, retailer_category_review_name)
+  UNIQUE (brand_id, category_review_id)
 );
 
 -- Allows reps/admins to override the review_date / reset_date shown in the UI

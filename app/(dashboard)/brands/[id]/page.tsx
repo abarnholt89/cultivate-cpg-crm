@@ -243,7 +243,7 @@ export default function BrandDashboardPage() {
             .order("start_date", { ascending: true }),
           supabase
             .from("brand_category_review_dismissals")
-            .select("retailer_name,universal_category,retailer_category_review_name")
+            .select("category_review_id")
             .eq("brand_id", brandId),
         ]);
 
@@ -270,10 +270,18 @@ export default function BrandDashboardPage() {
       setAuthorizedRows(nextAuthorizedRows);
       setPromotionRows((promotionsResponse.data as PromotionRow[]) ?? []);
 
-      const dismissedKeys = new Set<string>(
-        ((dismissalsResponse.data ?? []) as { retailer_name: string; universal_category: string; retailer_category_review_name: string | null }[])
-          .map((d) => `${d.retailer_name}||${d.universal_category}||${d.retailer_category_review_name ?? ""}`)
-      );
+      const dismissalCalIds = ((dismissalsResponse.data ?? []) as { category_review_id: string }[])
+        .map((d) => d.category_review_id).filter(Boolean);
+
+      const dismissedKeys = new Set<string>();
+      if (dismissalCalIds.length) {
+        const { data: dismissalCalRows } = await supabase
+          .from("category_review_calendar")
+          .select("retailer_name,universal_category,retailer_category_review_name")
+          .in("id", dismissalCalIds);
+        ((dismissalCalRows ?? []) as { retailer_name: string; universal_category: string; retailer_category_review_name: string }[])
+          .forEach((c) => dismissedKeys.add(`${c.retailer_name}||${c.universal_category}||${c.retailer_category_review_name ?? ""}`));
+      }
       setDismissedReviewKeys(dismissedKeys);
 
       // ── activity banner ──────────────────────────────────────────────────
@@ -528,17 +536,20 @@ export default function BrandDashboardPage() {
     if (!userId || !brandId) return;
     const key = `${item.retailer_name}||${item.universal_category}||${item.retailer_category_review_name ?? ""}`;
     setDismissedReviewKeys((prev) => new Set([...prev, key]));
+
+    const { data: calRow } = await supabase
+      .from("category_review_calendar")
+      .select("id")
+      .eq("retailer_name", item.retailer_name)
+      .eq("retailer_category_review_name", item.retailer_category_review_name ?? "")
+      .eq("universal_category", item.universal_category)
+      .maybeSingle();
+    const calId = (calRow as { id: string } | null)?.id;
+    if (!calId) return;
+
     await supabase.from("brand_category_review_dismissals").upsert(
-      {
-        brand_id: brandId,
-        retailer_name: item.retailer_name,
-        retailer_id: item.retailer_id ?? null,
-        universal_category: item.universal_category,
-        retailer_category_review_name: item.retailer_category_review_name ?? "",
-        review_date: item.date,
-        dismissed_by_user_id: userId,
-      },
-      { onConflict: "brand_id,retailer_name,universal_category,retailer_category_review_name" }
+      { brand_id: brandId, category_review_id: calId, dismissed_by_user_id: userId },
+      { onConflict: "brand_id,category_review_id" }
     );
   }
 

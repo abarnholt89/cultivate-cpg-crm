@@ -519,7 +519,7 @@ if (clientMessagesResult.error) {
         calendarBrandIds.length
           ? supabase
               .from("brand_category_review_dismissals")
-              .select("retailer_name,universal_category,retailer_category_review_name")
+              .select("category_review_id")
               .in("brand_id", calendarBrandIds)
           : Promise.resolve({ data: [], error: null }),
         subMonthQueryPromise,
@@ -675,10 +675,18 @@ if (clientMessagesResult.error) {
         }
       });
 
-      const inboxDismissedKeys = new Set<string>(
-        ((dismissalsResult.data ?? []) as { retailer_name: string; universal_category: string; retailer_category_review_name: string | null }[])
-          .map((d) => `${d.retailer_name}||${d.universal_category}||${d.retailer_category_review_name ?? ""}`)
-      );
+      const inboxDismissalCalIds = ((dismissalsResult.data ?? []) as { category_review_id: string }[])
+        .map((d) => d.category_review_id).filter(Boolean);
+
+      const inboxDismissedKeys = new Set<string>();
+      if (inboxDismissalCalIds.length) {
+        const { data: inboxCalRows } = await supabase
+          .from("category_review_calendar")
+          .select("retailer_name,universal_category,retailer_category_review_name")
+          .in("id", inboxDismissalCalIds);
+        ((inboxCalRows ?? []) as { retailer_name: string; universal_category: string; retailer_category_review_name: string | null }[])
+          .forEach((c) => inboxDismissedKeys.add(`${c.retailer_name}||${c.universal_category}||${c.retailer_category_review_name ?? ""}`));
+      }
       setDismissedInboxKeys(inboxDismissedKeys);
 
       calendarRows.forEach((row, idx) => {
@@ -760,17 +768,20 @@ if (clientMessagesResult.error) {
     const key = `${item.retailer_name}||${item.universal_category}||${item.retailer_category_review_name ?? ""}`;
     setDismissedInboxKeys((prev) => new Set([...prev, key]));
     setUpcoming((prev) => prev.filter((u) => u.id !== item.id));
+
+    const { data: calRow } = await supabase
+      .from("category_review_calendar")
+      .select("id")
+      .eq("retailer_name", item.retailer_name)
+      .eq("retailer_category_review_name", item.retailer_category_review_name ?? "")
+      .eq("universal_category", item.universal_category)
+      .maybeSingle();
+    const calId = (calRow as { id: string } | null)?.id;
+    if (!calId) return;
+
     await supabase.from("brand_category_review_dismissals").upsert(
-      {
-        brand_id: item.brand_id,
-        retailer_name: item.retailer_name,
-        retailer_id: item.retailer_id || null,
-        universal_category: item.universal_category,
-        retailer_category_review_name: item.retailer_category_review_name ?? "",
-        review_date: item.milestone_date,
-        dismissed_by_user_id: currentUserId,
-      },
-      { onConflict: "brand_id,retailer_name,universal_category,retailer_category_review_name" }
+      { brand_id: item.brand_id, category_review_id: calId, dismissed_by_user_id: currentUserId },
+      { onConflict: "brand_id,category_review_id" }
     );
   }
 

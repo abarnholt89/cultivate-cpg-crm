@@ -23,7 +23,8 @@ type CategoryReviewRow = {
   reset_date: string | null;
 };
 
-type DismissalRow = {
+type CalendarLookup = {
+  id: string;
   retailer_name: string;
   universal_category: string;
   retailer_category_review_name: string;
@@ -146,17 +147,25 @@ export default function BrandCategoryReviewPage() {
     if (reviewError) { setError(reviewError.message); return; }
     setRows((data as CategoryReviewRow[]) ?? []);
 
-    // Dismissals
+    // Dismissals — fetch category_review_ids then join to calendar for text fields
     const { data: dismissalData } = await supabase
       .from("brand_category_review_dismissals")
-      .select("retailer_name,universal_category,retailer_category_review_name")
+      .select("category_review_id")
       .eq("brand_id", brandId);
 
-    const dismissedKeys = new Set<string>(
-      ((dismissalData as DismissalRow[]) ?? []).map((d) =>
-        rowKey(d.retailer_name, d.universal_category, d.retailer_category_review_name)
-      )
-    );
+    const calIds = ((dismissalData ?? []) as { category_review_id: string }[])
+      .map((d) => d.category_review_id).filter(Boolean);
+
+    const dismissedKeys = new Set<string>();
+    if (calIds.length) {
+      const { data: calRows } = await supabase
+        .from("category_review_calendar")
+        .select("id,retailer_name,universal_category,retailer_category_review_name")
+        .in("id", calIds);
+      ((calRows ?? []) as CalendarLookup[]).forEach((c) =>
+        dismissedKeys.add(rowKey(c.retailer_name, c.universal_category, c.retailer_category_review_name))
+      );
+    }
     setDismissals(dismissedKeys);
 
     // Date overrides
@@ -174,23 +183,29 @@ export default function BrandCategoryReviewPage() {
     setDateOverrides(overrideMap);
   }
 
+  async function lookupCalendarId(row: CategoryReviewRow): Promise<string | null> {
+    const { data } = await supabase
+      .from("category_review_calendar")
+      .select("id")
+      .eq("retailer_name", row.retailer_name)
+      .eq("retailer_category_review_name", row.retailer_category_review_name ?? "")
+      .eq("universal_category", row.universal_category)
+      .maybeSingle();
+    return (data as { id: string } | null)?.id ?? null;
+  }
+
   async function dismiss(row: CategoryReviewRow) {
     if (!userId) return;
     const key = rowKey(row.retailer_name, row.universal_category, row.retailer_category_review_name);
 
+    const calId = await lookupCalendarId(row);
+    if (!calId) { setError("Could not find calendar entry for this review."); return; }
+
     const { error } = await supabase
       .from("brand_category_review_dismissals")
       .upsert(
-        {
-          brand_id: brandId,
-          retailer_name: row.retailer_name,
-          retailer_id: row.retailer_id ?? null,
-          universal_category: row.universal_category,
-          retailer_category_review_name: row.retailer_category_review_name ?? "",
-          review_date: row.review_date ?? null,
-          dismissed_by_user_id: userId,
-        },
-        { onConflict: "brand_id,retailer_name,universal_category,retailer_category_review_name" }
+        { brand_id: brandId, category_review_id: calId, dismissed_by_user_id: userId },
+        { onConflict: "brand_id,category_review_id" }
       );
 
     if (error) { setError(error.message); return; }
@@ -198,13 +213,14 @@ export default function BrandCategoryReviewPage() {
   }
 
   async function undismiss(row: CategoryReviewRow) {
+    const calId = await lookupCalendarId(row);
+    if (!calId) return;
+
     const { error } = await supabase
       .from("brand_category_review_dismissals")
       .delete()
       .eq("brand_id", brandId)
-      .eq("retailer_name", row.retailer_name)
-      .eq("universal_category", row.universal_category)
-      .eq("retailer_category_review_name", row.retailer_category_review_name ?? "");
+      .eq("category_review_id", calId);
 
     if (error) { setError(error.message); return; }
     const key = rowKey(row.retailer_name, row.universal_category, row.retailer_category_review_name);
