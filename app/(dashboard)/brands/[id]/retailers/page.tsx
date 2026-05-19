@@ -1512,41 +1512,54 @@ function BrandRetailersInner() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <input
-          className="rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2"
-          style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
-          placeholder="Search banner, parent company, channel, region, rep…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+      <div
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 20,
+          background: "var(--background)",
+          marginLeft: "-24px",
+          marginRight: "-24px",
+          padding: "12px 24px",
+          borderBottom: "1px solid var(--border)",
+        }}
+      >
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <input
+            className="rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2"
+            style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+            placeholder="Search banner, parent company, channel, region, rep…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
 
-        <select
-          className="rounded-lg px-3 py-2 w-full text-sm"
-          style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
-          value={selectedFilter}
-          onChange={(e) => setSelectedFilter(e.target.value)}
-        >
-          {STATUS_FILTERS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+          <select
+            className="rounded-lg px-3 py-2 w-full text-sm"
+            style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+            value={selectedFilter}
+            onChange={(e) => setSelectedFilter(e.target.value)}
+          >
+            {STATUS_FILTERS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
 
-        <select
-          className="rounded-lg px-3 py-2 w-full text-sm"
-          style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
-          value={selectedRep}
-          onChange={(e) => setSelectedRep(e.target.value)}
-        >
-          <option value="all">All Reps</option>
-          {repOptions.map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-        </select>
+          <select
+            className="rounded-lg px-3 py-2 w-full text-sm"
+            style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+            value={selectedRep}
+            onChange={(e) => setSelectedRep(e.target.value)}
+          >
+            <option value="all">All Reps</option>
+            {repOptions.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {filteredRetailers.length === 0 ? (
@@ -2395,7 +2408,7 @@ function BrandRetailersInner() {
                       </div>
                     )}
                     <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>
-                      {activeTab === "client" ? "New client-visible message" : "New internal-only note"}
+                      {role === "client" ? "Message" : activeTab === "client" ? "New client-visible message" : "New internal-only note"}
                     </div>
                     <textarea
                       className="border rounded-lg px-3 py-2 w-full text-sm"

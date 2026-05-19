@@ -409,15 +409,23 @@ export default function BrandCategoryReviewPage() {
         <StatCard label="Missing Date" value={stats.missing} />
       </div>
 
-      {/* Filters */}
+      {/* Filters — sticky so the search bar stays visible while scrolling the table */}
       <div
-        className="rounded-xl p-4 space-y-4"
-        style={{ border: "1px solid var(--border)", background: "var(--card)" }}
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 20,
+          background: "var(--background)",
+          marginLeft: "-24px",
+          marginRight: "-24px",
+          padding: "12px 24px",
+          borderBottom: "1px solid var(--border)",
+        }}
       >
         <div className="flex flex-wrap items-center gap-3">
           <input
             className="flex-1 min-w-48 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
-            style={{ border: "1px solid var(--border)", background: "var(--muted)", color: "var(--foreground)" }}
+            style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
             placeholder="Search retailer, review name, department, or category…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -425,7 +433,7 @@ export default function BrandCategoryReviewPage() {
 
           <select
             className="rounded-lg px-3 py-2 text-sm"
-            style={{ border: "1px solid var(--border)", background: "var(--muted)", color: "var(--foreground)" }}
+            style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
             value={dateFilter}
             onChange={(e) => setDateFilter(e.target.value)}
           >
@@ -435,9 +443,14 @@ export default function BrandCategoryReviewPage() {
             <option value="past">Past Due</option>
             <option value="missing">Missing Review Date</option>
           </select>
-
         </div>
+      </div>
 
+      {/* Review table */}
+      <div
+        className="rounded-xl p-4 space-y-4"
+        style={{ border: "1px solid var(--border)", background: "var(--card)" }}
+      >
         {filteredRows.length === 0 ? (
           <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
             No category review rows match your current filters.

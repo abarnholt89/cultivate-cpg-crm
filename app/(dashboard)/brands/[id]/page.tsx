@@ -514,6 +514,15 @@ export default function BrandDashboardPage() {
       .slice(0, 8);
   }, [promotionRows]);
 
+  const upcomingReviews90 = useMemo(() => {
+    const today = todayISO();
+    const in90 = addDaysISO(today, 90);
+    return calendarRows
+      .filter((r) => !!r.review_date && r.review_date >= today && r.review_date <= in90)
+      .filter((r) => !dismissedReviewKeys.has(`${r.retailer_name}||${r.universal_category}||${r.retailer_category_review_name ?? ""}`))
+      .sort((a, b) => (a.review_date || "").localeCompare(b.review_date || ""));
+  }, [calendarRows, dismissedReviewKeys]);
+
   const recentSubmissions = useMemo(() => {
     const today = todayISO();
     const ninetyDaysAgo = addDaysISO(today, -90);
@@ -775,12 +784,12 @@ export default function BrandDashboardPage() {
         <div className="flex flex-col gap-4">
           <div className="border rounded-xl p-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Review Activity</h2>
+              <h2 className="text-lg font-semibold">Upcoming Reviews</h2>
               <Link href={`/brands/${brandId}/category-review`} className="text-sm underline">View all</Link>
             </div>
 
             {upcomingList.length === 0 ? (
-              <p className="text-sm text-gray-600 mt-4">No review activity in the past or next 30 days.</p>
+              <p className="text-sm text-gray-600 mt-4">No upcoming reviews in the next 30 days.</p>
             ) : (
               <div className="space-y-3 mt-4">
                 {upcomingList.map((item) => (
@@ -798,7 +807,14 @@ export default function BrandDashboardPage() {
                         </button>
                       )}
                     </div>
-                    <div className="text-sm text-gray-500">{item.category_label}</div>
+                    {item.universal_category && (
+                      <div className="text-xs font-medium mt-0.5" style={{ color: "#0F6E56" }}>
+                        {item.universal_category}
+                      </div>
+                    )}
+                    {item.retailer_category_review_name && item.retailer_category_review_name !== item.universal_category && (
+                      <div className="text-sm text-gray-500">{item.retailer_category_review_name}</div>
+                    )}
                     <div className="text-sm text-gray-600 mt-1">{prettyDate(item.date)}</div>
                     {item.retailer_id ? (
                       <div className="mt-2">
@@ -843,6 +859,71 @@ export default function BrandDashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* ── Upcoming Reviews (90 days) ───────────────────────────────────── */}
+      {upcomingReviews90.length > 0 && (
+        <div className="border rounded-xl p-4">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold">Upcoming Reviews</h2>
+            {upcomingReviews90.length > 10 && (
+              <Link href={`/brands/${brandId}/category-review`} className="text-sm underline">
+                View all
+              </Link>
+            )}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr style={{ borderBottom: "1px solid var(--border)", color: "var(--muted-foreground)" }}>
+                  <th className="text-left py-2 pr-4 font-medium">Retailer</th>
+                  <th className="text-left py-2 pr-4 font-medium">Category</th>
+                  <th className="text-left py-2 pr-4 font-medium">Review Name</th>
+                  <th className="text-left py-2 font-medium">Review Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {upcomingReviews90.slice(0, 10).map((row, idx) => {
+                  const ret = row.retailer_id ? retailersById[row.retailer_id] : null;
+                  const headline = ret?.banner?.trim() ? ret.banner : ret?.name ?? row.retailer_name;
+                  return (
+                    <tr
+                      key={`${row.retailer_name}-${row.universal_category}-${row.review_date}-${idx}`}
+                      style={{ borderBottom: "1px solid var(--border)" }}
+                    >
+                      <td className="py-2.5 pr-4 font-medium">
+                        {row.retailer_id ? (
+                          <Link
+                            href={`/brands/${brandId}/retailers#retailer-${row.retailer_id}`}
+                            className="underline"
+                          >
+                            {headline}
+                          </Link>
+                        ) : headline}
+                      </td>
+                      <td className="py-2.5 pr-4" style={{ color: "var(--muted-foreground)" }}>
+                        {row.universal_category}
+                      </td>
+                      <td className="py-2.5 pr-4" style={{ color: "var(--muted-foreground)" }}>
+                        {row.retailer_category_review_name || "—"}
+                      </td>
+                      <td className="py-2.5 whitespace-nowrap" style={{ color: "var(--foreground)" }}>
+                        {prettyDate(row.review_date)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {upcomingReviews90.length > 10 && (
+            <div className="mt-3">
+              <Link href={`/brands/${brandId}/category-review`} className="text-sm underline">
+                View all {upcomingReviews90.length} upcoming reviews →
+              </Link>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Recent Submissions ───────────────────────────────────────────── */}
       {recentSubmissions.length > 0 && (
