@@ -199,8 +199,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="border-b" style={{ background: "#123b52", borderColor: "rgba(255,255,255,0.08)" }}>
+    <div className="h-screen flex flex-col bg-background text-foreground">
+      <div className="flex-shrink-0 border-b" style={{ background: "#123b52", borderColor: "rgba(255,255,255,0.08)" }}>
         <div className="flex items-center gap-4 px-6 py-4">
           <img
             src="/cultivate-icon.jpeg"
@@ -312,7 +312,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </div>
 
-      <div>{children}</div>
+      <div className="flex-1 min-h-0 overflow-y-auto">{children}</div>
     </div>
   );
 }

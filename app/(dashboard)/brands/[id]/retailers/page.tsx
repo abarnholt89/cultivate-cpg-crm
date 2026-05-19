@@ -1525,13 +1525,25 @@ function BrandRetailersInner() {
         }}
       >
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <input
-            className="rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2"
-            style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
-            placeholder="Search banner, parent company, channel, region, rep…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
+          <div className="relative">
+            <input
+              className="rounded-lg px-3 py-2 pr-8 w-full text-sm focus:outline-none focus:ring-2"
+              style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+              placeholder="Search retailers…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-base leading-none"
+                aria-label="Clear search"
+              >
+                ×
+              </button>
+            )}
+          </div>
 
           <select
             className="rounded-lg px-3 py-2 w-full text-sm"
