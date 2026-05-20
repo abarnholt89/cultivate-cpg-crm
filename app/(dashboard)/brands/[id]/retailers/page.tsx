@@ -830,14 +830,26 @@ function BrandRetailersInner() {
   async function save(retailerId: string) {
     setStatus("Saving…");
 
-    // Save authorized_items_note on the primary row
-    const primaryRow = (pipelineMap[retailerId] ?? [defaultPipelineRow(retailerId)])[0];
-    if (primaryRow.id) {
-      const { error } = await supabase
-        .from("brand_retailer_timing")
-        .update({ authorized_items_note: primaryRow.authorized_items_note })
-        .eq("id", primaryRow.id);
-      if (error) { setStatus(error.message); return; }
+    // Save ALL pipeline rows for this retailer (account_status, submitted_date, etc.)
+    // This ensures submitted_date/submitted_notes are persisted even when the rep
+    // clicks this button instead of the per-row "Save".
+    const pRows = pipelineMap[retailerId] ?? [];
+    for (const pRow of pRows) {
+      if (pRow.id) {
+        const { error } = await supabase
+          .from("brand_retailer_timing")
+          .update({
+            account_status: pRow.account_status,
+            schedule_mode: pRow.schedule_mode,
+            submitted_date: pRow.submitted_date,
+            submitted_notes: pRow.submitted_notes,
+            notes: pRow.notes,
+            authorized_items_note: pRow.id === pRows[0]?.id ? pRow.authorized_items_note : undefined,
+            last_activity_at: new Date().toISOString(),
+          })
+          .eq("id", pRow.id);
+        if (error) { setStatus(error.message); return; }
+      }
     }
 
     // Save any pending date overrides for this retailer's category review rows
