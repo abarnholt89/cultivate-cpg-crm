@@ -93,6 +93,26 @@ type BulkForm = {
   notes: string;
 };
 
+type EditForm = {
+  brand_name: string;
+  retailer_name: string;
+  distributor: string;
+  cultivate_rep: string;
+  sku_description: string;
+  unit_upc: string;
+  promo_year: string;
+  promo_month: string;
+  promo_name: string;
+  promo_type: string;
+  promo_status: string;
+  start_date: string;
+  end_date: string;
+  discount_percent: string;
+  discount_amount: string;
+  promo_text_raw: string;
+  notes: string;
+};
+
 const EMPTY_BULK_FORM: BulkForm = {
   promo_type: "TPR",
   promo_status: "confirmed",
@@ -342,6 +362,13 @@ function PromotionsInner() {
   const [repFilter, setRepFilter] = useState("all");
   const [scopeFilter, setScopeFilter] = useState("all");
   const [hideEdlp, setHideEdlp] = useState(true); // Feature 1
+
+  // Inline edit + delete
+  const [editingRow, setEditingRow] = useState<PromotionRow | null>(null);
+  const [editForm, setEditForm] = useState<EditForm | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [deletingItem, setDeletingItem] = useState<PromotionRow | null>(null);
 
   // View mode (Feature 3)
   const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
@@ -622,6 +649,127 @@ function PromotionsInner() {
     setBulkSaving(false);
   }
 
+  // ── Inline edit / delete ────────────────────────────────────────────────────
+
+  function openEdit(item: PromotionRow) {
+    setEditingRow(item);
+    setEditForm({
+      brand_name: item.brand_name,
+      retailer_name: item.retailer_name,
+      distributor: item.distributor ?? "",
+      cultivate_rep: item.cultivate_rep ?? "",
+      sku_description: item.sku_description,
+      unit_upc: item.unit_upc ?? "",
+      promo_year: String(item.promo_year),
+      promo_month: String(item.promo_month),
+      promo_name: item.promo_name ?? "",
+      promo_type: item.promo_type,
+      promo_status: item.promo_status,
+      start_date: item.start_date?.slice(0, 10) ?? "",
+      end_date: item.end_date?.slice(0, 10) ?? "",
+      discount_percent: item.discount_percent != null ? String(item.discount_percent) : "",
+      discount_amount: item.discount_amount != null ? String(item.discount_amount) : "",
+      promo_text_raw: item.promo_text_raw ?? "",
+      notes: item.notes ?? "",
+    });
+    setEditError("");
+  }
+
+  function rowMatchFilter(r: PromotionRow, orig: PromotionRow) {
+    return (
+      r.brand_name === orig.brand_name &&
+      r.retailer_name === orig.retailer_name &&
+      r.sku_description === orig.sku_description &&
+      r.promo_year === orig.promo_year &&
+      r.promo_month === orig.promo_month &&
+      r.promo_type === orig.promo_type &&
+      r.start_date === orig.start_date &&
+      r.unit_upc === orig.unit_upc &&
+      r.promo_name === orig.promo_name
+    );
+  }
+
+  function buildKeyQuery(q: any, item: PromotionRow) {
+    q = q
+      .eq("brand_name", item.brand_name)
+      .eq("retailer_name", item.retailer_name)
+      .eq("sku_description", item.sku_description)
+      .eq("promo_year", item.promo_year)
+      .eq("promo_month", item.promo_month)
+      .eq("promo_type", item.promo_type);
+    if (item.unit_upc != null) q = q.eq("unit_upc", item.unit_upc);
+    else q = q.is("unit_upc", null);
+    if (item.promo_name != null) q = q.eq("promo_name", item.promo_name);
+    else q = q.is("promo_name", null);
+    if (item.start_date != null) q = q.eq("start_date", item.start_date);
+    else q = q.is("start_date", null);
+    return q;
+  }
+
+  async function handleSaveEdit() {
+    if (!editingRow || !editForm) return;
+    setEditSaving(true);
+    setEditError("");
+
+    const payload = {
+      brand_name: editForm.brand_name.trim(),
+      retailer_name: editForm.retailer_name.trim(),
+      distributor: editForm.distributor.trim() || null,
+      cultivate_rep: editForm.cultivate_rep.trim() || null,
+      sku_description: editForm.sku_description.trim(),
+      unit_upc: editForm.unit_upc.trim() || null,
+      promo_year: Number(editForm.promo_year) || editingRow.promo_year,
+      promo_month: Number(editForm.promo_month) || editingRow.promo_month,
+      promo_name: editForm.promo_name.trim() || null,
+      promo_type: editForm.promo_type.trim(),
+      promo_status: editForm.promo_status.trim(),
+      start_date: editForm.start_date || null,
+      end_date: editForm.end_date || null,
+      discount_percent: editForm.discount_percent ? Number(editForm.discount_percent) : null,
+      discount_amount: editForm.discount_amount ? Number(editForm.discount_amount) : null,
+      promo_text_raw: editForm.promo_text_raw.trim() || null,
+      notes: editForm.notes.trim() || null,
+    };
+
+    const { error } = await buildKeyQuery(
+      supabase.from("promotions_stage").update(payload),
+      editingRow
+    );
+
+    if (error) {
+      setEditError(error.message);
+      setEditSaving(false);
+      return;
+    }
+
+    setPromotions((prev) =>
+      prev.map((r) =>
+        rowMatchFilter(r, editingRow)
+          ? { ...r, ...payload, promo_scope: r.promo_scope }
+          : r
+      )
+    );
+    setEditingRow(null);
+    setEditForm(null);
+    setEditSaving(false);
+  }
+
+  async function handleDeleteRow(item: PromotionRow) {
+    const { error } = await buildKeyQuery(
+      supabase.from("promotions_stage").delete(),
+      item
+    );
+
+    if (error) {
+      setDeletingItem(null);
+      alert(error.message);
+      return;
+    }
+
+    setPromotions((prev) => prev.filter((r) => !rowMatchFilter(r, item)));
+    setDeletingItem(null);
+  }
+
   // ── Render: existing list sections ─────────────────────────────────────────
 
   function renderDistributorGroups(groups: DistributorGroup[]) {
@@ -652,6 +800,20 @@ function PromotionsInner() {
                       <div className="text-xs text-gray-500 mt-1">Runs: {prettyDate(item.start_date)} → {prettyDate(item.end_date)}</div>
                       {item.promo_type ? <div className="text-xs text-gray-500">TPR Type: {item.promo_type}</div> : null}
                       {discountLabel(item) ? <div className="text-xs text-gray-500">Discount: {discountLabel(item)}</div> : null}
+                      {(role === "admin" || role === "rep") && (
+                        <div className="mt-2 flex items-center gap-3">
+                          <button type="button" onClick={() => openEdit(item)} className="text-xs underline text-blue-600 hover:text-blue-800">Edit</button>
+                          {deletingItem === item ? (
+                            <span className="flex items-center gap-1 text-xs">
+                              <span className="text-gray-600">Delete?</span>
+                              <button type="button" onClick={() => handleDeleteRow(item)} className="text-red-600 font-medium hover:underline">Yes</button>
+                              <button type="button" onClick={() => setDeletingItem(null)} className="text-gray-500 hover:underline">No</button>
+                            </span>
+                          ) : (
+                            <button type="button" onClick={() => setDeletingItem(item)} className="text-xs text-gray-400 hover:text-red-500" title="Delete promotion">🗑</button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -733,7 +895,20 @@ function PromotionsInner() {
                                           {discountLabel(item) ? <div className="text-xs text-gray-500">Discount: {discountLabel(item)}</div> : null}
                                           <div className="text-xs text-gray-500">Runs: {prettyDate(item.start_date)} → {prettyDate(item.end_date)}</div>
                                           {item.notes ? <div className="text-xs text-gray-500 mt-1">Notes: {item.notes}</div> : null}
-                                          <div className="mt-2"><Link href={`/promotions/${item.id}/edit`} className="text-xs underline">Edit Promotion</Link></div>
+                                          {(role === "admin" || role === "rep") && (
+                                            <div className="mt-2 flex items-center gap-3">
+                                              <button type="button" onClick={() => openEdit(item)} className="text-xs underline text-blue-600 hover:text-blue-800">Edit</button>
+                                              {deletingItem === item ? (
+                                                <span className="flex items-center gap-1 text-xs">
+                                                  <span className="text-gray-600">Delete?</span>
+                                                  <button type="button" onClick={() => handleDeleteRow(item)} className="text-red-600 font-medium hover:underline">Yes</button>
+                                                  <button type="button" onClick={() => setDeletingItem(null)} className="text-gray-500 hover:underline">No</button>
+                                                </span>
+                                              ) : (
+                                                <button type="button" onClick={() => setDeletingItem(item)} className="text-xs text-gray-400 hover:text-red-500" title="Delete promotion">🗑</button>
+                                              )}
+                                            </div>
+                                          )}
                                         </div>
                                       ))}
                                     </div>
@@ -1085,6 +1260,79 @@ function PromotionsInner() {
       </div>
 
       {status ? <div className="text-sm text-red-600">{status}</div> : null}
+
+      {/* ── Inline edit modal ────────────────────────────────────────────── */}
+      {editingRow && editForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => { setEditingRow(null); setEditForm(null); }}>
+          <div className="relative w-full max-w-2xl mx-4 rounded-xl border border-border bg-card shadow-xl p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Edit Promotion</h2>
+              <button type="button" onClick={() => { setEditingRow(null); setEditForm(null); }} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+            {editError && <div className="text-sm text-red-600">{editError}</div>}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              {(["brand_name", "retailer_name", "distributor", "cultivate_rep", "sku_description", "unit_upc"] as const).map((field) => (
+                <div key={field} className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground capitalize">{field.replace(/_/g, " ")}</label>
+                  <input className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={editForm[field]} onChange={(e) => setEditForm((f) => f ? { ...f, [field]: e.target.value } : f)} />
+                </div>
+              ))}
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Promo Name</label>
+                <select className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={editForm.promo_name} onChange={(e) => setEditForm((f) => f ? { ...f, promo_name: e.target.value } : f)}>
+                  <option value="">—</option>
+                  {["TPR","Feature","Display","Digital","Distributor OI","Other"].map((v) => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Promo Type</label>
+                <select className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={editForm.promo_type} onChange={(e) => setEditForm((f) => f ? { ...f, promo_type: e.target.value } : f)}>
+                  <option value="">—</option>
+                  {["TPR","Feature","Display","Digital","Distributor OI","Other"].map((v) => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Promo Status</label>
+                <select className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={editForm.promo_status} onChange={(e) => setEditForm((f) => f ? { ...f, promo_status: e.target.value } : f)}>
+                  {["planned","submitted","approved","live","completed","cancelled"].map((v) => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Start Date</label>
+                <input type="date" className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={editForm.start_date} onChange={(e) => setEditForm((f) => f ? { ...f, start_date: e.target.value } : f)} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">End Date</label>
+                <input type="date" className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={editForm.end_date} onChange={(e) => setEditForm((f) => f ? { ...f, end_date: e.target.value } : f)} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Discount %</label>
+                <input type="number" step="0.01" className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={editForm.discount_percent} onChange={(e) => setEditForm((f) => f ? { ...f, discount_percent: e.target.value } : f)} placeholder="Optional" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Discount $</label>
+                <input type="number" step="0.01" className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={editForm.discount_amount} onChange={(e) => setEditForm((f) => f ? { ...f, discount_amount: e.target.value } : f)} placeholder="Optional" />
+              </div>
+              <div className="space-y-1 md:col-span-2">
+                <label className="text-xs font-medium text-muted-foreground">Promo Text</label>
+                <textarea rows={2} className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={editForm.promo_text_raw} onChange={(e) => setEditForm((f) => f ? { ...f, promo_text_raw: e.target.value } : f)} />
+              </div>
+              <div className="space-y-1 md:col-span-2">
+                <label className="text-xs font-medium text-muted-foreground">Notes</label>
+                <textarea rows={2} className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={editForm.notes} onChange={(e) => setEditForm((f) => f ? { ...f, notes: e.target.value } : f)} />
+              </div>
+            </div>
+            <div className="flex items-center gap-3 pt-2">
+              <button type="button" onClick={handleSaveEdit} disabled={editSaving} className="px-4 py-2 rounded text-sm font-medium text-white disabled:opacity-50" style={{ background: "var(--foreground)" }}>
+                {editSaving ? "Saving…" : "Save Changes"}
+              </button>
+              <button type="button" onClick={() => { setEditingRow(null); setEditForm(null); }} className="px-4 py-2 rounded text-sm border border-border text-muted-foreground hover:text-foreground">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Bulk builder */}
       {renderBulkBuilder()}
