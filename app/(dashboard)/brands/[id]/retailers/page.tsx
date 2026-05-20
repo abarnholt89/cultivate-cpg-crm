@@ -2420,7 +2420,7 @@ function BrandRetailersInner() {
                       </div>
                     )}
                     <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>
-                      {role === "client" ? "Message" : activeTab === "client" ? "New client-visible message" : "New internal-only note"}
+                      {(role === "client" || (role as string) === "owner") ? "Message" : activeTab === "client" ? "New client-visible message" : "New internal-only note"}
                     </div>
                     <textarea
                       className="border rounded-lg px-3 py-2 w-full text-sm"

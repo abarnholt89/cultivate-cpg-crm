@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 
-type Role = "admin" | "rep" | "client" | null;
+type Role = "admin" | "rep" | "client" | "owner" | null;
 
 type Brand = { id: string; name: string };
 
@@ -326,7 +326,7 @@ export default function AllBrandsBoardPage() {
     let brands = (brandsData as Brand[]) ?? [];
 
     // Clients only see brands they are explicitly associated with via brand_users
-    if (resolvedRole === "client") {
+    if (resolvedRole === "client" || resolvedRole === "owner") {
       const { data: clientBrands } = await supabase
         .from("brand_users")
         .select("brand_id")
@@ -435,7 +435,7 @@ export default function AllBrandsBoardPage() {
           lastActivity: msgLastActivity[brand.id] ?? null,
         };
       })
-      .filter((b) => b.retailerCount > 0);
+;
 
     // Set all state in one synchronous block so the first render has everything
     setBrandSummaries(summaries);
@@ -1131,7 +1131,7 @@ export default function AllBrandsBoardPage() {
                       className="px-4 py-3 text-sm italic"
                       style={{ borderTop: "1px solid var(--border)", color: "var(--muted-foreground)" }}
                     >
-                      No retailers found.
+                      No retailers added yet.
                     </div>
                   ) : (
                     <table className="w-full text-sm" style={{ boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
@@ -1416,11 +1416,14 @@ export default function AllBrandsBoardPage() {
                                       )}
 
                                       {/* Note editor — 2-col for reps/admins, 1-col for clients */}
-                                      <div className={`grid ${role !== "client" ? "grid-cols-2" : "grid-cols-1"} gap-4`}>
+                                      {(() => {
+                                        const isClientUser = role === "client" || (role as string) === "owner";
+                                        return (
+                                      <div className={`grid ${!isClientUser ? "grid-cols-2" : "grid-cols-1"} gap-4`}>
                                         {/* Client-facing note */}
                                         <div className="space-y-2">
                                           <p className="text-xs font-semibold" style={{ color: "var(--foreground)" }}>
-                                            {role === "client" ? "Message" : "Client-facing note"}
+                                            {isClientUser ? "Message" : "Client-facing note"}
                                           </p>
                                           {row.latestClientNote && (
                                             <p className="text-xs rounded px-2 py-1.5 line-clamp-2" style={{ background: "var(--card)", color: "var(--muted-foreground)", border: "1px solid var(--border)" }}>
@@ -1452,12 +1455,12 @@ export default function AllBrandsBoardPage() {
                                             disabled={saving === "client" || !clientNoteText.trim()}
                                             onClick={(e) => { e.stopPropagation(); saveNote(brand.id, row.retailerId, "client"); }}
                                           >
-                                            {saving === "client" ? "Saving…" : role === "client" ? "Send Message" : "Save Client Note"}
+                                            {saving === "client" ? "Saving…" : isClientUser ? "Send Message" : "Save Client Note"}
                                           </button>
                                         </div>
 
-                                        {/* Internal note — hidden for client users */}
-                                        {role !== "client" && (
+                                        {/* Internal note — hidden for client/owner users */}
+                                        {!isClientUser && (
                                         <div className="space-y-2">
                                           <p className="text-xs font-semibold" style={{ color: "var(--foreground)" }}>
                                             Internal only
@@ -1497,6 +1500,8 @@ export default function AllBrandsBoardPage() {
                                         </div>
                                         )}
                                       </div>
+                                        );
+                                      })()}
 
                                       <div className="flex items-center gap-3 flex-wrap pt-1">
                                         <button
