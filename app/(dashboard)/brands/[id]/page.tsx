@@ -78,6 +78,13 @@ type MsgSummary = {
   latest_body: string | null;
 };
 
+type SubmissionRow = {
+  retailer_id: string;
+  submitted_date: string;
+  notes: string | null;
+  retailers: { id: string; name: string | null; banner: string | null } | null;
+};
+
 // ─── helpers ───────────────────────────────────────────────────────────────
 
 function todayISO() {
@@ -181,6 +188,7 @@ export default function BrandDashboardPage() {
   const [promotionRows, setPromotionRows] = useState<PromotionRow[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
   const [dismissedReviewKeys, setDismissedReviewKeys] = useState<Set<string>>(new Set());
+  const [submissionRows, setSubmissionRows] = useState<SubmissionRow[]>([]);
 
   useEffect(() => {
     if (!brandId) return;
@@ -210,7 +218,7 @@ export default function BrandDashboardPage() {
       if (!brandData) { setError("Brand not found."); return; }
       setBrand(brandData);
 
-      const [pipelineResponse, calendarResponse, authorizedResponse, msgsResponse, manualTimingResponse, promotionsResponse, dismissalsResponse] =
+      const [pipelineResponse, calendarResponse, authorizedResponse, msgsResponse, manualTimingResponse, promotionsResponse, dismissalsResponse, submissionsResponse] =
         await Promise.all([
           supabase
             .from("brand_retailer_timing")
@@ -245,6 +253,12 @@ export default function BrandDashboardPage() {
             .from("brand_category_review_dismissals")
             .select("category_review_id")
             .eq("brand_id", brandId),
+          supabase
+            .from("brand_retailer_timing")
+            .select("retailer_id,submitted_date,notes,retailers(id,name,banner)")
+            .eq("brand_id", brandId)
+            .not("submitted_date", "is", null)
+            .order("submitted_date", { ascending: false }),
         ]);
 
       if (pipelineResponse.error) { setError(pipelineResponse.error.message); return; }
@@ -269,6 +283,7 @@ export default function BrandDashboardPage() {
       setManualTimingRows(nextManualTimingRows);
       setAuthorizedRows(nextAuthorizedRows);
       setPromotionRows((promotionsResponse.data as PromotionRow[]) ?? []);
+      setSubmissionRows(((submissionsResponse.data ?? []) as unknown as SubmissionRow[]));
 
       const dismissalCalIds = ((dismissalsResponse.data ?? []) as { category_review_id: string }[])
         .map((d) => d.category_review_id).filter(Boolean);
@@ -374,17 +389,17 @@ export default function BrandDashboardPage() {
     manualTimingRows.forEach((r) => {
       if (r.category_review_date && isBetweenInclusive(r.category_review_date, today, next90)) upcomingReviews++;
     });
-    // Deduplicate by retailer_id for submitted accounts count
-    const submittedRetailers = new Set<string>();
     pipelineRows.forEach((r) => {
       if (isAwaitingSubmission(r.account_status)) awaitingSubmission++;
       if (isInProcess(r.account_status)) inProcess++;
-      if (r.submitted_date && r.submitted_date.slice(0, 10) >= ninetyDaysAgo) {
-        submittedRetailers.add(r.retailer_id);
-      }
     });
-    return { upcomingReviews, awaitingSubmission, inProcess, submittedAccounts: submittedRetailers.size };
-  }, [pipelineRows, calendarRows, manualTimingRows]);
+    const submittedAccounts = new Set(
+      submissionRows
+        .filter((r) => r.submitted_date.slice(0, 10) >= ninetyDaysAgo)
+        .map((r) => r.retailer_id)
+    ).size;
+    return { upcomingReviews, awaitingSubmission, inProcess, submittedAccounts };
+  }, [pipelineRows, calendarRows, manualTimingRows, submissionRows]);
 
   // Distinct retailers with at least one client-visible message in the last 7 days
   const recentRetailerCount = useMemo(() => {
@@ -519,19 +534,19 @@ export default function BrandDashboardPage() {
     const today = todayISO();
     const ninetyDaysAgo = addDaysISO(today, -90);
     // Deduplicate by retailer_id, keeping the most recent submitted_date per retailer
-    const byRetailer = new Map<string, PipelineRow>();
-    pipelineRows
-      .filter((r) => !!r.submitted_date && r.submitted_date.slice(0, 10) >= ninetyDaysAgo)
+    const byRetailer = new Map<string, SubmissionRow>();
+    submissionRows
+      .filter((r) => r.submitted_date.slice(0, 10) >= ninetyDaysAgo)
       .forEach((r) => {
         const existing = byRetailer.get(r.retailer_id);
-        if (!existing || (r.submitted_date ?? "") > (existing.submitted_date ?? "")) {
+        if (!existing || r.submitted_date > existing.submitted_date) {
           byRetailer.set(r.retailer_id, r);
         }
       });
     return [...byRetailer.values()].sort(
-      (a, b) => (b.submitted_date ?? "").localeCompare(a.submitted_date ?? "")
+      (a, b) => b.submitted_date.localeCompare(a.submitted_date)
     );
-  }, [pipelineRows]);
+  }, [submissionRows]);
 
   async function dismissReview(item: ReviewActivityItem) {
     if (!userId || !brandId) return;
@@ -872,8 +887,7 @@ export default function BrandDashboardPage() {
           </div>
           <div className="space-y-3 mt-4">
             {recentSubmissions.slice(0, 5).map((row, index) => {
-              const retailer = retailersById[row.retailer_id];
-              const headline = retailer?.banner?.trim() ? retailer.banner : retailer?.name ?? "Retailer";
+              const headline = row.retailers?.banner?.trim() ? row.retailers.banner : row.retailers?.name ?? "Retailer";
               return (
                 <Link
                   key={`${row.retailer_id}-${index}`}
