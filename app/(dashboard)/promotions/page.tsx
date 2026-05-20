@@ -186,6 +186,29 @@ function isEdlpEdlcGroup(pg: { promo_type: string; promo_name: string | null }) 
   return t.includes("EDLP") || t.includes("EDLC") || n.includes("EDLP") || n.includes("EDLC");
 }
 
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function remapStatus(s: string): string {
+  if (s === "approved") return "submitted";
+  if (s === "cancelled") return "completed";
+  return s;
+}
+
+function applyDisplayStatus(row: PromotionRow): PromotionRow {
+  const today = todayISO();
+  const status = remapStatus(row.promo_status);
+  let display = status;
+  if (row.end_date && row.end_date < today) {
+    display = "completed";
+  } else if (row.start_date && row.end_date && row.start_date <= today && row.end_date >= today) {
+    if (status !== "submitted") display = "live";
+  }
+  return display === row.promo_status ? row : { ...row, promo_status: display };
+}
+
 function normalizeStageRow(r: any): PromotionRow {
   return {
     id: String(r.id),
@@ -202,7 +225,7 @@ function normalizeStageRow(r: any): PromotionRow {
     promo_month: Number(r.promo_month) || 0,
     promo_name: r.promo_name ?? null,
     promo_type: r.promo_type ?? "",
-    promo_status: r.promo_status ?? "",
+    promo_status: remapStatus(r.promo_status ?? ""),
     promo_scope: r.promo_scope ?? null,
     start_date: r.start_date ?? null,
     end_date: r.end_date ?? null,
@@ -369,6 +392,8 @@ function PromotionsInner() {
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState("");
   const [deletingItem, setDeletingItem] = useState<PromotionRow | null>(null);
+  const [deletingPromoGroupKey, setDeletingPromoGroupKey] = useState<string | null>(null);
+  const [syncingStatuses, setSyncingStatuses] = useState(false);
 
   // View mode (Feature 3)
   const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
@@ -463,7 +488,7 @@ function PromotionsInner() {
               }
             }
 
-            stageRows = [...exactRows, ...fuzzyRows].map(normalizeStageRow);
+            stageRows = [...exactRows, ...fuzzyRows].map(normalizeStageRow).map(applyDisplayStatus);
           }
 
           // Merge and sort by promo_year desc, promo_month asc, start_date asc
@@ -478,7 +503,7 @@ function PromotionsInner() {
               .order("promo_year", { ascending: false })
               .order("promo_month", { ascending: true })
           );
-          rows = rawRows.map(normalizeStageRow);
+          rows = rawRows.map(normalizeStageRow).map(applyDisplayStatus);
         }
 
         setPromotions(rows);
@@ -770,6 +795,68 @@ function PromotionsInner() {
     setDeletingItem(null);
   }
 
+  async function handleDeletePromoGroup(pg: RetailerPromoGroup, brandName: string, retailerName: string) {
+    let q = supabase
+      .from("promotions_stage")
+      .delete()
+      .eq("brand_name", brandName)
+      .eq("retailer_name", retailerName)
+      .eq("promo_year", pg.promo_year)
+      .eq("promo_month", pg.promo_month);
+    if (pg.promo_name != null) q = q.eq("promo_name", pg.promo_name);
+    else q = q.is("promo_name", null);
+
+    const { error } = await q;
+    if (error) {
+      setDeletingPromoGroupKey(null);
+      alert(error.message);
+      return;
+    }
+
+    setPromotions((prev) =>
+      prev.filter(
+        (r) =>
+          !(
+            r.brand_name === brandName &&
+            r.retailer_name === retailerName &&
+            r.promo_year === pg.promo_year &&
+            r.promo_month === pg.promo_month &&
+            r.promo_name === pg.promo_name
+          )
+      )
+    );
+    setDeletingPromoGroupKey(null);
+  }
+
+  async function handleSyncStatuses() {
+    setSyncingStatuses(true);
+    try {
+      const today = todayISO();
+      await supabase
+        .from("promotions_stage")
+        .update({ promo_status: "completed" })
+        .lt("end_date", today)
+        .neq("promo_status", "completed");
+      await supabase
+        .from("promotions_stage")
+        .update({ promo_status: "live" })
+        .lte("start_date", today)
+        .gte("end_date", today)
+        .not("promo_status", "in", '("completed","submitted")');
+      // Reload
+      const rawRows = await fetchAllRows<any>(
+        supabase.from("promotions_stage").select("*")
+          .order("promo_year", { ascending: false })
+          .order("promo_month", { ascending: true })
+      );
+      setPromotions(rawRows.map(normalizeStageRow).map(applyDisplayStatus));
+    } catch (err: any) {
+      alert(err?.message || "Sync failed.");
+    } finally {
+      setSyncingStatuses(false);
+    }
+  }
+
   // ── Render: existing list sections ─────────────────────────────────────────
 
   function renderDistributorGroups(groups: DistributorGroup[]) {
@@ -874,16 +961,31 @@ function PromotionsInner() {
                               const hasOiLoaded = promoGroup.rows.some((item) => distributorOiKeys.has([(item.brand_name || "").toLowerCase(), item.promo_year, item.promo_month].join("||")));
                               return (
                                 <div key={promoGroup.key} className="border rounded bg-gray-50">
-                                  <button type="button" className="w-full text-left p-3 hover:bg-gray-100" onClick={(e) => { e.stopPropagation(); setExpandedPromoGroups((prev) => ({ ...prev, [promoGroup.key]: !prev[promoGroup.key] })); }}>
-                                    <div className="font-medium">{monthLabel(promoGroup.promo_month)} {promoGroup.promo_year} — {promoGroup.promo_name || promoGroup.promo_type}</div>
-                                    <div className="text-xs text-gray-500 mt-1 flex items-center gap-2">
-                                      <span>{promoSkuCount} SKU{promoSkuCount === 1 ? "" : "s"} • {promoGroup.promo_status}</span>
-                                      {hasOiLoaded ? <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] text-green-700 border-green-300 bg-green-50">✓ OI loaded</span> : null}
-                                    </div>
-                                    <div className="text-xs text-gray-500">Runs: {prettyDate(promoGroup.start_date)} → {prettyDate(promoGroup.end_date)}</div>
-                                    <div className="text-xs text-gray-500 mt-1">TPR Type: {promoGroup.promo_type}</div>
-                                    {promoGroup.promo_text_raw ? <div className="text-xs text-gray-500 mt-1">{promoGroup.promo_text_raw}</div> : null}
-                                  </button>
+                                  <div className="flex items-start">
+                                    <button type="button" className="flex-1 text-left p-3 hover:bg-gray-100" onClick={(e) => { e.stopPropagation(); setExpandedPromoGroups((prev) => ({ ...prev, [promoGroup.key]: !prev[promoGroup.key] })); }}>
+                                      <div className="font-medium">{monthLabel(promoGroup.promo_month)} {promoGroup.promo_year} — {promoGroup.promo_name || promoGroup.promo_type}</div>
+                                      <div className="text-xs text-gray-500 mt-1 flex items-center gap-2">
+                                        <span>{promoSkuCount} SKU{promoSkuCount === 1 ? "" : "s"} • {promoGroup.promo_status}</span>
+                                        {hasOiLoaded ? <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] text-green-700 border-green-300 bg-green-50">✓ OI loaded</span> : null}
+                                      </div>
+                                      <div className="text-xs text-gray-500">Runs: {prettyDate(promoGroup.start_date)} → {prettyDate(promoGroup.end_date)}</div>
+                                      <div className="text-xs text-gray-500 mt-1">TPR Type: {promoGroup.promo_type}</div>
+                                      {promoGroup.promo_text_raw ? <div className="text-xs text-gray-500 mt-1">{promoGroup.promo_text_raw}</div> : null}
+                                    </button>
+                                    {(role === "admin" || role === "rep") && (
+                                      <div className="flex items-center pr-3 pt-3" onClick={(e) => e.stopPropagation()}>
+                                        {deletingPromoGroupKey === promoGroup.key ? (
+                                          <span className="flex items-center gap-1 text-xs whitespace-nowrap">
+                                            <span className="text-gray-600">Delete all {promoSkuCount} SKU{promoSkuCount === 1 ? "" : "s"}?</span>
+                                            <button type="button" onClick={() => handleDeletePromoGroup(promoGroup, brandGroup.brand_name, group.retailer_name)} className="text-red-600 font-medium hover:underline">Yes</button>
+                                            <button type="button" onClick={() => setDeletingPromoGroupKey(null)} className="text-gray-500 hover:underline">No</button>
+                                          </span>
+                                        ) : (
+                                          <button type="button" onClick={() => setDeletingPromoGroupKey(promoGroup.key)} className="text-gray-400 hover:text-red-500" title="Delete all SKUs in this promotion">🗑</button>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
                                   {expandedPromoGroups[promoGroup.key] ? (
                                     <div className="px-3 pb-3 space-y-2">
                                       {promoGroup.rows.map((item) => (
@@ -1050,10 +1152,8 @@ function PromotionsInner() {
                 <select value={bulkForm.promo_status} onChange={(e) => setBulkForm((f) => ({ ...f, promo_status: e.target.value }))} className={inputCls} style={inputStyle}>
                   <option value="planned">Planned</option>
                   <option value="submitted">Submitted</option>
-                  <option value="approved">Approved</option>
                   <option value="live">Live</option>
                   <option value="completed">Completed</option>
-                  <option value="cancelled">Cancelled</option>
                 </select>
               </div>
               <div>
@@ -1255,6 +1355,15 @@ function PromotionsInner() {
             <Link href="/promotions/new" className="px-4 py-2 rounded-lg text-sm border border-border text-muted-foreground hover:text-foreground transition-colors">
               Single SKU
             </Link>
+            {role === "admin" && (
+              <button
+                onClick={handleSyncStatuses}
+                disabled={syncingStatuses}
+                className="px-4 py-2 rounded-lg text-sm border border-border text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+              >
+                {syncingStatuses ? "Syncing…" : "Sync Statuses"}
+              </button>
+            )}
           </>
         )}
       </div>
@@ -1294,7 +1403,7 @@ function PromotionsInner() {
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Promo Status</label>
                 <select className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={editForm.promo_status} onChange={(e) => setEditForm((f) => f ? { ...f, promo_status: e.target.value } : f)}>
-                  {["planned","submitted","approved","live","completed","cancelled"].map((v) => <option key={v} value={v}>{v}</option>)}
+                  {["planned","submitted","live","completed"].map((v) => <option key={v} value={v}>{v}</option>)}
                 </select>
               </div>
               <div className="space-y-1">
