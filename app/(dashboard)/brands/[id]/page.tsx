@@ -31,6 +31,8 @@ type PipelineRow = {
   schedule_mode: "scheduled" | "open";
   submitted_date: string | null;
   notes: string | null;
+  last_activity_at: string | null;
+  last_status_change_at: string | null;
 };
 
 type CategoryReviewRow = {
@@ -226,7 +228,7 @@ export default function BrandDashboardPage() {
         await Promise.all([
           supabase
             .from("brand_retailer_timing")
-            .select("id,retailer_id,account_status,schedule_mode,submitted_date,notes")
+            .select("id,retailer_id,account_status,schedule_mode,submitted_date,notes,last_activity_at,last_status_change_at")
             .eq("brand_id", brandId),
           supabase
             .from("brand_category_review_view")
@@ -304,22 +306,40 @@ export default function BrandDashboardPage() {
 
       // ── activity banner ──────────────────────────────────────────────────
       const sevenDaysAgo = nDaysAgoISO(7);
+      const thirtyDaysAgo = nDaysAgoISO(30);
       const recentMsgs = allMsgs.filter((m) => m.created_at >= sevenDaysAgo);
-      setActivityBannerCount(recentMsgs.length);
 
-      if (recentMsgs.length > 0) {
+      // Count unique retailers with any recent activity: recent messages OR
+      // recent last_activity_at (within 30 days) so the banner is consistent
+      // with what "What's Happening Now" will show.
+      const recentRetailerSet = new Set<string>();
+      recentMsgs.forEach((m) => recentRetailerSet.add(m.retailer_id));
+      nextPipelineRows.forEach((r) => {
+        if (r.last_activity_at && r.last_activity_at >= thirtyDaysAgo) {
+          recentRetailerSet.add(r.retailer_id);
+        }
+        if (r.last_status_change_at && r.last_status_change_at >= thirtyDaysAgo) {
+          recentRetailerSet.add(r.retailer_id);
+        }
+      });
+      setActivityBannerCount(recentRetailerSet.size);
+
+      if (recentRetailerSet.size > 0) {
         const uniqueSenders = [
           ...new Set(recentMsgs.map((m) => m.sender_name).filter(Boolean)),
         ] as string[];
-        const retailersUpdated = new Set(recentMsgs.map((m) => m.retailer_id)).size;
-        const senderStr =
-          uniqueSenders.length === 0 ? "Your team" :
-          uniqueSenders.length === 1 ? uniqueSenders[0] :
-          uniqueSenders.length === 2 ? `${uniqueSenders[0]} and ${uniqueSenders[1]}` :
-          `${uniqueSenders[0]}, ${uniqueSenders[1]} and ${uniqueSenders.length - 2} more`;
-        setBannerSubtext(
-          `${senderStr} updated ${retailersUpdated} retailer${retailersUpdated !== 1 ? "s" : ""}`
-        );
+        const msgRetailers = new Set(recentMsgs.map((m) => m.retailer_id)).size;
+        if (uniqueSenders.length > 0) {
+          const senderStr =
+            uniqueSenders.length === 1 ? uniqueSenders[0] :
+            uniqueSenders.length === 2 ? `${uniqueSenders[0]} and ${uniqueSenders[1]}` :
+            `${uniqueSenders[0]}, ${uniqueSenders[1]} and ${uniqueSenders.length - 2} more`;
+          setBannerSubtext(
+            `${senderStr} updated ${msgRetailers} retailer${msgRetailers !== 1 ? "s" : ""}`
+          );
+        } else {
+          setBannerSubtext(`${recentRetailerSet.size} retailer${recentRetailerSet.size !== 1 ? "s" : ""} with recent activity`);
+        }
       }
 
       // ── per-retailer message summary ─────────────────────────────────────
@@ -475,9 +495,15 @@ export default function BrandDashboardPage() {
   const recentWorkflow = useMemo(() => {
     const sevenDaysAgo = nDaysAgoISO(7);
     const twentyOneDaysAgo = nDaysAgoISO(21);
+    const thirtyDaysAgo = nDaysAgoISO(30);
 
     function getLatest(row: PipelineRow) {
-      return messagesByRetailer[row.retailer_id]?.latest_at || row.submitted_date || "";
+      const candidates = [
+        messagesByRetailer[row.retailer_id]?.latest_at,
+        row.last_activity_at,
+        row.last_status_change_at,
+      ].filter((v): v is string => !!v);
+      return candidates.length ? candidates.sort().reverse()[0] : "";
     }
 
     function sortPriority(row: PipelineRow) {
@@ -499,7 +525,12 @@ export default function BrandDashboardPage() {
     }
 
     return [...byRetailer.values()]
-      .filter((r) => r.submitted_date || r.notes || messagesByRetailer[r.retailer_id])
+      .filter((r) => {
+        if (r.submitted_date || r.notes || messagesByRetailer[r.retailer_id]) return true;
+        if (r.last_activity_at && r.last_activity_at >= thirtyDaysAgo) return true;
+        if (r.last_status_change_at && r.last_status_change_at >= thirtyDaysAgo) return true;
+        return false;
+      })
       .sort((a, b) => {
         const pa = sortPriority(a);
         const pb = sortPriority(b);
