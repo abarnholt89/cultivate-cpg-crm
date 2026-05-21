@@ -417,9 +417,7 @@ export default function BrandDashboardPage() {
       if (isInProcess(r.account_status)) inProcess++;
     });
     const submittedAccounts = new Set(
-      submissionRows
-        .filter((r) => r.submitted_at.slice(0, 10) >= ninetyDaysAgo)
-        .map((r) => r.retailer_id)
+      submissionRows.map((r) => r.retailer_id)
     ).size;
     return { upcomingReviews, awaitingSubmission, inProcess, submittedAccounts };
   }, [pipelineRows, calendarRows, manualTimingRows, submissionRows]);
@@ -565,18 +563,14 @@ export default function BrandDashboardPage() {
   }, [promotionRows]);
 
   const recentSubmissions = useMemo(() => {
-    const today = todayISO();
-    const ninetyDaysAgo = addDaysISO(today, -90);
     // Deduplicate by retailer_id, keeping the most recent submitted_at per retailer
     const byRetailer = new Map<string, SubmissionRow>();
-    submissionRows
-      .filter((r) => r.submitted_at.slice(0, 10) >= ninetyDaysAgo)
-      .forEach((r) => {
-        const existing = byRetailer.get(r.retailer_id);
-        if (!existing || r.submitted_at > existing.submitted_at) {
-          byRetailer.set(r.retailer_id, r);
-        }
-      });
+    submissionRows.forEach((r) => {
+      const existing = byRetailer.get(r.retailer_id);
+      if (!existing || r.submitted_at > existing.submitted_at) {
+        byRetailer.set(r.retailer_id, r);
+      }
+    });
     return [...byRetailer.values()].sort(
       (a, b) => b.submitted_at.localeCompare(a.submitted_at)
     );
