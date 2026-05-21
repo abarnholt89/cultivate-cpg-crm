@@ -138,6 +138,42 @@ export async function POST(req: Request) {
         }
       }
 
+      // If this is a submission activity, create a row in the submissions table
+      // (skip silently if a row for this brand+retailer+category already exists).
+      // Non-fatal if this fails.
+      if (activityTypeKey === "submission") {
+        try {
+          const { data: catRows } = await supabase
+            .from("brand_category_access")
+            .select("universal_category")
+            .eq("brand_id", brandId)
+            .order("universal_category")
+            .limit(1);
+
+          const category = catRows?.[0]?.universal_category ?? null;
+
+          const { error: subError } = await supabase
+            .from("submissions")
+            .upsert(
+              {
+                brand_id: brandId,
+                retailer_id: retailerId,
+                category,
+                submitted_at: sentAt,
+                notes: summary || null,
+                created_by: repId,
+              },
+              { onConflict: "brand_id,retailer_id,category", ignoreDuplicates: true }
+            );
+
+          if (subError) {
+            console.error("[create-activity] submissions upsert failed:", subError.message);
+          }
+        } catch (subErr: any) {
+          console.error("[create-activity] submissions unexpected error:", subErr.message);
+        }
+      }
+
       // Mirror to brand_retailer_messages so the activity appears in the
       // retailer card inline Messages view. Non-fatal if this fails.
       try {
