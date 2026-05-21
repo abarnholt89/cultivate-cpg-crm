@@ -57,7 +57,6 @@ type TimingRow = {
   category_review_date: string | null;
   reset_date: string | null;
   next_follow_up_at: string | null;
-  submitted_date: string | null;
 };
 
 type Retailer = {
@@ -107,7 +106,8 @@ type SubmissionRow = {
   id: string;
   brand_id: string;
   retailer_id: string;
-  submitted_date: string;
+  submitted_at: string;
+  category: string | null;
   notes: string | null;
   brand: { name: string } | null;
   retailer: { name: string; banner: string | null; rep_owner_user_id: string | null } | null;
@@ -331,7 +331,7 @@ const timingPromise =
     : supabase
         .from("brand_retailer_timing")
         .select(
-          "id,brand_id,retailer_id,account_status,category_review_date,reset_date,next_follow_up_at,submitted_date"
+          "id,brand_id,retailer_id,account_status,category_review_date,reset_date,next_follow_up_at"
         )
         .in("retailer_id", ownedRetailerIds);
 
@@ -455,14 +455,6 @@ if (clientMessagesResult.error) {
 
       const allTimingRows = (timingResult.data as TimingRow[]) ?? [];
 
-      // Build a set of brand+retailer pairs that have been submitted — these
-      // should not appear in Review Activity regardless of review dates.
-      const submittedPairs = new Set<string>(
-        allTimingRows
-          .filter((r) => !!r.submitted_date)
-          .map((r) => `${r.brand_id}:${r.retailer_id}`)
-      );
-
       const timingRows = allTimingRows.filter((row) => {
         return (
           (row.category_review_date &&
@@ -511,15 +503,24 @@ if (clientMessagesResult.error) {
           return Promise.resolve({ data: [] as { brand_id: string; retailer_id: string }[], error: null });
         }
         const q = supabase
-          .from("brand_retailer_timing")
+          .from("submissions")
           .select("brand_id,retailer_id")
-          .not("submitted_date", "is", null)
-          .gte("submitted_date", monthStartISO)
-          .lte("submitted_date", today);
+          .gte("submitted_at", monthStartISO)
+          .lte("submitted_at", today);
         return nextRole === "rep" ? q.in("retailer_id", ownedRetailerIds) : q;
       })();
 
-      const [brandsResult, retailersResult, repProfilesResult, dismissalsResult, subMonthResult] = await Promise.all([
+      const submittedPairsQueryPromise = (() => {
+        if (nextRole === "rep" && ownedRetailerIds.length === 0) {
+          return Promise.resolve({ data: [] as { brand_id: string; retailer_id: string }[], error: null });
+        }
+        const q = supabase
+          .from("submissions")
+          .select("brand_id,retailer_id");
+        return nextRole === "rep" ? q.in("retailer_id", ownedRetailerIds) : q;
+      })();
+
+      const [brandsResult, retailersResult, repProfilesResult, dismissalsResult, subMonthResult, submittedPairsResult] = await Promise.all([
         brandIds.length
           ? supabase.from("brands").select("id,name").in("id", brandIds)
           : Promise.resolve({ data: [], error: null }),
@@ -537,6 +538,7 @@ if (clientMessagesResult.error) {
               .eq("dismissed_by_user_id", userId)
           : Promise.resolve({ data: [], error: null }),
         subMonthQueryPromise,
+        submittedPairsQueryPromise,
       ]);
 
       if (brandsResult.error) {
@@ -561,6 +563,13 @@ if (clientMessagesResult.error) {
 
       setRepProfiles(
         ((repProfilesResult.data as { id: string; full_name: string }[]) ?? [])
+      );
+
+      // Build a set of brand+retailer pairs that have been submitted — these
+      // should not appear in Review Activity regardless of review dates.
+      const submittedPairs = new Set<string>(
+        ((submittedPairsResult?.data ?? []) as { brand_id: string; retailer_id: string }[])
+          .map((r) => `${r.brand_id}:${r.retailer_id}`)
       );
 
       const activityUserIds = [
@@ -907,13 +916,12 @@ if (clientMessagesResult.error) {
     }
 
     const baseQuery = supabase
-      .from("brand_retailer_timing")
-      .select("id,brand_id,retailer_id,submitted_date,notes,brand:brands(name),retailer:retailers(name,banner,rep_owner_user_id)")
-      .not("submitted_date", "is", null)
-      .gte("submitted_date", startDate)
-      .lte("submitted_date", today)
-      .order("submitted_date", { ascending: false })
-      .limit(100);
+      .from("submissions")
+      .select("id,brand_id,retailer_id,submitted_at,category,notes,brand:brands(name),retailer:retailers(name,banner,rep_owner_user_id)")
+      .gte("submitted_at", startDate)
+      .lte("submitted_at", today)
+      .order("submitted_at", { ascending: false })
+      .limit(500);
 
     const { data, error } = await (
       currentRole === "rep"
@@ -924,16 +932,16 @@ if (clientMessagesResult.error) {
     setSubmissionsLoading(false);
     if (error || !data) return;
 
-    // Deduplicate by brand_id + retailer_id, keeping most recent submitted_date
+    // Deduplicate by brand_id + retailer_id, keeping most recent submitted_at
     const byKey = new Map<string, SubmissionRow>();
     (data as unknown as SubmissionRow[]).forEach((row) => {
       const k = `${row.brand_id}__${row.retailer_id}`;
-      if (!byKey.has(k) || row.submitted_date > byKey.get(k)!.submitted_date) {
+      if (!byKey.has(k) || row.submitted_at > byKey.get(k)!.submitted_at) {
         byKey.set(k, row);
       }
     });
     setSubmissionRows(
-      [...byKey.values()].sort((a, b) => b.submitted_date.localeCompare(a.submitted_date))
+      [...byKey.values()].sort((a, b) => b.submitted_at.localeCompare(a.submitted_at))
     );
     setSubmissionsVisible(25);
   }
@@ -1364,7 +1372,7 @@ if (clientMessagesResult.error) {
                         )}
                       </div>
                       <div className="mt-1 text-sm font-medium" style={{ color: "#0F6E56" }}>
-                        Submitted {prettyDateLong(row.submitted_date)}
+                        Submitted {prettyDateLong(row.submitted_at)}
                       </div>
                       {row.notes && (
                         <div className="mt-1 text-xs text-muted-foreground">{row.notes}</div>

@@ -1451,9 +1451,8 @@ function BrandRetailersInner() {
       }
 
       if (selectedFilter === "submitted_recent") {
-        return rows.some(
-          (row) => !!row.submitted_date && isBetweenInclusive(row.submitted_date, prev30, t)
-        );
+        const subs = submissionsMap[r.id] ?? [];
+        return subs.some((s) => isBetweenInclusive(s.submitted_at.slice(0, 10), prev30, t));
       }
 
       if (selectedFilter === "authorized") {
@@ -1488,7 +1487,7 @@ function BrandRetailersInner() {
     }
 
     return retailers.filter((r) => matchesFilter(r) && matchesSearch(r) && matchesRep(r));
-  }, [retailers, pipelineMap, calendarMap, authorizedMap, selectedFilter, query, selectedRep]);
+  }, [retailers, pipelineMap, calendarMap, authorizedMap, submissionsMap, selectedFilter, query, selectedRep]);
 
   return (
     <div className="p-6 space-y-6">

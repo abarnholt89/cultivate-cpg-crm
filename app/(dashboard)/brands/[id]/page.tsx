@@ -79,10 +79,14 @@ type MsgSummary = {
 };
 
 type SubmissionRow = {
+  id: string;
   retailer_id: string;
-  submitted_date: string;
+  submitted_at: string;
+  category: string | null;
   notes: string | null;
+  created_by: string | null;
   retailers: { id: string; name: string | null; banner: string | null } | null;
+  profiles: { full_name: string | null } | null;
 };
 
 // ─── helpers ───────────────────────────────────────────────────────────────
@@ -254,11 +258,10 @@ export default function BrandDashboardPage() {
             .select("category_review_id")
             .eq("brand_id", brandId),
           supabase
-            .from("brand_retailer_timing")
-            .select("retailer_id,submitted_date,notes,retailers(id,name,banner)")
+            .from("submissions")
+            .select("id,retailer_id,submitted_at,category,notes,created_by,retailers(id,name,banner),profiles(full_name)")
             .eq("brand_id", brandId)
-            .not("submitted_date", "is", null)
-            .order("submitted_date", { ascending: false }),
+            .order("submitted_at", { ascending: false }),
         ]);
 
       if (pipelineResponse.error) { setError(pipelineResponse.error.message); return; }
@@ -395,7 +398,7 @@ export default function BrandDashboardPage() {
     });
     const submittedAccounts = new Set(
       submissionRows
-        .filter((r) => r.submitted_date.slice(0, 10) >= ninetyDaysAgo)
+        .filter((r) => r.submitted_at.slice(0, 10) >= ninetyDaysAgo)
         .map((r) => r.retailer_id)
     ).size;
     return { upcomingReviews, awaitingSubmission, inProcess, submittedAccounts };
@@ -533,18 +536,18 @@ export default function BrandDashboardPage() {
   const recentSubmissions = useMemo(() => {
     const today = todayISO();
     const ninetyDaysAgo = addDaysISO(today, -90);
-    // Deduplicate by retailer_id, keeping the most recent submitted_date per retailer
+    // Deduplicate by retailer_id, keeping the most recent submitted_at per retailer
     const byRetailer = new Map<string, SubmissionRow>();
     submissionRows
-      .filter((r) => r.submitted_date.slice(0, 10) >= ninetyDaysAgo)
+      .filter((r) => r.submitted_at.slice(0, 10) >= ninetyDaysAgo)
       .forEach((r) => {
         const existing = byRetailer.get(r.retailer_id);
-        if (!existing || r.submitted_date > existing.submitted_date) {
+        if (!existing || r.submitted_at > existing.submitted_at) {
           byRetailer.set(r.retailer_id, r);
         }
       });
     return [...byRetailer.values()].sort(
-      (a, b) => b.submitted_date.localeCompare(a.submitted_date)
+      (a, b) => b.submitted_at.localeCompare(a.submitted_at)
     );
   }, [submissionRows]);
 
@@ -668,7 +671,7 @@ export default function BrandDashboardPage() {
         <SummaryCard
           label="Submitted Accounts"
           value={summary.submittedAccounts}
-          href={`/brands/${brandId}/retailers`}
+          href={`/brands/${brandId}/retailers?filter=submitted_recent`}
           accentColor="#dbeafe"
           accentFg="#1e40af"
         />
@@ -897,7 +900,7 @@ export default function BrandDashboardPage() {
                 >
                   <div className="font-medium text-sm">{headline}</div>
                   <div className="text-xs" style={{ color: "#6b7280" }}>
-                    Submitted {prettyDate(row.submitted_date)}
+                    Submitted {prettyDate(row.submitted_at)}
                   </div>
                   {row.notes && (
                     <div className="text-xs mt-0.5" style={{ color: "#9ca3af" }}>
