@@ -23,6 +23,7 @@ type Role = "admin" | "rep" | "client" | null;
 
 type AccountStatus =
   | ""
+  | "active_maintain_and_grow"
   | "awaiting_submission_opportunity"
   | "in_process"
   | "not_a_target_account"
@@ -177,6 +178,7 @@ function timeAgo(iso: string): string {
 
 function accountStatusLabel(status: AccountStatus | undefined) {
   switch (status) {
+    case "active_maintain_and_grow":       return "Active - Maintain & Grow";
     case "awaiting_submission_opportunity": return "Awaiting Submission Opportunity";
     case "in_process":                     return "In Process";
     case "retailer_declined":              return "Retailer Declined";
@@ -222,6 +224,8 @@ function workedBadgeStyle(workedAt: string | null): { bg: string; fg: string } {
 
 function statusLeftBorderColor(status: string | undefined): string {
   switch (status) {
+    case "active_maintain_and_grow":
+      return "#16a34a"; // green
     case "awaiting_submission_opportunity":
     // legacy
     case "active_account":
@@ -265,6 +269,7 @@ function Badge({
 
 const STATUS_FILTERS: Array<{ value: string; label: string }> = [
   { value: "all", label: "All Accounts" },
+  { value: "active_maintain_and_grow", label: "Active - Maintain & Grow" },
   { value: "awaiting_submission_opportunity", label: "Awaiting Submission Opportunity" },
   { value: "in_process", label: "In Process" },
   { value: "retailer_declined", label: "Retailer Declined" },
@@ -1745,6 +1750,7 @@ function BrandRetailersInner() {
                             onChange={(e) => updateLocalRow(r.id, pRow.id, { account_status: e.target.value as AccountStatus })}
                           >
                             <option value="">— No Status —</option>
+                            <option value="active_maintain_and_grow">Active - Maintain &amp; Grow</option>
                             <option value="awaiting_submission_opportunity">Awaiting Submission Opportunity</option>
                             <option value="in_process">In Process</option>
                             <option value="retailer_declined">Retailer Declined</option>

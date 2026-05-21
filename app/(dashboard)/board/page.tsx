@@ -98,6 +98,7 @@ const MANAGER_MAP: Record<string, string[]> = {
 
 const STATUS_OPTIONS = [
   { value: "", label: "— No Status —" },
+  { value: "active_maintain_and_grow", label: "Active - Maintain & Grow" },
   { value: "awaiting_submission_opportunity", label: "Awaiting Submission Opportunity" },
   { value: "in_process", label: "In Process" },
   { value: "retailer_declined", label: "Retailer Declined" },
@@ -107,6 +108,7 @@ const STATUS_OPTIONS = [
 
 function statusLeftBorderColor(status: string | undefined): string {
   switch (status) {
+    case "active_maintain_and_grow": return "#16a34a"; // green
     case "awaiting_submission_opportunity": return "#f59e0b"; // amber
     case "in_process":           return "#3b82f6"; // blue
     case "retailer_declined":    return "#f43f5e"; // rose
@@ -152,6 +154,7 @@ function relativeTime(ts: string | null) {
 
 function statusShortLabel(status: string): string {
   switch (status) {
+    case "active_maintain_and_grow":       return "Active M&G";
     case "awaiting_submission_opportunity": return "Awaiting";
     case "in_process":                     return "In Process";
     case "retailer_declined":              return "Declined";
@@ -163,6 +166,7 @@ function statusShortLabel(status: string): string {
 
 function statusPillBg(status: string): string {
   switch (status) {
+    case "active_maintain_and_grow":        return "#dcfce7";
     case "awaiting_submission_opportunity": return "#fef9c3";
     case "in_process":                     return "#dbeafe";
     case "retailer_declined":              return "#ffe4e6";
@@ -174,6 +178,7 @@ function statusPillBg(status: string): string {
 
 function statusPillFg(status: string): string {
   switch (status) {
+    case "active_maintain_and_grow":        return "#14532d";
     case "awaiting_submission_opportunity": return "#713f12";
     case "in_process":                     return "#1e3a8a";
     case "retailer_declined":              return "#881337";

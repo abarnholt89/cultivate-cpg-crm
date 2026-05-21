@@ -6,6 +6,7 @@ type Props = {
 type Config = { label: string; colors: string };
 
 const STATUS_MAP: Record<string, Config> = {
+  active_maintain_and_grow:               { label: "Active - Maintain & Grow",    colors: "bg-green-100 text-green-800 border-green-200" },
   active_account:                         { label: "Active Account",              colors: "bg-green-100 text-green-800 border-green-200" },
   open_review:                            { label: "In Progress",                 colors: "bg-amber-100 text-amber-800 border-amber-200" },
   under_review:                           { label: "Under Review",                colors: "bg-blue-100 text-blue-800 border-blue-200" },
