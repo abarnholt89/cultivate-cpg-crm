@@ -150,7 +150,7 @@ export async function POST(req: Request) {
             .order("universal_category")
             .limit(1);
 
-          const category = catRows?.[0]?.universal_category ?? null;
+          const category = catRows?.[0]?.universal_category ?? "General";
 
           const { error: subError } = await supabase
             .from("submissions")
@@ -159,7 +159,7 @@ export async function POST(req: Request) {
                 brand_id: brandId,
                 retailer_id: retailerId,
                 category,
-                submitted_at: sentAt,
+                submitted_at: sentAt.slice(0, 10), // date only (YYYY-MM-DD)
                 notes: summary || null,
                 created_by: repId,
               },
