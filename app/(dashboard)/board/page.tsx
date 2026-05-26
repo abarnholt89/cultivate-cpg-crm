@@ -1444,7 +1444,7 @@ export default function AllBrandsBoardPage() {
                                               color: "var(--foreground)",
                                               minHeight: "72px",
                                             }}
-                                            placeholder="Write a client-facing note…"
+                                            placeholder={isClientUser ? "Write a message…" : "Write a client-facing note…"}
                                             value={clientNoteText}
                                             onChange={(e) => setClientNoteText(e.target.value)}
                                             onClick={(e) => e.stopPropagation()}
