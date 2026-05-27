@@ -85,6 +85,17 @@ type WorkedEntry = {
   worked_at: string;
 };
 
+type Submission = {
+  id: string;
+  brand_id: string;
+  retailer_id: string;
+  category: string | null;
+  submitted_at: string | null;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+};
+
 const MY_TEAM = "__my_team__";
 
 const MANAGER_MAP: Record<string, string[]> = {
@@ -249,6 +260,13 @@ export default function AllBrandsBoardPage() {
   const [catTimingDateEdits, setCatTimingDateEdits] = useState<Record<string, { reviewDate: string; resetDate: string }>>({});
   const [catTimingSaving, setCatTimingSaving] = useState<Record<string, boolean>>({});
 
+  // Submissions cache + inline-add form. Cache is keyed by `${brandId}__${retailerId}`.
+  // Only one editor row is open at a time, so the form itself is single-instance state.
+  const [submissionsByKey, setSubmissionsByKey] = useState<Record<string, Submission[]>>({});
+  const [submissionFormOpen, setSubmissionFormOpen] = useState(false);
+  const [submissionForm, setSubmissionForm] = useState({ submitted_at: "", category: "", notes: "" });
+  const [submissionSaving, setSubmissionSaving] = useState(false);
+
 
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const errorToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -305,6 +323,28 @@ export default function AllBrandsBoardPage() {
     brandSummaries.forEach((b) => loadBrandRows(b.id));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [role, brandSummaries.length]);
+
+  // Fetch submissions whenever a new retailer editor opens; reset the add-form too.
+  useEffect(() => {
+    setSubmissionFormOpen(false);
+    setSubmissionForm({ submitted_at: "", category: "", notes: "" });
+    if (!expandedKey) return;
+    const [brandId, retailerId] = expandedKey.split("__");
+    if (!brandId || !retailerId) return;
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("submissions")
+        .select("id, brand_id, retailer_id, category, submitted_at, notes, created_by, created_at")
+        .eq("brand_id", brandId)
+        .eq("retailer_id", retailerId)
+        .order("submitted_at", { ascending: false, nullsFirst: false })
+        .order("created_at", { ascending: false });
+      if (cancelled || error) return;
+      setSubmissionsByKey((s) => ({ ...s, [expandedKey]: (data ?? []) as Submission[] }));
+    })();
+    return () => { cancelled = true; };
+  }, [expandedKey]);
 
   // ── Initial summary load ──────────────────────────────────────────────────
 
@@ -828,6 +868,43 @@ export default function AllBrandsBoardPage() {
     } finally {
       setTaskSaving(false);
     }
+  }
+
+  async function saveSubmission(brandId: string, retailerId: string) {
+    if (!userId) return;
+    const key = `${brandId}__${retailerId}`;
+    const submitted_at = submissionForm.submitted_at || new Date().toISOString().split("T")[0];
+    const category = submissionForm.category.trim() || "General";
+    const notes = submissionForm.notes.trim() || null;
+
+    setSubmissionSaving(true);
+    const { data, error } = await supabase
+      .from("submissions")
+      .insert({
+        brand_id: brandId,
+        retailer_id: retailerId,
+        category,
+        submitted_at,
+        notes,
+        created_by: userId,
+      })
+      .select("id, brand_id, retailer_id, category, submitted_at, notes, created_by, created_at")
+      .single();
+    setSubmissionSaving(false);
+
+    if (error) {
+      if (errorToastTimer.current) clearTimeout(errorToastTimer.current);
+      setErrorToast("Failed to log submission.");
+      errorToastTimer.current = setTimeout(() => setErrorToast(null), 4000);
+      return;
+    }
+
+    setSubmissionsByKey((s) => ({
+      ...s,
+      [key]: [data as Submission, ...(s[key] ?? [])],
+    }));
+    setSubmissionFormOpen(false);
+    setSubmissionForm({ submitted_at: "", category: "", notes: "" });
   }
 
   // ── Inline status update ──────────────────────────────────────────────────
@@ -1419,6 +1496,117 @@ export default function AllBrandsBoardPage() {
                                           </div>
                                         </div>
                                       )}
+
+                                      {/* Submissions — list + inline add. Hidden for client/owner. */}
+                                      {role !== "client" && (role as string) !== "owner" && (() => {
+                                        const subKey = `${brand.id}__${row.retailerId}`;
+                                        const subs = submissionsByKey[subKey];
+                                        const rowCats = [...new Set(
+                                          row.categories
+                                            .map((c) => c.universal_category)
+                                            .filter((c): c is string => !!c)
+                                        )];
+                                        const defaultCat = rowCats[0] ?? "General";
+                                        const today = new Date().toISOString().split("T")[0];
+                                        return (
+                                          <div onClick={(e) => e.stopPropagation()}>
+                                            <p className="text-xs font-medium mb-1.5" style={{ color: "var(--muted-foreground)" }}>
+                                              Submissions
+                                            </p>
+                                            {subs === undefined ? (
+                                              <p className="text-xs italic" style={{ color: "var(--muted-foreground)" }}>Loading…</p>
+                                            ) : subs.length === 0 ? (
+                                              <p className="text-xs italic" style={{ color: "var(--muted-foreground)" }}>No submissions yet.</p>
+                                            ) : (
+                                              <ul className="space-y-0.5">
+                                                {subs.slice(0, 3).map((s) => (
+                                                  <li key={s.id} className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+                                                    {formatReviewDate(s.submitted_at) ?? "—"}
+                                                    {s.category && <> · {s.category}</>}
+                                                    {s.notes && <> · {s.notes}</>}
+                                                  </li>
+                                                ))}
+                                                {subs.length > 3 && (
+                                                  <li className="text-xs italic" style={{ color: "var(--muted-foreground)", opacity: 0.7 }}>
+                                                    + {subs.length - 3} more
+                                                  </li>
+                                                )}
+                                              </ul>
+                                            )}
+                                            {!submissionFormOpen ? (
+                                              <button
+                                                type="button"
+                                                className="mt-1 text-xs underline"
+                                                style={{ color: "var(--muted-foreground)" }}
+                                                onClick={() => {
+                                                  setSubmissionFormOpen(true);
+                                                  setSubmissionForm({ submitted_at: today, category: defaultCat, notes: "" });
+                                                }}
+                                              >
+                                                + Log Submission
+                                              </button>
+                                            ) : (
+                                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                                                <input
+                                                  type="date"
+                                                  value={submissionForm.submitted_at}
+                                                  disabled={submissionSaving}
+                                                  onChange={(e) => setSubmissionForm((f) => ({ ...f, submitted_at: e.target.value }))}
+                                                  className="text-xs rounded px-1.5 py-0.5 focus:outline-none focus:ring-1"
+                                                  style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                                                />
+                                                {rowCats.length > 1 ? (
+                                                  <select
+                                                    value={submissionForm.category}
+                                                    disabled={submissionSaving}
+                                                    onChange={(e) => setSubmissionForm((f) => ({ ...f, category: e.target.value }))}
+                                                    className="text-xs rounded px-1.5 py-0.5 focus:outline-none focus:ring-1"
+                                                    style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                                                  >
+                                                    {rowCats.map((c) => (
+                                                      <option key={c} value={c}>{c}</option>
+                                                    ))}
+                                                  </select>
+                                                ) : (
+                                                  <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: "var(--muted-foreground)", background: "var(--secondary)", border: "1px solid var(--border)" }}>
+                                                    {submissionForm.category || defaultCat}
+                                                  </span>
+                                                )}
+                                                <input
+                                                  type="text"
+                                                  placeholder="Notes (optional)"
+                                                  value={submissionForm.notes}
+                                                  disabled={submissionSaving}
+                                                  onChange={(e) => setSubmissionForm((f) => ({ ...f, notes: e.target.value }))}
+                                                  className="flex-1 min-w-[10rem] text-xs rounded px-1.5 py-0.5 focus:outline-none focus:ring-1"
+                                                  style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
+                                                />
+                                                <button
+                                                  type="button"
+                                                  disabled={submissionSaving}
+                                                  onClick={() => saveSubmission(brand.id, row.retailerId)}
+                                                  className="text-xs px-2 py-0.5 rounded"
+                                                  style={{ background: "var(--foreground)", color: "var(--background)", opacity: submissionSaving ? 0.6 : 1 }}
+                                                >
+                                                  {submissionSaving ? "Saving…" : "Save"}
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  disabled={submissionSaving}
+                                                  onClick={() => {
+                                                    setSubmissionFormOpen(false);
+                                                    setSubmissionForm({ submitted_at: "", category: "", notes: "" });
+                                                  }}
+                                                  className="text-xs underline"
+                                                  style={{ color: "var(--muted-foreground)" }}
+                                                >
+                                                  Cancel
+                                                </button>
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })()}
 
                                       {/* Note editor — 2-col for reps/admins, 1-col for clients */}
                                       {(() => {
