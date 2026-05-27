@@ -1,7 +1,62 @@
 import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 
 const APP_URL = "https://cultivate-cpg-crm.vercel.app";
 const LOGO_URL = `${APP_URL}/cultivate-icon.jpeg`;
+
+// Resolve the rep email for a retailer + brand, honoring opt-outs.
+// Returns null on any miss so the caller can decide whether to skip the send.
+// Uses the service-role client because auth.users.email is not readable
+// via anon-key RLS, and we also need to look across the whole profiles table.
+async function resolveRepEmail(
+  retailerId: string,
+  brandId: string
+): Promise<string | null> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) return null;
+
+  const admin = createClient(url, serviceKey);
+
+  const { data: retailer } = await admin
+    .from("retailers")
+    .select("rep_owner_user_id, team_owner")
+    .eq("id", retailerId)
+    .maybeSingle();
+  if (!retailer) return null;
+
+  let repUserId: string | null = (retailer as { rep_owner_user_id: string | null }).rep_owner_user_id ?? null;
+
+  if (!repUserId) {
+    const teamOwner = (retailer as { team_owner: string | null }).team_owner?.trim();
+    if (teamOwner) {
+      const { data: profile } = await admin
+        .from("profiles")
+        .select("id")
+        .ilike("full_name", teamOwner)
+        .limit(1)
+        .maybeSingle();
+      repUserId = (profile as { id: string } | null)?.id ?? null;
+    }
+  }
+
+  if (!repUserId) return null;
+
+  // Per-user opt-out: brand_users row with email_notifications_enabled=false blocks the send.
+  // No row => treat as allowed (reps typically don't have brand_users rows).
+  const { data: bu } = await admin
+    .from("brand_users")
+    .select("email_notifications_enabled")
+    .eq("brand_id", brandId)
+    .eq("user_id", repUserId)
+    .maybeSingle();
+  if (bu && (bu as { email_notifications_enabled: boolean | null }).email_notifications_enabled === false) {
+    return null;
+  }
+
+  const { data: userRes } = await admin.auth.admin.getUserById(repUserId);
+  return userRes?.user?.email ?? null;
+}
 
 function buildEmailHtml({
   brandName,
@@ -125,6 +180,21 @@ export async function POST(req: Request) {
     const actorName: string = body.actor_name || "The Hub";
     const brandId: string = body.brand_id || "";
     const retailerId: string = body.retailer_id || "";
+    const notifyRepForRetailerId: string = body.notify_rep_for_retailer_id || "";
+
+    // When the caller asks us to notify the rep assigned to a retailer,
+    // resolve the email server-side (auth.users isn't reachable client-side).
+    // We add to recipients rather than replace so a caller can combine both.
+    let recipients: string[] = Array.isArray(body.recipients) ? [...body.recipients] : [];
+    if (notifyRepForRetailerId && brandId) {
+      const repEmail = await resolveRepEmail(notifyRepForRetailerId, brandId);
+      if (repEmail && !recipients.includes(repEmail)) recipients.push(repEmail);
+    }
+
+    if (notifyRepForRetailerId && recipients.length === 0) {
+      // Nothing to send (no rep found or rep opted out) — succeed silently.
+      return NextResponse.json({ success: true, skipped: "no_rep_recipient" });
+    }
 
     const replyUrl =
       brandId && retailerId
@@ -150,6 +220,7 @@ export async function POST(req: Request) {
         },
         body: JSON.stringify({
           ...body,
+          recipients,
           html_body: htmlBody,
           reply_url: replyUrl,
         }),

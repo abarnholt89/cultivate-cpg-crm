@@ -1415,6 +1415,34 @@ function BrandRetailersInner() {
       }
     }
 
+    // Inverse direction: when a client/owner posts a client-visible message,
+    // notify the rep assigned to this retailer. Rep email + opt-out are
+    // resolved server-side by /api/send-client-email (auth.users is not
+    // readable client-side).
+    if (!isRepOrAdmin && activeTab === "client" && brand?.message_notifications_enabled) {
+      try {
+        const r = retailers.find((ret) => ret.id === retailerId);
+        const retailerName = r?.banner?.trim() ? r.banner : r?.name ?? "Retailer";
+        await fetch("/api/send-client-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            brand_name: brand!.name,
+            retailer_name: retailerName,
+            message_body: text || "New attachment added.",
+            subject: `New message from ${brand!.name} on ${retailerName}`,
+            actor_name: senderName,
+            event_type: "message",
+            brand_id: brandId,
+            retailer_id: retailerId,
+            notify_rep_for_retailer_id: retailerId,
+          }),
+        });
+      } catch (emailErr) {
+        console.error("Rep email notification failed", emailErr);
+      }
+    }
+
     setCardSending((prev) => ({ ...prev, [retailerId]: false }));
     setStatus("Sent ✅");
   }
