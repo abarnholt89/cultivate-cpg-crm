@@ -58,6 +58,11 @@ export async function GET(req: Request) {
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
 
+  const url = new URL(req.url);
+  if (url.searchParams.get("backfill") === "true") {
+    return runRepBackfill(supabase, supabaseUrl, serviceRoleKey);
+  }
+
   const now = new Date();
   const hours24Ago = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
   const hours48Ago = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
@@ -373,5 +378,156 @@ export async function GET(req: Request) {
     rep_alerts_sent: repAlertsSent,
     admin_alerts_sent: adminAlertsSent,
     tasks_created: tasksCreated,
+  });
+}
+
+// One-time backfill: notify reps about client (owner/viewer) messages from
+// the last 3 days that haven't already had a rep notification recorded.
+// Triggered via ?backfill=true. Dedupes against message_alerts_sent with
+// alert_type='rep_immediate_backfill', so re-running this is a no-op.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function runRepBackfill(supabase: any, supabaseUrl: string, serviceRoleKey: string) {
+  const since = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const ALERT_TYPE = "rep_immediate_backfill";
+
+  // 1. brand_users with role owner/viewer — defines who counts as "a client"
+  const { data: clientBu, error: buError } = await supabase
+    .from("brand_users")
+    .select("user_id")
+    .in("role", ["owner", "viewer"]);
+  if (buError) return Response.json({ error: buError.message }, { status: 500 });
+  const clientUserIds = [...new Set(((clientBu ?? []) as { user_id: string }[]).map((r) => r.user_id).filter(Boolean))];
+  if (clientUserIds.length === 0) {
+    return Response.json({ success: true, checked: 0, notified: 0, skipped: 0 });
+  }
+
+  // 2. Client-visible messages in the window posted by those users
+  const { data: messages, error: msgError } = await supabase
+    .from("brand_retailer_messages")
+    .select("id, brand_id, retailer_id, sender_id, sender_name, body, created_at")
+    .eq("visibility", "client")
+    .gte("created_at", since)
+    .in("sender_id", clientUserIds)
+    .order("created_at", { ascending: true });
+  if (msgError) return Response.json({ error: msgError.message }, { status: 500 });
+  const targetMessages = (messages ?? []) as BrandRetailerMessage[];
+  if (targetMessages.length === 0) {
+    return Response.json({ success: true, checked: 0, notified: 0, skipped: 0 });
+  }
+
+  const brandIds = [...new Set(targetMessages.map((m) => m.brand_id))];
+  const retailerIds = [...new Set(targetMessages.map((m) => m.retailer_id))];
+
+  // 3. Batched lookups — brands, retailers, dedupe rows, rep emails, rep opt-outs
+  const [brandsRes, retailersRes, alertsRes, usersRes] = await Promise.all([
+    supabase.from("brands").select("id, name, message_notifications_enabled").in("id", brandIds),
+    supabase.from("retailers").select("id, name, banner, rep_owner_user_id").in("id", retailerIds),
+    supabase.from("message_alerts_sent").select("message_id, alert_type, recipient_email").eq("alert_type", ALERT_TYPE),
+    supabase.auth.admin.listUsers(),
+  ]);
+  if (brandsRes.error) return Response.json({ error: brandsRes.error.message }, { status: 500 });
+  if (retailersRes.error) return Response.json({ error: retailersRes.error.message }, { status: 500 });
+  if (alertsRes.error) return Response.json({ error: alertsRes.error.message }, { status: 500 });
+  if (usersRes.error) return Response.json({ error: usersRes.error.message }, { status: 500 });
+
+  const brandById = new Map(
+    ((brandsRes.data ?? []) as { id: string; name: string; message_notifications_enabled: boolean }[])
+      .map((b) => [b.id, b])
+  );
+  const retailerById = new Map(
+    ((retailersRes.data ?? []) as RetailerRow[]).map((r) => [r.id, r])
+  );
+  const alertKey = new Set(
+    ((alertsRes.data ?? []) as { message_id: string; alert_type: string; recipient_email: string }[])
+      .map((a) => `${a.message_id}:${a.alert_type}:${a.recipient_email}`)
+  );
+  const emailByUserId = new Map(
+    (usersRes.data.users ?? []).map((u: { id: string; email: string | null }) => [u.id, u.email ?? ""])
+  );
+
+  // Per-rep opt-out by (brand_id, user_id) — fetched only for the rep ids we'll actually try.
+  const repIds = [...new Set(
+    retailerIds
+      .map((id) => retailerById.get(id)?.rep_owner_user_id ?? null)
+      .filter((v): v is string => Boolean(v))
+  )];
+  const optOutKey = new Set<string>();
+  if (repIds.length > 0) {
+    const { data: optOuts, error: optErr } = await supabase
+      .from("brand_users")
+      .select("brand_id, user_id, email_notifications_enabled")
+      .in("brand_id", brandIds)
+      .in("user_id", repIds)
+      .eq("email_notifications_enabled", false);
+    if (optErr) return Response.json({ error: optErr.message }, { status: 500 });
+    ((optOuts ?? []) as { brand_id: string; user_id: string }[]).forEach((r) => {
+      optOutKey.add(`${r.brand_id}:${r.user_id}`);
+    });
+  }
+
+  let notified = 0;
+  let skipped = 0;
+  const reasons: Record<string, number> = {};
+  const bump = (k: string) => { reasons[k] = (reasons[k] ?? 0) + 1; };
+
+  for (const message of targetMessages) {
+    const brand = brandById.get(message.brand_id);
+    const retailer = retailerById.get(message.retailer_id);
+
+    if (!brand?.message_notifications_enabled) { skipped++; bump("brand_notifications_off"); continue; }
+    if (!retailer?.rep_owner_user_id) { skipped++; bump("no_rep_owner"); continue; }
+
+    const repUserId = retailer.rep_owner_user_id;
+    if (optOutKey.has(`${message.brand_id}:${repUserId}`)) { skipped++; bump("rep_opted_out"); continue; }
+
+    const repEmail = emailByUserId.get(repUserId);
+    if (!repEmail) { skipped++; bump("no_rep_email"); continue; }
+
+    if (alertKey.has(`${message.id}:${ALERT_TYPE}:${repEmail}`)) { skipped++; bump("already_sent"); continue; }
+
+    const retailerName = retailer.banner?.trim() || retailer.name || "Retailer";
+
+    const sendRes = await fetch(
+      `${supabaseUrl}/functions/v1/send-client-message-email`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: serviceRoleKey,
+          Authorization: `Bearer ${serviceRoleKey}`,
+        },
+        body: JSON.stringify({
+          brand_name: brand.name,
+          retailer_name: retailerName,
+          message_body: message.body,
+          subject: `New message from ${brand.name} on ${retailerName}`,
+          recipients: [repEmail],
+          actor_name: message.sender_name ?? "Client",
+          event_type: "message",
+          brand_id: message.brand_id,
+          retailer_id: message.retailer_id,
+        }),
+      }
+    ).catch(() => null);
+
+    if (!sendRes || !sendRes.ok) { skipped++; bump("send_failed"); continue; }
+
+    await supabase.from("message_alerts_sent").insert({
+      message_id: message.id,
+      alert_type: ALERT_TYPE,
+      recipient_email: repEmail,
+    });
+    alertKey.add(`${message.id}:${ALERT_TYPE}:${repEmail}`);
+    notified++;
+  }
+
+  return Response.json({
+    success: true,
+    mode: "backfill",
+    window: "3d",
+    checked: targetMessages.length,
+    notified,
+    skipped,
+    skip_reasons: reasons,
   });
 }
