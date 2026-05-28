@@ -670,24 +670,8 @@ function BrandRetailersInner() {
         setBrandCategories(fallbackCats);
       }
 
-      // Scroll to hashed retailer card after all data is loaded and rendered.
-      // We defer with setTimeout so React has flushed all the state updates above
-      // into the DOM before we attempt getElementById.
-      if (!didHashScrollRef.current) {
-        const hash = window.location.hash;
-        if (hash) {
-          const targetId = hash.slice(1);
-          setTimeout(() => {
-            const el = document.getElementById(targetId);
-            if (!el) {
-              console.warn(`[hash-scroll] element #${targetId} not found — may be filtered out`);
-              return;
-            }
-            el.scrollIntoView({ behavior: "smooth", block: "start" });
-            didHashScrollRef.current = true;
-          }, 100);
-        }
-      }
+      // Hash scroll is handled in a dedicated effect below — it watches the
+      // rendered list so it fires after the target card is actually in the DOM.
     }
 
     load();
@@ -1522,6 +1506,40 @@ function BrandRetailersInner() {
 
     return retailers.filter((r) => matchesFilter(r) && matchesSearch(r) && matchesRep(r));
   }, [retailers, pipelineMap, calendarMap, authorizedMap, submissionsMap, selectedFilter, query, selectedRep]);
+
+  // Scroll to the #retailer-<id> hash once the target card is actually
+  // in the DOM. Notification emails deep-link to this hash; the original
+  // 100ms timeout inside load() raced with React's render and lazy children,
+  // so it often missed. Polling with rAF and a hard cap keeps this cheap.
+  useEffect(() => {
+    if (didHashScrollRef.current) return;
+    if (typeof window === "undefined") return;
+    const hash = window.location.hash;
+    if (!hash) return;
+    if (filteredRetailers.length === 0) return;
+    const targetId = hash.slice(1);
+    if (!targetId.startsWith("retailer-")) return;
+
+    let attempts = 0;
+    let stopped = false;
+    const tryScroll = () => {
+      if (stopped) return;
+      const el = document.getElementById(targetId);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+        didHashScrollRef.current = true;
+        return;
+      }
+      attempts++;
+      if (attempts > 20) {
+        console.warn(`[hash-scroll] #${targetId} never appeared — may be filtered out`);
+        return;
+      }
+      requestAnimationFrame(() => setTimeout(tryScroll, 50));
+    };
+    tryScroll();
+    return () => { stopped = true; };
+  }, [filteredRetailers]);
 
   return (
     <div className="p-6 space-y-6">
