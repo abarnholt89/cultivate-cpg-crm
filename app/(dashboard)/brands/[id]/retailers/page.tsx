@@ -1436,6 +1436,7 @@ function BrandRetailersInner() {
             brand_id: brandId,
             retailer_id: retailerId,
             notify_rep_for_retailer_id: retailerId,
+            message_id: insertedMsg.id,
           }),
         });
       } catch (emailErr) {

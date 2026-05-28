@@ -181,14 +181,18 @@ export async function POST(req: Request) {
     const brandId: string = body.brand_id || "";
     const retailerId: string = body.retailer_id || "";
     const notifyRepForRetailerId: string = body.notify_rep_for_retailer_id || "";
+    const messageId: string = body.message_id || "";
 
     // When the caller asks us to notify the rep assigned to a retailer,
     // resolve the email server-side (auth.users isn't reachable client-side).
     // We add to recipients rather than replace so a caller can combine both.
+    // Keep the resolved rep email separately so we can record the send into
+    // message_alerts_sent (lets the backfill skip messages already notified).
     let recipients: string[] = Array.isArray(body.recipients) ? [...body.recipients] : [];
+    let resolvedRepEmail: string | null = null;
     if (notifyRepForRetailerId && brandId) {
-      const repEmail = await resolveRepEmail(notifyRepForRetailerId, brandId);
-      if (repEmail && !recipients.includes(repEmail)) recipients.push(repEmail);
+      resolvedRepEmail = await resolveRepEmail(notifyRepForRetailerId, brandId);
+      if (resolvedRepEmail && !recipients.includes(resolvedRepEmail)) recipients.push(resolvedRepEmail);
     }
 
     if (notifyRepForRetailerId && recipients.length === 0) {
@@ -234,6 +238,24 @@ export async function POST(req: Request) {
         { error: result?.error || "Failed to call edge function", details: result },
         { status: response.status }
       );
+    }
+
+    // Record the rep notification so the backfill can dedupe against it.
+    // Fire-and-forget — table errors (incl. unique-violation if a constraint
+    // exists) shouldn't fail the user-facing send.
+    if (notifyRepForRetailerId && messageId && resolvedRepEmail) {
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (serviceKey) {
+        const admin = createClient(supabaseUrl, serviceKey);
+        admin
+          .from("message_alerts_sent")
+          .insert({
+            message_id: messageId,
+            alert_type: "rep_immediate",
+            recipient_email: resolvedRepEmail,
+          })
+          .then(() => {}, () => {});
+      }
     }
 
     return NextResponse.json(result);
