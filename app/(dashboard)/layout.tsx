@@ -264,6 +264,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </Link>
           ) : null}
 
+          {/* Contacts — stricter than the other internal links: admin/rep only,
+              no owner. Owners get the rest of the internal nav but not this. */}
+          {(role === "admin" || role === "rep") ? (
+            <Link href="/admin/contacts" className={linkClass("/admin/contacts")}>
+              <span className="relative inline-block pb-1">
+                Contacts
+                {isActive("/admin/contacts") && (
+                  <span className="absolute -bottom-[17px] left-0 h-[3px] w-full rounded-full bg-primary" />
+                )}
+              </span>
+            </Link>
+          ) : null}
+
           {role !== "client" ? (
             <Link href="/category-review" className={linkClass("/category-review")}>
               <span className="relative inline-block pb-1">
