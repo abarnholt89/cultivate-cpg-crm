@@ -39,8 +39,13 @@ function LoginInner() {
     setLoading(true);
     setStatus(null);
 
+    // Prefer an explicit NEXT_PUBLIC_SITE_URL so reset links always land on
+    // the canonical app (esp. for resets initiated from preview deploys or
+    // local dev). Falls back to window.location.origin so nothing breaks if
+    // the env var isn't set.
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || window.location.origin;
     const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
-      redirectTo: `${window.location.origin}/change-password`,
+      redirectTo: `${siteUrl}/change-password`,
     });
 
     setLoading(false);
