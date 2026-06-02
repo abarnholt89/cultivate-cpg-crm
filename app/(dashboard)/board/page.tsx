@@ -98,13 +98,23 @@ type Submission = {
 
 const MY_TEAM = "__my_team__";
 
+// Every member of a team is a key here mapped to the full team list, so the
+// MY_TEAM auto-init and the teamIds lookup both work for any teammate — not
+// just the manager. Previously only the manager (Keenan, 623753df) was a key,
+// so teammates fell through to "show only mine" and missed retailers owned by
+// the manager.
+const KEENAN_TEAM = [
+  "623753df-291c-4aa5-85fd-5af37efd0297", // Keenan Smith (manager)
+  "16078d4d-90f4-4a9e-b9c3-3c27a48f35ec",
+  "ecd0e056-3f26-48f1-9556-026c7e909b8f",
+  "e3fb436b-8ad0-4381-8f3f-e84db607bf10",
+];
+
 const MANAGER_MAP: Record<string, string[]> = {
-  "623753df-291c-4aa5-85fd-5af37efd0297": [
-    "623753df-291c-4aa5-85fd-5af37efd0297",
-    "16078d4d-90f4-4a9e-b9c3-3c27a48f35ec",
-    "ecd0e056-3f26-48f1-9556-026c7e909b8f",
-    "e3fb436b-8ad0-4381-8f3f-e84db607bf10",
-  ],
+  "623753df-291c-4aa5-85fd-5af37efd0297": KEENAN_TEAM,
+  "16078d4d-90f4-4a9e-b9c3-3c27a48f35ec": KEENAN_TEAM,
+  "ecd0e056-3f26-48f1-9556-026c7e909b8f": KEENAN_TEAM,
+  "e3fb436b-8ad0-4381-8f3f-e84db607bf10": KEENAN_TEAM,
 };
 
 const STATUS_OPTIONS = [
