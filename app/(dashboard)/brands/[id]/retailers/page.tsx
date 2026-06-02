@@ -1446,6 +1446,22 @@ function BrandRetailersInner() {
       const calendarRows = calendarMap[r.id] ?? [];
       const nextReview = calendarRows.find((entry) => !!entry.review_date);
 
+      // Clients/owners only see retailers where the brand is actually authorized.
+      // "Authorized" = at least one real brand_retailer_timing row with a non-empty
+      // account_status that isn't declined or not-a-target. This covers both the
+      // "no row exists" case (the synthesized defaultPipelineRow has status="")
+      // and the case where every existing row is a status we don't want clients
+      // to see anyway (decline/not-target).
+      if (role === "client" || (role as string) === "owner") {
+        const realRows = pipelineMap[r.id] ?? [];
+        const hiddenStatuses = new Set(["not_a_target_account", "retailer_declined"]);
+        const hasAuthorized = realRows.some((row) => {
+          const status = (row.account_status ?? "").trim();
+          return status !== "" && !hiddenStatuses.has(status);
+        });
+        if (!hasAuthorized) return false;
+      }
+
       if (selectedFilter === "all") return true;
 
       if (selectedFilter === "in_motion") {
@@ -1505,7 +1521,7 @@ function BrandRetailersInner() {
     }
 
     return retailers.filter((r) => matchesFilter(r) && matchesSearch(r) && matchesRep(r));
-  }, [retailers, pipelineMap, calendarMap, authorizedMap, submissionsMap, selectedFilter, query, selectedRep]);
+  }, [retailers, pipelineMap, calendarMap, authorizedMap, submissionsMap, selectedFilter, query, selectedRep, role]);
 
   // Scroll to the #retailer-<id> hash once the target card is actually
   // in the DOM. Notification emails deep-link to this hash; the original
