@@ -1013,6 +1013,62 @@ export default function AllBrandsBoardPage() {
 
   // ── Filter ────────────────────────────────────────────────────────────────
 
+  // Per-brand staleness date driven by brand_date_worked. The "relevant retailers"
+  // for a brand depend on the current rep filter:
+  //   specific rep   → retailers that rep owns for the brand, counting only
+  //                    worked_at rows by that rep
+  //   MY_TEAM        → retailers owned by anyone on the team, counting team rows
+  //   default        → every retailer in the brand, counting any rep's rows
+  // Brand staleness = OLDEST last-touch across those retailers. If ANY relevant
+  // retailer has never been touched, staleness = null (floats to top of sort,
+  // red "No Activity" badge).
+  const stalenessByBrand = useMemo<Record<string, string | null>>(() => {
+    const teamIds = repFilter === MY_TEAM
+      ? new Set(MANAGER_MAP[userId ?? ""] ?? [])
+      : null;
+    const ownerMatches: (repOwnerId: string | undefined) => boolean =
+      repFilter === MY_TEAM
+        ? (r) => !!r && teamIds!.has(r)
+        : repFilter
+          ? (r) => r === repFilter
+          : () => true;
+    const workedRepMatches: ((repId: string) => boolean) | null =
+      repFilter === MY_TEAM
+        ? (rid) => teamIds!.has(rid)
+        : repFilter
+          ? (rid) => rid === repFilter
+          : null;
+
+    // (brand_id, retailer_id) → latest worked_at among rows matching the rep filter
+    const latest = new Map<string, string>();
+    for (const e of workedEntries) {
+      if (!e.retailer_id) continue;
+      if (workedRepMatches && !workedRepMatches(e.rep_id)) continue;
+      const k = `${e.brand_id}:${e.retailer_id}`;
+      const cur = latest.get(k);
+      if (!cur || e.worked_at > cur) latest.set(k, e.worked_at);
+    }
+
+    const result: Record<string, string | null> = {};
+    for (const brand of brandSummaries) {
+      const relevantRetailerIds = [...new Set(
+        (timingByBrand[brand.id] ?? [])
+          .map((t) => t.retailer_id)
+          .filter((rid) => ownerMatches(retailerRepMap[rid]))
+      )];
+      if (relevantRetailerIds.length === 0) { result[brand.id] = null; continue; }
+      let oldest: string | null = null;
+      let sawUntouched = false;
+      for (const rid of relevantRetailerIds) {
+        const d = latest.get(`${brand.id}:${rid}`);
+        if (!d) { sawUntouched = true; break; }
+        if (!oldest || d < oldest) oldest = d;
+      }
+      result[brand.id] = sawUntouched ? null : oldest;
+    }
+    return result;
+  }, [brandSummaries, workedEntries, repFilter, userId, timingByBrand, retailerRepMap]);
+
   const filteredSummaries = useMemo(() => {
     let result = brandSummaries;
     if (search.trim()) {
@@ -1031,19 +1087,18 @@ export default function AllBrandsBoardPage() {
         return brandTiming.some((t) => retailerRepMap[t.retailer_id] === repFilter);
       });
     }
-    // When filtering by a specific rep, sort oldest-to-newest by date worked (never first)
-    if (repFilter && repFilter !== MY_TEAM) {
-      result = [...result].sort((a, b) => {
-        const aW = workedEntries.filter((e) => e.brand_id === a.id && e.rep_id === repFilter).map((e) => e.worked_at).sort().at(-1) ?? null;
-        const bW = workedEntries.filter((e) => e.brand_id === b.id && e.rep_id === repFilter).map((e) => e.worked_at).sort().at(-1) ?? null;
-        if (!aW && !bW) return a.name.localeCompare(b.name);
-        if (!aW) return -1;
-        if (!bW) return 1;
-        return aW.localeCompare(bW);
-      });
-    }
+    // Staleness sort — oldest last-touch on top, null (any untouched relevant
+    // retailer) floats to the very top. Applies in every mode.
+    result = [...result].sort((a, b) => {
+      const aS = stalenessByBrand[a.id] ?? null;
+      const bS = stalenessByBrand[b.id] ?? null;
+      if (aS === null && bS === null) return a.name.localeCompare(b.name);
+      if (aS === null) return -1;
+      if (bS === null) return 1;
+      return aS.localeCompare(bS);
+    });
     return result;
-  }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand, userId, workedEntries]);
+  }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand, userId, stalenessByBrand]);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -1128,18 +1183,9 @@ export default function AllBrandsBoardPage() {
         <div className="space-y-2">
           {filteredSummaries.map((brand) => {
             const isOpen = expandedBrandIds.has(brand.id);
-            const workedAt = repFilter && repFilter !== MY_TEAM
-              ? (() => {
-                  const fromWorked = workedEntries
-                    .filter((e) => e.brand_id === brand.id && e.rep_id === repFilter)
-                    .map((e) => e.worked_at)
-                    .sort()
-                    .at(-1) ?? null;
-                  if (fromWorked) return fromWorked;
-                  // Fall back to most recent message (any visibility) sent by this rep for this brand
-                  return msgByBrandSenderMap[brand.id]?.[repFilter] ?? null;
-                })()
-              : null;
+            // Badge mirrors the sort: oldest last-touch across the brand's
+            // relevant retailers (mode-dependent), null when any are untouched.
+            const workedAt = stalenessByBrand[brand.id] ?? null;
             const badge = workedBadge(workedAt);
 
             const rawRows = brandRows[brand.id] ?? null;
@@ -1185,8 +1231,9 @@ export default function AllBrandsBoardPage() {
                           : brand.lastActivity
                       )}
                     </span>
-                    {/* Date Worked badge — only meaningful for a specific rep */}
-                    {repFilter && repFilter !== MY_TEAM && (
+                    {/* Staleness badge — shows in every mode. Hidden for clients
+                        so it doesn't show up on /board for brand owners. */}
+                    {role !== "client" && (
                       <span
                         className="text-xs font-medium rounded px-2 py-0.5 shrink-0"
                         style={{ background: badge.bg, color: badge.fg }}
