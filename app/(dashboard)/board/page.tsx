@@ -1013,16 +1013,19 @@ export default function AllBrandsBoardPage() {
 
   // ── Filter ────────────────────────────────────────────────────────────────
 
-  // Per-brand staleness date driven by brand_date_worked. The "relevant retailers"
-  // for a brand depend on the current rep filter:
-  //   specific rep   → retailers that rep owns for the brand, counting only
-  //                    worked_at rows by that rep
+  // Per-brand activity derived from brand_date_worked, mode-aware:
+  //   specific rep   → retailers that rep owns, counting only that rep's rows
   //   MY_TEAM        → retailers owned by anyone on the team, counting team rows
   //   default        → every retailer in the brand, counting any rep's rows
-  // Brand staleness = OLDEST last-touch across those retailers. If ANY relevant
-  // retailer has never been touched, staleness = null (floats to top of sort,
-  // red "No Activity" badge).
-  const stalenessByBrand = useMemo<Record<string, string | null>>(() => {
+  //
+  // Returns two values per brand:
+  //   newest — max(worked_at) across touched retailers. Powers the badge.
+  //   oldest — min(worked_at) across touched retailers, IGNORING ones with
+  //            no rows. Powers the sort. Untouched retailers don't drag a
+  //            brand up the list — only the rep's actual oldest touch does.
+  // Both are null when the rep has zero activity on the brand. That null
+  // floats to the top of the sort and shows the red "No Activity" badge.
+  const activityByBrand = useMemo<Record<string, { newest: string | null; oldest: string | null }>>(() => {
     const teamIds = repFilter === MY_TEAM
       ? new Set(MANAGER_MAP[userId ?? ""] ?? [])
       : null;
@@ -1049,22 +1052,22 @@ export default function AllBrandsBoardPage() {
       if (!cur || e.worked_at > cur) latest.set(k, e.worked_at);
     }
 
-    const result: Record<string, string | null> = {};
+    const result: Record<string, { newest: string | null; oldest: string | null }> = {};
     for (const brand of brandSummaries) {
       const relevantRetailerIds = [...new Set(
         (timingByBrand[brand.id] ?? [])
           .map((t) => t.retailer_id)
           .filter((rid) => ownerMatches(retailerRepMap[rid]))
       )];
-      if (relevantRetailerIds.length === 0) { result[brand.id] = null; continue; }
+      let newest: string | null = null;
       let oldest: string | null = null;
-      let sawUntouched = false;
       for (const rid of relevantRetailerIds) {
         const d = latest.get(`${brand.id}:${rid}`);
-        if (!d) { sawUntouched = true; break; }
+        if (!d) continue; // untouched retailers don't pull either bound
+        if (!newest || d > newest) newest = d;
         if (!oldest || d < oldest) oldest = d;
       }
-      result[brand.id] = sawUntouched ? null : oldest;
+      result[brand.id] = { newest, oldest };
     }
     return result;
   }, [brandSummaries, workedEntries, repFilter, userId, timingByBrand, retailerRepMap]);
@@ -1087,18 +1090,19 @@ export default function AllBrandsBoardPage() {
         return brandTiming.some((t) => retailerRepMap[t.retailer_id] === repFilter);
       });
     }
-    // Staleness sort — oldest last-touch on top, null (any untouched relevant
-    // retailer) floats to the very top. Applies in every mode.
+    // Sort by the rep's OLDEST actual touch — brands they haven't worked in
+    // the longest go to the top. Brands with no activity at all (oldest=null)
+    // float above every dated brand. Applies in every mode.
     result = [...result].sort((a, b) => {
-      const aS = stalenessByBrand[a.id] ?? null;
-      const bS = stalenessByBrand[b.id] ?? null;
-      if (aS === null && bS === null) return a.name.localeCompare(b.name);
-      if (aS === null) return -1;
-      if (bS === null) return 1;
-      return aS.localeCompare(bS);
+      const aO = activityByBrand[a.id]?.oldest ?? null;
+      const bO = activityByBrand[b.id]?.oldest ?? null;
+      if (aO === null && bO === null) return a.name.localeCompare(b.name);
+      if (aO === null) return -1;
+      if (bO === null) return 1;
+      return aO.localeCompare(bO);
     });
     return result;
-  }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand, userId, stalenessByBrand]);
+  }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand, userId, activityByBrand]);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -1183,9 +1187,12 @@ export default function AllBrandsBoardPage() {
         <div className="space-y-2">
           {filteredSummaries.map((brand) => {
             const isOpen = expandedBrandIds.has(brand.id);
-            // Badge mirrors the sort: oldest last-touch across the brand's
-            // relevant retailers (mode-dependent), null when any are untouched.
-            const workedAt = stalenessByBrand[brand.id] ?? null;
+            // Badge = MOST RECENT activity across the brand's relevant retailers
+            // (mode-dependent). Null only when the rep has no activity on the
+            // brand at all — then workedBadge renders "No Activity". Untouched
+            // retailers don't affect this; the sort uses the oldest touch
+            // separately so neglected brands still float to the top.
+            const workedAt = activityByBrand[brand.id]?.newest ?? null;
             const badge = workedBadge(workedAt);
 
             const rawRows = brandRows[brand.id] ?? null;
