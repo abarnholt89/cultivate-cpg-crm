@@ -1108,7 +1108,9 @@ export default function AllBrandsBoardPage() {
             className="rounded-lg px-3 py-2 text-sm"
             style={{ border: "1px solid var(--border)", background: "var(--muted)", color: "var(--muted-foreground)" }}
           >
-            {reps.find((r) => r.id === repFilter)?.full_name ?? "My accounts"}
+            {repFilter === MY_TEAM
+              ? "My Team"
+              : reps.find((r) => r.id === repFilter)?.full_name ?? "My accounts"}
           </div>
         ) : null}
       </div>
