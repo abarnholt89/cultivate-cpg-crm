@@ -1446,16 +1446,6 @@ function BrandRetailersInner() {
       const calendarRows = calendarMap[r.id] ?? [];
       const nextReview = calendarRows.find((entry) => !!entry.review_date);
 
-      // Clients/owners see every retailer that has any brand_retailer_timing
-      // row for this brand, regardless of account_status — even declined or
-      // not-a-target ones, since those reflect real relationship history.
-      // The only thing being hidden is the "synthesized blank row" case,
-      // where the brand has no timing row at all for the retailer (the page
-      // would otherwise fall back to defaultPipelineRow and show an empty card).
-      if (role === "client" || (role as string) === "owner") {
-        if ((pipelineMap[r.id] ?? []).length === 0) return false;
-      }
-
       if (selectedFilter === "all") return true;
 
       if (selectedFilter === "in_motion") {
@@ -1515,7 +1505,7 @@ function BrandRetailersInner() {
     }
 
     return retailers.filter((r) => matchesFilter(r) && matchesSearch(r) && matchesRep(r));
-  }, [retailers, pipelineMap, calendarMap, authorizedMap, submissionsMap, selectedFilter, query, selectedRep, role]);
+  }, [retailers, pipelineMap, calendarMap, authorizedMap, submissionsMap, selectedFilter, query, selectedRep]);
 
   // Scroll to the #retailer-<id> hash once the target card is actually
   // in the DOM. Notification emails deep-link to this hash; the original
