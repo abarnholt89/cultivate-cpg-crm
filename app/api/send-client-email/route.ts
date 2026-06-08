@@ -58,24 +58,72 @@ async function resolveRepEmail(
   return userRes?.user?.email ?? null;
 }
 
+type RecentMessage = {
+  sender_name: string | null;
+  body: string;
+  created_at: string;
+};
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function relativeTime(iso: string): string {
+  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 2) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  if (mins < 1440) return `${Math.floor(mins / 60)}h ago`;
+  const days = Math.floor(mins / 1440);
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  return `${Math.floor(days / 30)}mo ago`;
+}
+
 function buildEmailHtml({
   brandName,
   retailerName,
   messageBody,
   actorName,
   replyUrl,
+  recentMessages,
 }: {
   brandName: string;
   retailerName: string;
   messageBody: string;
   actorName: string;
   replyUrl: string;
+  recentMessages?: RecentMessage[];
 }) {
-  const escapedBody = messageBody
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\n/g, "<br>");
+  const escapedBody = escapeHtml(messageBody).replace(/\n/g, "<br>");
+
+  // Recent thread block — rendered below the main message, above the CTA.
+  // Only shown when prior context exists; otherwise the block is omitted.
+  const recentBlock = recentMessages && recentMessages.length > 0
+    ? `
+          <!-- Recent thread -->
+          <tr>
+            <td style="padding:0 32px 24px;">
+              <p style="margin:0 0 12px;font-size:12px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">
+                Recent thread
+              </p>
+              <table width="100%" cellpadding="0" cellspacing="0">
+                ${recentMessages.map((m) => `
+                <tr>
+                  <td style="padding:10px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;margin-bottom:8px;">
+                    <div style="font-size:12px;color:#64748b;margin-bottom:4px;">
+                      <strong style="color:#475569;">${escapeHtml(m.sender_name ?? "Unknown")}</strong>
+                      &nbsp;·&nbsp;${escapeHtml(relativeTime(m.created_at))}
+                    </div>
+                    <div style="font-size:13px;line-height:1.5;color:#475569;">
+                      ${escapeHtml(m.body).replace(/\n/g, "<br>")}
+                    </div>
+                  </td>
+                </tr>
+                <tr><td style="height:8px;"></td></tr>`).join("")}
+              </table>
+            </td>
+          </tr>`
+    : "";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -132,6 +180,7 @@ function buildEmailHtml({
             </td>
           </tr>
 
+          ${recentBlock}
           <!-- CTA button -->
           <tr>
             <td style="padding:0 32px 36px;">
@@ -205,12 +254,39 @@ export async function POST(req: Request) {
         ? `${APP_URL}/brands/${brandId}/retailers#retailer-${retailerId}`
         : APP_URL;
 
+    // Fetch up to 3 recent client-visible messages for the brand+retailer so
+    // the email shows conversation context. Uses the service-role client only
+    // when both ids are present, since brand_retailer_messages RLS would
+    // otherwise hide most threads. Failures degrade silently — context is a
+    // nice-to-have, not blocking.
+    let recentMessages: RecentMessage[] | undefined;
+    if (brandId && retailerId) {
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (serviceKey) {
+        try {
+          const admin = createClient(supabaseUrl, serviceKey);
+          const { data: rows } = await admin
+            .from("brand_retailer_messages")
+            .select("sender_name, body, created_at")
+            .eq("brand_id", brandId)
+            .eq("retailer_id", retailerId)
+            .eq("visibility", "client")
+            .order("created_at", { ascending: false })
+            .limit(3);
+          recentMessages = (rows ?? []) as RecentMessage[];
+        } catch {
+          recentMessages = undefined;
+        }
+      }
+    }
+
     const htmlBody = buildEmailHtml({
       brandName,
       retailerName,
       messageBody,
       actorName,
       replyUrl,
+      recentMessages,
     });
 
     const response = await fetch(
