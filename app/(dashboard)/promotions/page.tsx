@@ -93,6 +93,22 @@ type BulkForm = {
   notes: string;
 };
 
+// Bulk edit at the promotion-group level. Fields here are the union of the
+// group's shared key columns (promo_name, promo_type, start/end date) plus
+// the non-key fields users want to write to every SKU at once (discount,
+// status, notes, promo_text). Strings throughout — coerced on save.
+type GroupEditForm = {
+  promo_name: string;
+  promo_type: string;
+  promo_status: string;
+  start_date: string;
+  end_date: string;
+  discount_percent: string;
+  discount_amount: string;
+  promo_text_raw: string;
+  notes: string;
+};
+
 type EditForm = {
   brand_name: string;
   retailer_name: string;
@@ -393,6 +409,20 @@ function PromotionsInner() {
   const [editError, setEditError] = useState("");
   const [deletingItem, setDeletingItem] = useState<PromotionRow | null>(null);
   const [deletingPromoGroupKey, setDeletingPromoGroupKey] = useState<string | null>(null);
+
+  // Bulk group edit modal. We stash brandName + retailerName alongside the
+  // group because the UPDATE WHERE clause needs them and they're not on the
+  // RetailerPromoGroup struct itself. groupEditInitial captures the form's
+  // starting values so the dirty check below is just value !== initial.
+  const [groupEditing, setGroupEditing] = useState<
+    | { pg: RetailerPromoGroup; brandName: string; retailerName: string }
+    | null
+  >(null);
+  const [groupEditForm, setGroupEditForm] = useState<GroupEditForm | null>(null);
+  const [groupEditInitial, setGroupEditInitial] = useState<GroupEditForm | null>(null);
+  const [groupEditVaries, setGroupEditVaries] = useState<Partial<Record<keyof GroupEditForm, boolean>>>({});
+  const [groupEditSaving, setGroupEditSaving] = useState(false);
+  const [groupEditError, setGroupEditError] = useState("");
   const [syncingStatuses, setSyncingStatuses] = useState(false);
 
   // View mode (Feature 3)
@@ -795,6 +825,150 @@ function PromotionsInner() {
     setDeletingItem(null);
   }
 
+  // Open the bulk-edit modal for a promo group. For every field, if all SKUs
+  // in the group agree on a value we pre-fill it; if they disagree we leave
+  // the input blank and mark the field as "varies" so the placeholder reads
+  // "(varies — leave blank to keep per-SKU)". On save we only push fields
+  // the user actually changed, so untouched divergent values are preserved.
+  function openGroupEdit(pg: RetailerPromoGroup, brandName: string, retailerName: string) {
+    function sharedString<K extends keyof PromotionRow>(key: K): string | undefined {
+      let v: PromotionRow[K] | null = null;
+      let initialised = false;
+      for (const r of pg.rows) {
+        const cur = r[key];
+        if (!initialised) { v = cur; initialised = true; continue; }
+        if (cur !== v) return undefined;
+      }
+      if (v === null || v === undefined) return "";
+      return typeof v === "string" ? v : String(v);
+    }
+
+    function sharedDate<K extends "start_date" | "end_date">(key: K): string | undefined {
+      let v: string | null | undefined;
+      let initialised = false;
+      for (const r of pg.rows) {
+        const cur = r[key];
+        if (!initialised) { v = cur; initialised = true; continue; }
+        if (cur !== v) return undefined;
+      }
+      return (v ?? "")?.slice(0, 10) ?? "";
+    }
+
+    const fields: Array<keyof GroupEditForm> = [
+      "promo_name", "promo_type", "promo_status",
+      "start_date", "end_date",
+      "discount_percent", "discount_amount",
+      "promo_text_raw", "notes",
+    ];
+    const varies: Partial<Record<keyof GroupEditForm, boolean>> = {};
+    const form: GroupEditForm = {
+      promo_name: "", promo_type: "", promo_status: "",
+      start_date: "", end_date: "",
+      discount_percent: "", discount_amount: "",
+      promo_text_raw: "", notes: "",
+    };
+    for (const f of fields) {
+      const v = f === "start_date" || f === "end_date"
+        ? sharedDate(f)
+        : sharedString(f as keyof PromotionRow);
+      if (v === undefined) {
+        varies[f] = true;
+        form[f] = "";
+      } else {
+        form[f] = v;
+      }
+    }
+
+    setGroupEditing({ pg, brandName, retailerName });
+    setGroupEditForm(form);
+    setGroupEditInitial({ ...form });
+    setGroupEditVaries(varies);
+    setGroupEditError("");
+  }
+
+  async function handleSaveGroupEdit() {
+    if (!groupEditing || !groupEditForm || !groupEditInitial) return;
+    const { pg, brandName, retailerName } = groupEditing;
+
+    // Build payload from fields the user actually changed. Anything unchanged
+    // (including divergent fields the user didn't touch) is left alone.
+    const dirty = (Object.keys(groupEditForm) as Array<keyof GroupEditForm>)
+      .filter((k) => groupEditForm[k] !== groupEditInitial[k]);
+    if (dirty.length === 0) {
+      setGroupEditing(null); setGroupEditForm(null); setGroupEditInitial(null);
+      return;
+    }
+
+    const payload: Record<string, unknown> = {};
+    for (const k of dirty) {
+      const raw = groupEditForm[k].trim();
+      if (k === "discount_percent" || k === "discount_amount") {
+        payload[k] = raw === "" ? null : Number(raw);
+      } else if (k === "start_date" || k === "end_date") {
+        payload[k] = raw === "" ? null : raw;
+      } else if (k === "promo_type" || k === "promo_status") {
+        // Required-ish fields — refuse to blank them
+        if (raw === "") continue;
+        payload[k] = raw;
+      } else {
+        payload[k] = raw === "" ? null : raw;
+      }
+    }
+
+    setGroupEditSaving(true);
+    setGroupEditError("");
+
+    // Match the full group key so two groups that differ only by promo_type or
+    // dates can't collide. Looser than handleDeletePromoGroup deliberately —
+    // UPDATE is more destructive than DELETE was here.
+    let q: any = supabase.from("promotions_stage").update(payload)
+      .eq("brand_name", brandName)
+      .eq("retailer_name", retailerName)
+      .eq("promo_year", pg.promo_year)
+      .eq("promo_month", pg.promo_month)
+      .eq("promo_type", pg.promo_type);
+    q = pg.promo_name != null ? q.eq("promo_name", pg.promo_name) : q.is("promo_name", null);
+    q = pg.start_date != null ? q.eq("start_date", pg.start_date) : q.is("start_date", null);
+    q = pg.end_date != null ? q.eq("end_date", pg.end_date) : q.is("end_date", null);
+
+    const { error } = await q;
+    if (error) {
+      setGroupEditError(error.message);
+      setGroupEditSaving(false);
+      return;
+    }
+
+    // Local-state mirror: apply the same payload to every matching row so the
+    // UI reflects the change without a refetch. Coerce nulls/numbers to match
+    // PromotionRow's shape.
+    setPromotions((prev) => prev.map((r) => {
+      const matches =
+        r.brand_name === brandName &&
+        r.retailer_name === retailerName &&
+        r.promo_year === pg.promo_year &&
+        r.promo_month === pg.promo_month &&
+        r.promo_type === pg.promo_type &&
+        (r.promo_name ?? null) === (pg.promo_name ?? null) &&
+        (r.start_date ?? null) === (pg.start_date ?? null) &&
+        (r.end_date ?? null) === (pg.end_date ?? null);
+      if (!matches) return r;
+      const merged: PromotionRow = { ...r };
+      for (const k of dirty) {
+        const v = payload[k];
+        if (k === "discount_percent" || k === "discount_amount") merged[k] = v as number | null;
+        else if (k === "promo_type" || k === "promo_status") merged[k] = (v as string | null) ?? "";
+        else (merged as Record<string, unknown>)[k] = v;
+      }
+      return merged;
+    }));
+
+    setGroupEditSaving(false);
+    setGroupEditing(null);
+    setGroupEditForm(null);
+    setGroupEditInitial(null);
+    setGroupEditVaries({});
+  }
+
   async function handleDeletePromoGroup(pg: RetailerPromoGroup, brandName: string, retailerName: string) {
     let q = supabase
       .from("promotions_stage")
@@ -973,7 +1147,7 @@ function PromotionsInner() {
                                       {promoGroup.promo_text_raw ? <div className="text-xs text-gray-500 mt-1">{promoGroup.promo_text_raw}</div> : null}
                                     </button>
                                     {(role === "admin" || role === "rep") && (
-                                      <div className="flex items-center pr-3 pt-3" onClick={(e) => e.stopPropagation()}>
+                                      <div className="flex items-center gap-3 pr-3 pt-3" onClick={(e) => e.stopPropagation()}>
                                         {deletingPromoGroupKey === promoGroup.key ? (
                                           <span className="flex items-center gap-1 text-xs whitespace-nowrap">
                                             <span className="text-gray-600">Delete all {promoSkuCount} SKU{promoSkuCount === 1 ? "" : "s"}?</span>
@@ -981,7 +1155,10 @@ function PromotionsInner() {
                                             <button type="button" onClick={() => setDeletingPromoGroupKey(null)} className="text-gray-500 hover:underline">No</button>
                                           </span>
                                         ) : (
-                                          <button type="button" onClick={() => setDeletingPromoGroupKey(promoGroup.key)} className="text-gray-400 hover:text-red-500" title="Delete all SKUs in this promotion">🗑</button>
+                                          <>
+                                            <button type="button" onClick={() => openGroupEdit(promoGroup, brandGroup.brand_name, group.retailer_name)} className="text-xs underline text-blue-600 hover:text-blue-800" title={`Edit shared fields for all ${promoSkuCount} SKUs in this promotion`}>Edit</button>
+                                            <button type="button" onClick={() => setDeletingPromoGroupKey(promoGroup.key)} className="text-gray-400 hover:text-red-500" title="Delete all SKUs in this promotion">🗑</button>
+                                          </>
                                         )}
                                       </div>
                                     )}
@@ -1442,6 +1619,92 @@ function PromotionsInner() {
           </div>
         </div>
       )}
+
+      {/* Bulk group edit modal — edits shared fields for every SKU in a promo group */}
+      {groupEditing && groupEditForm && groupEditInitial && (() => {
+        const close = () => { setGroupEditing(null); setGroupEditForm(null); setGroupEditInitial(null); setGroupEditVaries({}); setGroupEditError(""); };
+        const { pg, brandName, retailerName } = groupEditing;
+        const skuCount = uniqueSkuCount(pg.rows);
+        const placeholderFor = (k: keyof GroupEditForm) =>
+          groupEditVaries[k] ? "(varies — leave blank to keep per-SKU)" : "";
+        const set = (k: keyof GroupEditForm, v: string) =>
+          setGroupEditForm((f) => f ? { ...f, [k]: v } : f);
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={close}>
+            <div className="relative w-full max-w-2xl mx-4 rounded-xl border border-border bg-card shadow-xl p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+              <div>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-semibold">Edit Promotion Group</h2>
+                  <button type="button" onClick={close} className="text-muted-foreground hover:text-foreground">✕</button>
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  {brandName} · {retailerName} · {monthLabel(pg.promo_month)} {pg.promo_year} · {skuCount} SKU{skuCount === 1 ? "" : "s"}
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  Only fields you change will be written. Untouched fields keep their per-SKU values.
+                </div>
+              </div>
+
+              {groupEditError && <div className="text-sm text-red-600">{groupEditError}</div>}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">Promo Name</label>
+                  <input className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={groupEditForm.promo_name} placeholder={placeholderFor("promo_name")} onChange={(e) => set("promo_name", e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">Promo Type (TPR type)</label>
+                  <select className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={groupEditForm.promo_type} onChange={(e) => set("promo_type", e.target.value)}>
+                    {groupEditVaries.promo_type && <option value="">{placeholderFor("promo_type")}</option>}
+                    {["TPR","Feature","Display","Digital","Distributor OI","Other"].map((v) => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">Promo Status</label>
+                  <select className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={groupEditForm.promo_status} onChange={(e) => set("promo_status", e.target.value)}>
+                    {groupEditVaries.promo_status && <option value="">{placeholderFor("promo_status")}</option>}
+                    {["planned","submitted","live","completed"].map((v) => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </div>
+                <div /> {/* spacer to keep the grid aligned */}
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">Start Date</label>
+                  <input type="date" className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={groupEditForm.start_date} placeholder={placeholderFor("start_date")} onChange={(e) => set("start_date", e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">End Date</label>
+                  <input type="date" className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={groupEditForm.end_date} placeholder={placeholderFor("end_date")} onChange={(e) => set("end_date", e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">
+                    Discount %{pg.promo_type === "Distributor OI" ? " (OI %)" : ""}
+                  </label>
+                  <input type="number" step="0.01" className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={groupEditForm.discount_percent} placeholder={placeholderFor("discount_percent") || "Optional"} onChange={(e) => set("discount_percent", e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">Discount $</label>
+                  <input type="number" step="0.01" className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={groupEditForm.discount_amount} placeholder={placeholderFor("discount_amount") || "Optional"} onChange={(e) => set("discount_amount", e.target.value)} />
+                </div>
+                <div className="space-y-1 md:col-span-2">
+                  <label className="text-xs font-medium text-muted-foreground">Promo Text</label>
+                  <textarea rows={2} className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={groupEditForm.promo_text_raw} placeholder={placeholderFor("promo_text_raw")} onChange={(e) => set("promo_text_raw", e.target.value)} />
+                </div>
+                <div className="space-y-1 md:col-span-2">
+                  <label className="text-xs font-medium text-muted-foreground">Notes</label>
+                  <textarea rows={2} className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={groupEditForm.notes} placeholder={placeholderFor("notes")} onChange={(e) => set("notes", e.target.value)} />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <button type="button" onClick={handleSaveGroupEdit} disabled={groupEditSaving} className="px-4 py-2 rounded text-sm font-medium text-white disabled:opacity-50" style={{ background: "var(--foreground)" }}>
+                  {groupEditSaving ? "Saving…" : `Save Changes to ${skuCount} SKU${skuCount === 1 ? "" : "s"}`}
+                </button>
+                <button type="button" onClick={close} className="px-4 py-2 rounded text-sm border border-border text-muted-foreground hover:text-foreground">Cancel</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Bulk builder */}
       {renderBulkBuilder()}
