@@ -350,6 +350,10 @@ function BrandRetailersInner() {
 
   // Task form state
   const [repProfilesList, setRepProfilesList] = useState<{ id: string; full_name: string }[]>([]);
+  // user_id → full_name for every rep that owns any visible retailer. Resolved
+  // from profiles via rep_owner_user_id — the source of truth — so the page no
+  // longer relies on the denormalized retailers.team_owner text column.
+  const [repNameById, setRepNameById] = useState<Record<string, string>>({});
   const [taskFormOpen, setTaskFormOpen] = useState<Record<string, boolean>>({});
   const [taskForms, setTaskForms] = useState<Record<string, { title: string; notes: string; due_date: string; assigned_to: string }>>({});
   const [taskSaving, setTaskSaving] = useState<Record<string, boolean>>({});
@@ -417,7 +421,26 @@ function BrandRetailersInner() {
         setStatus(retailerError.message);
         return;
       }
-      setRetailers((retailerData as Retailer[]) ?? []);
+      const retailerList = (retailerData as Retailer[]) ?? [];
+      setRetailers(retailerList);
+
+      // Resolve rep_owner_user_id → profiles.full_name for every owner we'll
+      // render. Runs for every role (clients included) so the Rep Owner cell
+      // shows a real name even when team_owner is null on the row.
+      const ownerIds = [...new Set(
+        retailerList.map((r) => r.rep_owner_user_id).filter((v): v is string => !!v)
+      )];
+      if (ownerIds.length > 0) {
+        const { data: ownerProfiles } = await supabase
+          .from("profiles")
+          .select("id, full_name")
+          .in("id", ownerIds);
+        const map: Record<string, string> = {};
+        ((ownerProfiles ?? []) as { id: string; full_name: string | null }[]).forEach((p) => {
+          if (p.full_name) map[p.id] = p.full_name;
+        });
+        setRepNameById(map);
+      }
 
       const { data: pipelineData, error: pipelineError } = await supabase
         .from("brand_retailer_timing")
@@ -712,11 +735,18 @@ function BrandRetailersInner() {
     });
   }, [cardAttachments]);
 
+  // Dropdown options: derived from rep_owner_user_id values that appear on the
+  // loaded retailers, resolved to profile full_name via repNameById. Values are
+  // user_ids; labels are names. Reps with no profile resolved (rare) are skipped.
   const repOptions = useMemo(() => {
-    return Array.from(
-      new Set(retailers.map((r) => r.team_owner).filter((v): v is string => !!v && v.trim() !== ""))
-    ).sort((a, b) => a.localeCompare(b));
-  }, [retailers]);
+    const ownerIds = [...new Set(
+      retailers.map((r) => r.rep_owner_user_id).filter((v): v is string => !!v)
+    )];
+    return ownerIds
+      .map((id) => ({ id, name: repNameById[id] ?? "" }))
+      .filter((o) => o.name !== "")
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [retailers, repNameById]);
 
   function defaultPipelineRow(retailerId: string): PipelineRow {
     return {
@@ -1488,7 +1518,11 @@ function BrandRetailersInner() {
       const parent = (r.name ?? "").toLowerCase();
       const channel = (r.channel ?? "").toLowerCase();
       const region = (r.hq_region ?? "").toLowerCase();
-      const repOwner = (r.team_owner ?? "").toLowerCase();
+      // Resolved owner name (full_name) — fall back to team_owner for any row
+      // whose owner profile didn't resolve, so search degrades gracefully.
+      const repOwner = (
+        repNameById[r.rep_owner_user_id ?? ""] ?? r.team_owner ?? ""
+      ).toLowerCase();
 
       return (
         banner.includes(q) ||
@@ -1501,11 +1535,12 @@ function BrandRetailersInner() {
 
     function matchesRep(r: Retailer): boolean {
       if (selectedRep === "all") return true;
-      return (r.team_owner ?? "") === selectedRep;
+      // selectedRep is now a rep_owner_user_id (from the dropdown values below)
+      return (r.rep_owner_user_id ?? "") === selectedRep;
     }
 
     return retailers.filter((r) => matchesFilter(r) && matchesSearch(r) && matchesRep(r));
-  }, [retailers, pipelineMap, calendarMap, authorizedMap, submissionsMap, selectedFilter, query, selectedRep]);
+  }, [retailers, pipelineMap, calendarMap, authorizedMap, submissionsMap, selectedFilter, query, selectedRep, repNameById]);
 
   // Scroll to the #retailer-<id> hash once the target card is actually
   // in the DOM. Notification emails deep-link to this hash; the original
@@ -1628,9 +1663,9 @@ function BrandRetailersInner() {
             onChange={(e) => setSelectedRep(e.target.value)}
           >
             <option value="all">All Reps</option>
-            {repOptions.map((name) => (
-              <option key={name} value={name}>
-                {name}
+            {repOptions.map((opt) => (
+              <option key={opt.id} value={opt.id}>
+                {opt.name}
               </option>
             ))}
           </select>
@@ -1726,7 +1761,9 @@ function BrandRetailersInner() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                   <div className="rounded-lg p-3" style={{ border: "1px solid var(--border)", background: "var(--muted)" }}>
                     <div className="text-xs mb-1" style={{ color: "var(--muted-foreground)" }}>Rep Owner</div>
-                    <div className="font-medium" style={{ color: "var(--foreground)" }}>{r.team_owner || "Unassigned"}</div>
+                    <div className="font-medium" style={{ color: "var(--foreground)" }}>
+                      {repNameById[r.rep_owner_user_id ?? ""] || r.team_owner || "Unassigned"}
+                    </div>
                   </div>
 
                   <div className="rounded-lg p-3" style={{ border: "1px solid var(--border)", background: "var(--muted)" }}>
