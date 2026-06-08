@@ -339,42 +339,26 @@ export async function POST(req: Request) {
             continue;
           }
 
-const mailboxEmail = normalizeEmail(emailAddress);
+          const mailboxEmail = normalizeEmail(emailAddress);
+          const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
 
-const thirtyMinutesAgo = new Date(
-  Date.now() - 30 * 60 * 1000
-).toISOString();
-
-const { data: pendingContext, error: pendingError } = await supabase
-  .from("email_log_tokens")
-  .select("*")
-  .eq("rep_email", mailboxEmail)
-  .eq("status", "pending")
-  .gte("created_at", thirtyMinutesAgo)
-  .order("created_at", { ascending: false })
-  .limit(1)
-  .maybeSingle();
-
-if (pendingError) {
-  console.error("pending token lookup error", pendingError);
-  continue;
-}
-
-if (!pendingContext) {
-  console.log("No matching pending context found for:", {
-    emailAddress: mailboxEmail,
-  });
-  continue;
-}
-
+          const { data: pendingContext, error: pendingError } = await supabase
+            .from("email_log_tokens")
+            .select("*")
+            .eq("rep_email", mailboxEmail)
+            .eq("status", "pending")
+            .gte("created_at", thirtyMinutesAgo)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
 
           if (pendingError) {
-            console.error("pending context lookup error", pendingError);
+            console.error("pending token lookup error", pendingError);
             continue;
           }
 
           if (!pendingContext) {
-            console.log("No unused pending context found for:", emailAddress);
+            console.log("No matching pending context found for:", { emailAddress: mailboxEmail });
             continue;
           }
 
