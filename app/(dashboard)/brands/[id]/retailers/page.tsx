@@ -290,6 +290,10 @@ function BrandRetailersInner() {
   const [brand, setBrand] = useState<Brand | null>(null);
   const [retailers, setRetailers] = useState<Retailer[]>([]);
   const [pipelineMap, setPipelineMap] = useState<Record<string, PipelineRow[]>>({});
+  // retailer_id → count of pending retailer-reply reviews for this brand.
+  // Populated once on load. Drives the orange badge on each card that deep-
+  // links to the single-retailer detail page where the rep can approve.
+  const [pendingReviewsByRetailer, setPendingReviewsByRetailer] = useState<Record<string, number>>({});
   const [calendarMap, setCalendarMap] = useState<Record<string, CategoryReviewRow[]>>({});
   const [authorizedMap, setAuthorizedMap] = useState<Record<string, AuthorizedRow>>({});
   const [inlineMessages, setInlineMessages] = useState<Record<string, { client: MessageRow[]; internal: MessageRow[] }>>({});
@@ -624,6 +628,24 @@ function BrandRetailersInner() {
         nextCardAttachments[a.retailer_id][a.message_id].push(a);
       });
       setCardAttachments(nextCardAttachments);
+
+      // Fetch pending retailer-reply reviews for this brand so the per-card
+      // orange badge can light up. Empty for clients (RLS would hide most
+      // rows anyway, and clients can't approve).
+      if (resolvedRole === "admin" || resolvedRole === "rep") {
+        const { data: pendingData } = await supabase
+          .from("crm_activities")
+          .select("retailer_id")
+          .eq("brand_id", brandId)
+          .eq("activity_kind", "retailer_reply")
+          .eq("approval_status", "pending_review");
+        const counts: Record<string, number> = {};
+        ((pendingData ?? []) as { retailer_id: string | null }[]).forEach((r) => {
+          if (!r.retailer_id) return;
+          counts[r.retailer_id] = (counts[r.retailer_id] ?? 0) + 1;
+        });
+        setPendingReviewsByRetailer(counts);
+      }
 
       // Fetch open tasks for this brand to display on retailer cards
       if (resolvedRole === "admin" || resolvedRole === "rep") {
@@ -1731,6 +1753,23 @@ function BrandRetailersInner() {
                   </div>
 
                   <div className="flex flex-col items-end gap-2 shrink-0">
+                    {/* Pending email replies waiting for the rep's approval.
+                        Deep-links into the single-retailer detail page where
+                        the textarea + Approve & Publish button lives. */}
+                    {pendingReviewsByRetailer[r.id] > 0 ? (
+                      <Link
+                        href={`/brands/${brandId}/retailers/${r.id}`}
+                        className="inline-block"
+                        title="Open this retailer to review pending email replies"
+                      >
+                        <span
+                          className="text-xs px-2 py-1 rounded font-medium"
+                          style={{ background: "#fed7aa", color: "#9a3412" }}
+                        >
+                          {pendingReviewsByRetailer[r.id]} pending review{pendingReviewsByRetailer[r.id] === 1 ? "" : "s"}
+                        </span>
+                      </Link>
+                    ) : null}
                     {authorized ? (
                       <button
                         onClick={() => openSkuModal(r.id, r.banner?.trim() ? r.banner : r.name)}

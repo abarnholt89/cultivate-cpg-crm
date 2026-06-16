@@ -76,7 +76,10 @@ export async function POST(req: Request) {
     }
 
     const activityIds: string[] = [];
-    const clientMessage = buildClientMessage(activityTypeKey);
+    // Prefer the rep's typed summary so the retailer card shows what they
+    // actually wrote, not a generic per-activity-type template. Falls back to
+    // the generic message only when the summary field is blank/whitespace.
+    const clientMessage = (summary ?? "").trim() || buildClientMessage(activityTypeKey);
     const sentAt = new Date().toISOString();
 
     for (const brandId of brandIds) {
@@ -168,6 +171,20 @@ export async function POST(req: Request) {
 
           if (subError) {
             console.error("[create-activity] submissions upsert failed:", subError.message);
+          }
+
+          // Also stamp brand_retailer_timing.submitted_date for EVERY category
+          // row tied to this brand+retailer (not just the first one) — the
+          // board's "Upcoming" filter and the category-review date logic read
+          // from this column, and a submission applies to all categories.
+          const submittedDate = sentAt.slice(0, 10);
+          const { error: brtError } = await supabase
+            .from("brand_retailer_timing")
+            .update({ submitted_date: submittedDate })
+            .eq("brand_id", brandId)
+            .eq("retailer_id", retailerId);
+          if (brtError) {
+            console.error("[create-activity] brand_retailer_timing submitted_date update failed:", brtError.message);
           }
         } catch (subErr: any) {
           console.error("[create-activity] submissions unexpected error:", subErr.message);
