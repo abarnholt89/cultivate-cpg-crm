@@ -147,23 +147,34 @@ export async function POST(req: Request) {
       // Non-fatal if this fails.
       if (activityTypeKey === "submission") {
         try {
-          // Prefer the category the rep picked in the Gmail add-on. Fall back
-          // to the brand's first alphabetical category (or "General") only
-          // when the client didn't send one — keeps older add-on builds and
-          // any non-add-on callers working without modification.
+          // Prefer the category the rep picked in the Gmail add-on, but only
+          // if it's actually granted to this brand via brand_category_access.
+          // The add-on dropdown shows the union across every brand the rep
+          // can see (Apps Script can't refresh the dropdown reactively when
+          // brand checkboxes change), so a rep could pick a category that
+          // belongs to a different brand than the one they ticked. Verify
+          // against the brand's allowed set, falling back to the first
+          // alphabetical entry (or "General") on miss or empty.
           const clientCategory =
             typeof categoryFromClient === "string" ? categoryFromClient.trim() : "";
+          const { data: catRows } = await supabase
+            .from("brand_category_access")
+            .select("universal_category")
+            .eq("brand_id", brandId)
+            .order("universal_category");
+          const allowed = ((catRows ?? []) as { universal_category: string | null }[])
+            .map((r) => r.universal_category)
+            .filter((c): c is string => !!c);
           let category: string;
-          if (clientCategory) {
+          if (clientCategory && allowed.includes(clientCategory)) {
             category = clientCategory;
           } else {
-            const { data: catRows } = await supabase
-              .from("brand_category_access")
-              .select("universal_category")
-              .eq("brand_id", brandId)
-              .order("universal_category")
-              .limit(1);
-            category = catRows?.[0]?.universal_category ?? "General";
+            if (clientCategory && !allowed.includes(clientCategory)) {
+              console.warn(
+                `[create-activity] category "${clientCategory}" not in brand_category_access for brand ${brandId} — falling back`
+              );
+            }
+            category = allowed[0] ?? "General";
           }
 
           const { error: subError } = await supabase
