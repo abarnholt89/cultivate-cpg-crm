@@ -173,16 +173,19 @@ export async function POST(req: Request) {
             console.error("[create-activity] submissions upsert failed:", subError.message);
           }
 
-          // Also stamp brand_retailer_timing.submitted_date for EVERY category
-          // row tied to this brand+retailer (not just the first one) — the
-          // board's "Upcoming" filter and the category-review date logic read
-          // from this column, and a submission applies to all categories.
+          // Also stamp brand_retailer_timing.submitted_date — but only for the
+          // single category row that this submission landed on. Previous
+          // version updated every category row for the pair, which would
+          // homogenize per-category submitted dates and erase legitimate
+          // history for the other categories. Scoping by universal_category
+          // keeps each category's submission timeline independent.
           const submittedDate = sentAt.slice(0, 10);
           const { error: brtError } = await supabase
             .from("brand_retailer_timing")
             .update({ submitted_date: submittedDate })
             .eq("brand_id", brandId)
-            .eq("retailer_id", retailerId);
+            .eq("retailer_id", retailerId)
+            .eq("universal_category", category);
           if (brtError) {
             console.error("[create-activity] brand_retailer_timing submitted_date update failed:", brtError.message);
           }
