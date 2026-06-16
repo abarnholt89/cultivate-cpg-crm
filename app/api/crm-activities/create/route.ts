@@ -21,6 +21,7 @@ export async function POST(req: Request) {
       brandIds,
       activityTypeKey,
       summary,
+      category: categoryFromClient,
       senderEmail,
       subject,
       gmailMessageId,
@@ -146,14 +147,24 @@ export async function POST(req: Request) {
       // Non-fatal if this fails.
       if (activityTypeKey === "submission") {
         try {
-          const { data: catRows } = await supabase
-            .from("brand_category_access")
-            .select("universal_category")
-            .eq("brand_id", brandId)
-            .order("universal_category")
-            .limit(1);
-
-          const category = catRows?.[0]?.universal_category ?? "General";
+          // Prefer the category the rep picked in the Gmail add-on. Fall back
+          // to the brand's first alphabetical category (or "General") only
+          // when the client didn't send one — keeps older add-on builds and
+          // any non-add-on callers working without modification.
+          const clientCategory =
+            typeof categoryFromClient === "string" ? categoryFromClient.trim() : "";
+          let category: string;
+          if (clientCategory) {
+            category = clientCategory;
+          } else {
+            const { data: catRows } = await supabase
+              .from("brand_category_access")
+              .select("universal_category")
+              .eq("brand_id", brandId)
+              .order("universal_category")
+              .limit(1);
+            category = catRows?.[0]?.universal_category ?? "General";
+          }
 
           const { error: subError } = await supabase
             .from("submissions")

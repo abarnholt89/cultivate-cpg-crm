@@ -23,13 +23,21 @@ export async function GET() {
     .eq("is_active", true)
     .order("sort_order", { ascending: true });
 
-  if (retailersError || brandsError || activityTypesError) {
+  // Pull brand_category_access for every brand so the Gmail add-on can show
+  // a category picker for Submission activities. Returned as a map keyed by
+  // brand_id so the client can scope or union as it sees fit.
+  const { data: categoryAccess, error: categoryAccessError } = await supabase
+    .from("brand_category_access")
+    .select("brand_id, universal_category");
+
+  if (retailersError || brandsError || activityTypesError || categoryAccessError) {
     return NextResponse.json(
       {
         error:
           retailersError?.message ||
           brandsError?.message ||
           activityTypesError?.message ||
+          categoryAccessError?.message ||
           "Failed to load options",
       },
       { status: 500 }
@@ -38,6 +46,19 @@ export async function GET() {
 
   const allowedActivityTypeKeys = new Set(["intro", "follow_up", "submission"]);
 
+  const categoriesByBrandId: Record<string, string[]> = {};
+  ((categoryAccess ?? []) as { brand_id: string; universal_category: string | null }[])
+    .forEach((row) => {
+      if (!row.brand_id || !row.universal_category) return;
+      if (!categoriesByBrandId[row.brand_id]) categoriesByBrandId[row.brand_id] = [];
+      if (!categoriesByBrandId[row.brand_id].includes(row.universal_category)) {
+        categoriesByBrandId[row.brand_id].push(row.universal_category);
+      }
+    });
+  Object.keys(categoriesByBrandId).forEach((k) =>
+    categoriesByBrandId[k].sort((a, b) => a.localeCompare(b))
+  );
+
   return NextResponse.json({
     retailers: (retailers || []).map((r) => ({
       id: r.id,
@@ -45,5 +66,6 @@ export async function GET() {
     })),
     brands,
     activityTypes: (activityTypes || []).filter((t) => allowedActivityTypeKeys.has(t.key)),
+    categoriesByBrandId,
   });
 }

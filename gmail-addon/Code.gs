@@ -47,6 +47,7 @@ function buildContextualCard(e) {
       options.retailers,
       options.brands,
       options.activityTypes,
+      unionCategories_(options.categoriesByBrandId),
       detectedRetailerId
     );
   } catch (err) {
@@ -105,6 +106,7 @@ function buildComposeCard(e) {
       options.retailers,
       options.brands,
       options.activityTypes,
+      unionCategories_(options.categoriesByBrandId),
       null
     );
   } catch (err) {
@@ -114,7 +116,7 @@ function buildComposeCard(e) {
 
 // ─── Card Builders ────────────────────────────────────────────────────────────
 
-function buildActivityCard_(from, subject, messageId, threadId, retailers, brands, activityTypes, detectedRetailerId) {
+function buildActivityCard_(from, subject, messageId, threadId, retailers, brands, activityTypes, categories, detectedRetailerId) {
   var card = CardService.newCardBuilder();
 
   card.setHeader(
@@ -182,6 +184,22 @@ function buildActivityCard_(from, subject, messageId, threadId, retailers, brand
     typeSelect.addItem(t.label, t.key, false);
   });
   formSection.addWidget(typeSelect);
+
+  // Category dropdown — always visible. Required for Submission activities;
+  // the server ignores it for everything else. Apps Script cards don't do
+  // client-side conditional rendering without a server roundtrip, so we
+  // show it unconditionally rather than pay that cost on every type change.
+  if (categories && categories.length > 0) {
+    var categorySelect = CardService.newSelectionInput()
+      .setType(CardService.SelectionInputType.DROPDOWN)
+      .setTitle("Category (Submission only)")
+      .setFieldName("category");
+    categorySelect.addItem("— none —", "", true);
+    categories.forEach(function (c) {
+      categorySelect.addItem(c, c, false);
+    });
+    formSection.addWidget(categorySelect);
+  }
 
   // Summary textarea
   formSection.addWidget(
@@ -260,6 +278,7 @@ function onSubmitActivity(e) {
     var brandIds = getMultiSelectValues_(formInputs, "brandIds");
     var activityTypeKey = getSelectValue_(formInputs, "activityTypeKey");
     var summary = getTextValue_(formInputs, "summary");
+    var category = getSelectValue_(formInputs, "category");
 
     var messageId = params.messageId || "";
     var threadId = params.threadId || "";
@@ -288,6 +307,7 @@ function onSubmitActivity(e) {
       brandIds: brandIds,
       activityTypeKey: activityTypeKey,
       summary: summary || "",
+      category: category || "",
       senderEmail: senderEmail,
       subject: subject,
       gmailMessageId: messageId,
@@ -372,11 +392,28 @@ function fetchOptions_() {
       retailers: data.retailers || [],
       brands: data.brands || [],
       activityTypes: data.activityTypes || [],
+      categoriesByBrandId: data.categoriesByBrandId || {},
       error: null,
     };
   } catch (err) {
-    return { retailers: [], brands: [], activityTypes: [], error: err.message };
+    return { retailers: [], brands: [], activityTypes: [], categoriesByBrandId: {}, error: err.message };
   }
+}
+
+/**
+ * Flatten categoriesByBrandId into the sorted union of all categories across
+ * every brand the rep can see. Used to populate the always-visible Category
+ * dropdown — the rep picks one and the server only honors it for Submission
+ * activities (other activity types ignore it).
+ */
+function unionCategories_(categoriesByBrandId) {
+  var seen = {};
+  Object.keys(categoriesByBrandId || {}).forEach(function (bid) {
+    (categoriesByBrandId[bid] || []).forEach(function (cat) {
+      if (cat) seen[cat] = true;
+    });
+  });
+  return Object.keys(seen).sort();
 }
 
 // ─── Domain Detection ─────────────────────────────────────────────────────────
