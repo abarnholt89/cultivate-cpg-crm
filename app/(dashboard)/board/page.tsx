@@ -1162,15 +1162,23 @@ export default function AllBrandsBoardPage() {
               ))}
             </select>
           )
-        ) : role === "rep" ? (
-          <div
-            className="rounded-lg px-3 py-2 text-sm"
-            style={{ border: "1px solid var(--border)", background: "var(--muted)", color: "var(--muted-foreground)" }}
+        ) : role === "rep" && userId ? (
+          // Reps get a real select scoped to their own perspectives. Teammates
+          // in MANAGER_MAP can flip between "My Team" (default) and "My
+          // Accounts" (just retailers they personally own); plain reps just
+          // see "My Accounts" as a single option. Individual-rep names are
+          // not exposed here — that's admin-only.
+          <select
+            value={repFilter}
+            onChange={(e) => setRepFilter(e.target.value)}
+            className="rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
+            style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
           >
-            {repFilter === MY_TEAM
-              ? "My Team"
-              : reps.find((r) => r.id === repFilter)?.full_name ?? "My accounts"}
-          </div>
+            {MANAGER_MAP[userId] && (
+              <option value={MY_TEAM}>My Team</option>
+            )}
+            <option value={userId}>My Accounts</option>
+          </select>
         ) : null}
       </div>
       )} {/* end role !== "client" filter row */}
