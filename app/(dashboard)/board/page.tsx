@@ -1044,9 +1044,21 @@ export default function AllBrandsBoardPage() {
 
     // (brand_id, retailer_id) → latest worked_at among rows matching the rep filter
     const latest = new Map<string, string>();
+    // brand_id → latest worked_at among rows that have NO retailer_id (legacy
+    // brand-level snooze entries, etc). The previous version dropped these on
+    // the floor, which made reps with lots of brand-level activity show "No
+    // Activity" on brands they're actively working — see Alana investigation
+    // 2026-06-09 where 137/200 of her rows had retailer_id=NULL. Brand-level
+    // activity is still rep-scoped via workedRepMatches; there's no retailer
+    // ownership check to fail because no retailer is named.
+    const brandLevelLatest = new Map<string, string>();
     for (const e of workedEntries) {
-      if (!e.retailer_id) continue;
       if (workedRepMatches && !workedRepMatches(e.rep_id)) continue;
+      if (!e.retailer_id) {
+        const cur = brandLevelLatest.get(e.brand_id);
+        if (!cur || e.worked_at > cur) brandLevelLatest.set(e.brand_id, e.worked_at);
+        continue;
+      }
       const k = `${e.brand_id}:${e.retailer_id}`;
       const cur = latest.get(k);
       if (!cur || e.worked_at > cur) latest.set(k, e.worked_at);
@@ -1066,6 +1078,14 @@ export default function AllBrandsBoardPage() {
         if (!d) continue; // untouched retailers don't pull either bound
         if (!newest || d > newest) newest = d;
         if (!oldest || d < oldest) oldest = d;
+      }
+      // Fold in any brand-level (NULL retailer_id) activity for this brand.
+      // These count as the rep's most recent touch on the brand even though
+      // no retailer was named.
+      const brandLevelD = brandLevelLatest.get(brand.id);
+      if (brandLevelD) {
+        if (!newest || brandLevelD > newest) newest = brandLevelD;
+        if (!oldest || brandLevelD < oldest) oldest = brandLevelD;
       }
       result[brand.id] = { newest, oldest };
     }
