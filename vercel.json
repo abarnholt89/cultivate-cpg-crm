@@ -3,6 +3,14 @@
     {
       "path": "/api/cron/renew-gmail-watch",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/run-message-followup-alerts",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/run-promo-alerts",
+      "schedule": "0 13 * * *"
     }
   ]
 }
