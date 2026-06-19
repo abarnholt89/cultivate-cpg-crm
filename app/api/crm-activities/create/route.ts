@@ -177,22 +177,24 @@ export async function POST(req: Request) {
             category = allowed[0] ?? "General";
           }
 
+          // Plain insert (not upsert) — submissions has no unique constraint
+          // on (brand_id, retailer_id, category), so an upsert with onConflict
+          // was silently failing with Postgres 42P10 for every Gmail-addon
+          // submission. Each submission is a unique event anyway; re-submissions
+          // legitimately create a new dated row so the history is preserved.
           const { error: subError } = await supabase
             .from("submissions")
-            .upsert(
-              {
-                brand_id: brandId,
-                retailer_id: retailerId,
-                category,
-                submitted_at: sentAt.slice(0, 10), // date only (YYYY-MM-DD)
-                notes: summary || null,
-                created_by: repId,
-              },
-              { onConflict: "brand_id,retailer_id,category", ignoreDuplicates: true }
-            );
+            .insert({
+              brand_id: brandId,
+              retailer_id: retailerId,
+              category,
+              submitted_at: sentAt.slice(0, 10), // date only (YYYY-MM-DD)
+              notes: summary || null,
+              created_by: repId,
+            });
 
           if (subError) {
-            console.error("[create-activity] submissions upsert failed:", subError.message);
+            console.error("[create-activity] submissions insert failed:", subError.message);
           }
 
           // Also stamp brand_retailer_timing.submitted_date — but only for the
@@ -210,6 +212,24 @@ export async function POST(req: Request) {
             .eq("universal_category", category);
           if (brtError) {
             console.error("[create-activity] brand_retailer_timing submitted_date update failed:", brtError.message);
+          }
+
+          // Auto-bump account_status to 'in_process' for the same category row,
+          // but only if it isn't currently in a "freeze" state. active_maintain_
+          // and_grow means the account is live and being grown — a new
+          // submission shouldn't demote it back to in_process. retailer_declined
+          // is a hard stop; logging a submission against a declined account
+          // shouldn't silently re-open it. Any other status (awaiting_submission_
+          // opportunity, working_to_secure_anchor_account, null, etc) gets bumped.
+          const { error: statusError } = await supabase
+            .from("brand_retailer_timing")
+            .update({ account_status: "in_process" })
+            .eq("brand_id", brandId)
+            .eq("retailer_id", retailerId)
+            .eq("universal_category", category)
+            .not("account_status", "in", "(active_maintain_and_grow,retailer_declined)");
+          if (statusError) {
+            console.error("[create-activity] brand_retailer_timing account_status update failed:", statusError.message);
           }
         } catch (subErr: any) {
           console.error("[create-activity] submissions unexpected error:", subErr.message);
