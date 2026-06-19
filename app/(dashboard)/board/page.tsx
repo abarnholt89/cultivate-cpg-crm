@@ -1110,16 +1110,19 @@ export default function AllBrandsBoardPage() {
         return brandTiming.some((t) => retailerRepMap[t.retailer_id] === repFilter);
       });
     }
-    // Sort by the rep's OLDEST actual touch — brands they haven't worked in
-    // the longest go to the top. Brands with no activity at all (oldest=null)
-    // float above every dated brand. Applies in every mode.
+    // Sort by the rep's MOST RECENT touch — same value the badge displays, so
+    // the order matches what users read on the card. Brands with no activity
+    // at all (newest=null) float above every dated brand. Applies in every
+    // mode. The activityByBrand memo still computes `oldest` in case we want
+    // to surface it elsewhere later (e.g. a secondary "most neglected" badge),
+    // but it no longer drives the sort.
     result = [...result].sort((a, b) => {
-      const aO = activityByBrand[a.id]?.oldest ?? null;
-      const bO = activityByBrand[b.id]?.oldest ?? null;
-      if (aO === null && bO === null) return a.name.localeCompare(b.name);
-      if (aO === null) return -1;
-      if (bO === null) return 1;
-      return aO.localeCompare(bO);
+      const aN = activityByBrand[a.id]?.newest ?? null;
+      const bN = activityByBrand[b.id]?.newest ?? null;
+      if (aN === null && bN === null) return a.name.localeCompare(b.name);
+      if (aN === null) return -1;
+      if (bN === null) return 1;
+      return aN.localeCompare(bN);
     });
     return result;
   }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand, userId, activityByBrand]);
