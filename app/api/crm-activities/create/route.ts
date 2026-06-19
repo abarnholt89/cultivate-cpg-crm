@@ -197,13 +197,49 @@ export async function POST(req: Request) {
             console.error("[create-activity] submissions insert failed:", subError.message);
           }
 
+          const submittedDate = sentAt.slice(0, 10);
+
+          // Self-heal: a submission can be logged for a (brand, retailer,
+          // category) combo that has no brand_retailer_timing row yet — the
+          // brand may have been created before the seeder trigger existed, or
+          // this retailer may sit outside the standard set. Without a timing
+          // row the UPDATEs below silently match nothing, and the retailer
+          // never appears in "What's Happening Now" (the brand overview page
+          // iterates pipelineRows, not messages). Insert a row in that case
+          // so the rest of the flow has something to stamp.
+          const { data: existingTiming } = await supabase
+            .from("brand_retailer_timing")
+            .select("id")
+            .eq("brand_id", brandId)
+            .eq("retailer_id", retailerId)
+            .eq("universal_category", category)
+            .maybeSingle();
+          if (!existingTiming) {
+            const { error: insertTimingError } = await supabase
+              .from("brand_retailer_timing")
+              .insert({
+                brand_id: brandId,
+                retailer_id: retailerId,
+                universal_category: category,
+                account_status: "in_process",
+                submitted_date: submittedDate,
+              });
+            if (insertTimingError) {
+              console.error(
+                "[create-activity] brand_retailer_timing self-heal insert failed:",
+                insertTimingError.message
+              );
+            }
+          }
+
           // Also stamp brand_retailer_timing.submitted_date — but only for the
           // single category row that this submission landed on. Previous
           // version updated every category row for the pair, which would
           // homogenize per-category submitted dates and erase legitimate
           // history for the other categories. Scoping by universal_category
-          // keeps each category's submission timeline independent.
-          const submittedDate = sentAt.slice(0, 10);
+          // keeps each category's submission timeline independent. No-op
+          // when the self-heal above just inserted the row (values already
+          // match) — kept anyway so existing rows still get refreshed.
           const { error: brtError } = await supabase
             .from("brand_retailer_timing")
             .update({ submitted_date: submittedDate })
