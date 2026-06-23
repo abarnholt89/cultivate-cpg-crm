@@ -995,6 +995,33 @@ function BrandRetailersInner() {
     setStatus("Saved ✅");
   }
 
+  async function saveDraft(retailerId: string, draft: ManualReviewDraft) {
+    if (!draft.category.trim()) return;
+    const { data: inserted, error: manualError } = await supabase
+      .from("brand_retailer_category_timing")
+      .insert({
+        brand_id: brandId,
+        retailer_id: retailerId,
+        category: draft.category.trim(),
+        category_review_date: draft.category_review_date || null,
+        reset_date: draft.reset_date || null,
+        notes: draft.notes || null,
+      })
+      .select("id,brand_id,retailer_id,category,category_review_date,reset_date,notes")
+      .single();
+    if (manualError) { setStatus(manualError.message); return; }
+    if (inserted) {
+      setSavedManualReviews((prev) => ({
+        ...prev,
+        [retailerId]: [...(prev[retailerId] ?? []), inserted as ManualReviewRow],
+      }));
+      setPendingManualReviews((prev) => ({
+        ...prev,
+        [retailerId]: (prev[retailerId] ?? []).filter((d) => d.localId !== draft.localId),
+      }));
+    }
+  }
+
   async function saveTask(retailerId: string) {
     const form = taskForms[retailerId];
     if (!form?.title?.trim()) return;
@@ -2315,7 +2342,19 @@ function BrandRetailersInner() {
                           />
                         </div>
                       </div>
-                      <div className="flex justify-end mt-2">
+                      <div className="flex items-center justify-between mt-2">
+                        <button
+                          className="text-xs px-3 py-1 rounded"
+                          style={{
+                            background: draft.category.trim() ? "var(--foreground)" : "var(--muted)",
+                            color: draft.category.trim() ? "var(--background)" : "var(--muted-foreground)",
+                            cursor: draft.category.trim() ? "pointer" : "not-allowed",
+                          }}
+                          disabled={!draft.category.trim()}
+                          onClick={() => saveDraft(r.id, draft)}
+                        >
+                          Save
+                        </button>
                         <button
                           className="text-xs"
                           style={{ color: "var(--muted-foreground)" }}

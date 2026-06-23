@@ -77,6 +77,7 @@ export async function POST(req: Request) {
     }
 
     const activityIds: string[] = [];
+    const msgMirrorErrors: string[] = [];
     // Prefer the rep's typed summary so the retailer card shows what they
     // actually wrote, not a generic per-activity-type template. Falls back to
     // the generic message only when the summary field is blank/whitespace.
@@ -273,15 +274,15 @@ export async function POST(req: Request) {
       }
 
       // Mirror to brand_retailer_messages so the activity appears in the
-      // retailer card inline Messages view. Non-fatal if this fails.
+      // retailer card inline Messages view. Non-fatal if this fails, but
+      // errors are surfaced in the response so callers can diagnose them.
       try {
-        const msgVisibility = "client_visible" === "client_visible" ? "client" : "internal";
         const { error: msgError } = await supabase
           .from("brand_retailer_messages")
           .insert({
             brand_id: brandId,
             retailer_id: retailerId,
-            visibility: msgVisibility,
+            visibility: "client",
             sender_id: repId,
             sender_name: senderName,
             body: clientMessage,
@@ -290,13 +291,18 @@ export async function POST(req: Request) {
           });
         if (msgError) {
           console.error("[create-activity] brand_retailer_messages insert failed:", msgError.message);
+          msgMirrorErrors.push(`brand ${brandId}: ${msgError.message}`);
         }
       } catch (msgErr: any) {
         console.error("[create-activity] brand_retailer_messages unexpected error:", msgErr.message);
+        msgMirrorErrors.push(`brand ${brandId}: ${msgErr.message}`);
       }
     }
 
-    return Response.json({ activityIds });
+    return Response.json({
+      activityIds,
+      ...(msgMirrorErrors.length ? { warnings: msgMirrorErrors } : {}),
+    });
   } catch (err: any) {
     return Response.json(
       { error: err.message || "Unknown error" },

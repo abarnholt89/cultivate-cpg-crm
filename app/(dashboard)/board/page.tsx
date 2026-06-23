@@ -1242,11 +1242,7 @@ export default function AllBrandsBoardPage() {
                       {brand.retailerCount} retailer{brand.retailerCount !== 1 ? "s" : ""}
                     </span>
                     <span className="text-xs shrink-0" style={{ color: "var(--muted-foreground)" }}>
-                      Last activity: {relativeTime(
-                        (repFilter && repFilter !== MY_TEAM)
-                          ? (msgBySenderMap[brand.id]?.[repFilter] ?? null)
-                          : brand.lastActivity
-                      )}
+                      Last activity: {relativeTime(activityByBrand[brand.id]?.newest ?? null)}
                     </span>
                     {/* Staleness badge — shows in every mode. Hidden for clients
                         so it doesn't show up on /board for brand owners. */}
