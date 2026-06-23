@@ -291,9 +291,7 @@ export default function AllBrandsBoardPage() {
   useEffect(() => {
     if (!userId || !role || repFilterInitialized.current) return;
     repFilterInitialized.current = true;
-    if (MANAGER_MAP[userId]) {
-      setRepFilter(MY_TEAM);
-    } else if (role === "rep") {
+    if (role === "rep") {
       setRepFilter(userId);
     }
   }, [userId, role]);
@@ -1166,43 +1164,24 @@ export default function AllBrandsBoardPage() {
           style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
         />
 
-        {role === "admin" ? (
-          reps.length > 0 && (
-            <select
-              value={repFilter}
-              onChange={(e) => setRepFilter(e.target.value)}
-              className="rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
-              style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
-            >
-              <option value="">All reps</option>
-              {userId && MANAGER_MAP[userId] && (
-                <option value={MY_TEAM}>My Team</option>
-              )}
-              {reps.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.full_name ?? r.id}
-                </option>
-              ))}
-            </select>
-          )
-        ) : role === "rep" && userId ? (
-          // Reps get a real select scoped to their own perspectives. Teammates
-          // in MANAGER_MAP can flip between "My Team" (default) and "My
-          // Accounts" (just retailers they personally own); plain reps just
-          // see "My Accounts" as a single option. Individual-rep names are
-          // not exposed here — that's admin-only.
+        {(role === "admin" || role === "rep") && reps.length > 0 && (
           <select
             value={repFilter}
             onChange={(e) => setRepFilter(e.target.value)}
             className="rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
             style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
           >
-            {MANAGER_MAP[userId] && (
+            <option value="">All reps</option>
+            {userId && MANAGER_MAP[userId] && (
               <option value={MY_TEAM}>My Team</option>
             )}
-            <option value={userId}>My Accounts</option>
+            {reps.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.full_name ?? r.id}
+              </option>
+            ))}
           </select>
-        ) : null}
+        )}
       </div>
       )} {/* end role !== "client" filter row */}
 

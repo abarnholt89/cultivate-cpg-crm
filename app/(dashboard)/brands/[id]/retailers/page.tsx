@@ -366,10 +366,27 @@ function BrandRetailersInner() {
   const isRepOrAdmin = role === "admin" || role === "rep";
 
   const didHashScrollRef = useRef(false);
+  const didHashFilterRef = useRef(false);
 
   useEffect(() => {
     setSelectedFilter(filterFromUrl);
   }, [filterFromUrl]);
+
+  // When arriving via a #retailer-<id> hash (e.g. from inbox links), pre-fill
+  // the search so only that card is visible. The user can clear to see all.
+  useEffect(() => {
+    if (didHashFilterRef.current || retailers.length === 0) return;
+    if (typeof window === "undefined") return;
+    const hash = window.location.hash;
+    if (!hash) return;
+    const targetId = hash.slice(1);
+    if (!targetId.startsWith("retailer-")) return;
+    const retailerId = targetId.slice("retailer-".length);
+    const retailer = retailers.find((r) => r.id === retailerId);
+    if (!retailer) return;
+    didHashFilterRef.current = true;
+    setQuery(retailer.banner?.trim() || retailer.name);
+  }, [retailers]);
 
   useEffect(() => {
     if (!brandId) return;

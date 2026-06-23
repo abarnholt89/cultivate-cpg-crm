@@ -222,6 +222,8 @@ export default function RepInboxPage() {
   const [clientMessages, setClientMessages] = useState<ClientMessageInboxRow[]>([]);
   const [doneMessageIds, setDoneMessageIds] = useState<Set<string>>(new Set());
   const [hideDoneMessages, setHideDoneMessages] = useState(false);
+  const [showOlderMessages, setShowOlderMessages] = useState(false);
+  const [showOlderCompletedTasks, setShowOlderCompletedTasks] = useState(false);
   const [brandsById, setBrandsById] = useState<Record<string, Brand>>({});
   const [retailersById, setRetailersById] = useState<Record<string, Retailer>>({});
   const [status, setStatus] = useState("");
@@ -970,6 +972,8 @@ if (clientMessagesResult.error) {
     [clientMessages, doneMessageIds, tasks, upcoming, agingAccounts]
   );
 
+  const twoWeeksAgoISO = addDaysISO(todayISO(), -14);
+
   if (loading) {
     return (
       <div className="p-6 text-sm text-muted-foreground">
@@ -1017,14 +1021,24 @@ if (clientMessagesResult.error) {
         <section className="space-y-4 rounded-xl border border-border bg-card p-4">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold text-foreground">Client Messages</h2>
-            {doneMessageIds.size > 0 && (
-              <button
-                onClick={() => setHideDoneMessages((v) => !v)}
-                className="text-sm text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
-              >
-                {hideDoneMessages ? "Show done" : "Hide done"}
-              </button>
-            )}
+            <div className="flex items-center gap-3">
+              {doneMessageIds.size > 0 && (
+                <button
+                  onClick={() => setHideDoneMessages((v) => !v)}
+                  className="text-sm text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
+                >
+                  {hideDoneMessages ? "Show done" : "Hide done"}
+                </button>
+              )}
+              {clientMessages.some((m) => doneMessageIds.has(m.id) && m.created_at < twoWeeksAgoISO) && (
+                <button
+                  onClick={() => setShowOlderMessages((v) => !v)}
+                  className="text-sm text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
+                >
+                  {showOlderMessages ? "Hide older items" : "Show older items"}
+                </button>
+              )}
+            </div>
           </div>
 
           {clientMessages.length === 0 ? (
@@ -1034,6 +1048,7 @@ if (clientMessagesResult.error) {
               {clientMessages.map((message) => {
                 const isDone = doneMessageIds.has(message.id);
                 if (hideDoneMessages && isDone) return null;
+                if (isDone && message.created_at < twoWeeksAgoISO && !showOlderMessages) return null;
 
                 const brandName = brandsById[message.brand_id]?.name ?? "Brand";
                 const retailer = retailersById[message.retailer_id];
@@ -1198,9 +1213,30 @@ if (clientMessagesResult.error) {
               ) : completedTasks.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No completed tasks.</p>
               ) : (
-                <div className="space-y-2">
-                  {completedTasks.map((task) => <TaskTile key={task.id} task={task} done />)}
-                </div>
+                <>
+                  <div className="space-y-2">
+                    {completedTasks
+                      .filter((task) => task.created_at >= twoWeeksAgoISO)
+                      .map((task) => <TaskTile key={task.id} task={task} done />)}
+                  </div>
+                  {completedTasks.some((task) => task.created_at < twoWeeksAgoISO) && (
+                    <>
+                      <button
+                        onClick={() => setShowOlderCompletedTasks((v) => !v)}
+                        className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        {showOlderCompletedTasks ? "Hide older items" : "Show older items"}
+                      </button>
+                      {showOlderCompletedTasks && (
+                        <div className="space-y-2">
+                          {completedTasks
+                            .filter((task) => task.created_at < twoWeeksAgoISO)
+                            .map((task) => <TaskTile key={task.id} task={task} done />)}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
               )}
             </div>
           )}
