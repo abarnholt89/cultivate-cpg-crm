@@ -432,17 +432,35 @@ function BrandRetailersInner() {
       }
       setBrand(brandData);
 
-      const { data: retailerData, error: retailerError } = await supabase
-        .from("retailers")
-        .select("id,name,banner,channel,hq_region,store_count,team_owner,rep_owner_user_id")
-        .not("rep_owner_user_id", "is", null)
-        .order("banner", { ascending: true });
+      // Fetch pipeline first so we can scope the retailer query to only
+      // retailers that have a real brand_retailer_timing row for this brand.
+      const { data: pipelineData, error: pipelineError } = await supabase
+        .from("brand_retailer_timing")
+        .select("id,brand_id,retailer_id,account_status,schedule_mode,submitted_date,submitted_notes,notes,authorized_items_note,universal_category")
+        .eq("brand_id", brandId);
 
-      if (retailerError) {
-        setStatus(retailerError.message);
+      if (pipelineError) {
+        setStatus(pipelineError.message);
         return;
       }
-      const retailerList = (retailerData as Retailer[]) ?? [];
+
+      const pipelineRetailerIds = [...new Set(
+        (pipelineData ?? []).map((r: any) => r.retailer_id as string)
+      )];
+
+      let retailerList: Retailer[] = [];
+      if (pipelineRetailerIds.length > 0) {
+        const { data: retailerData, error: retailerError } = await supabase
+          .from("retailers")
+          .select("id,name,banner,channel,hq_region,store_count,team_owner,rep_owner_user_id")
+          .in("id", pipelineRetailerIds)
+          .order("banner", { ascending: true });
+        if (retailerError) {
+          setStatus(retailerError.message);
+          return;
+        }
+        retailerList = (retailerData as Retailer[]) ?? [];
+      }
       setRetailers(retailerList);
 
       // Resolve rep_owner_user_id → profiles.full_name for every owner we'll
@@ -461,16 +479,6 @@ function BrandRetailersInner() {
           if (p.full_name) map[p.id] = p.full_name;
         });
         setRepNameById(map);
-      }
-
-      const { data: pipelineData, error: pipelineError } = await supabase
-        .from("brand_retailer_timing")
-        .select("id,brand_id,retailer_id,account_status,schedule_mode,submitted_date,submitted_notes,notes,authorized_items_note,universal_category")
-        .eq("brand_id", brandId);
-
-      if (pipelineError) {
-        setStatus(pipelineError.message);
-        return;
       }
 
       const nextPipelineMap: Record<string, PipelineRow[]> = {};
@@ -1537,7 +1545,8 @@ function BrandRetailersInner() {
     const q = query.trim().toLowerCase();
 
     function matchesFilter(r: Retailer): boolean {
-      const rows = pipelineMap[r.id] ?? [defaultPipelineRow(r.id)];
+      const rows = pipelineMap[r.id];
+      if (!rows) return false;
       const primaryRow = rows[0];
       const calendarRows = calendarMap[r.id] ?? [];
       const nextReview = calendarRows.find((entry) => !!entry.review_date);
