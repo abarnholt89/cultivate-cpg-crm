@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const APP_URL = "https://cultivate-cpg-crm.vercel.app";
+const APP_URL =
+  process.env.NEXT_PUBLIC_SITE_URL ||
+  process.env.NEXT_PUBLIC_APP_URL ||
+  "https://cultivate-cpg-crm.vercel.app";
 const LOGO_URL = `${APP_URL}/cultivate-icon.jpeg`;
 
 // Resolve the rep email for a retailer + brand, honoring opt-outs.
@@ -84,16 +87,22 @@ function buildEmailHtml({
   retailerName,
   messageBody,
   actorName,
-  replyUrl,
+  brandId,
+  retailerId,
   recentMessages,
 }: {
   brandName: string;
   retailerName: string;
   messageBody: string;
   actorName: string;
-  replyUrl: string;
+  brandId: string;
+  retailerId: string;
   recentMessages?: RecentMessage[];
 }) {
+  const viewReplyUrl =
+    brandId && retailerId
+      ? `${APP_URL}/brands/${brandId}/retailers#retailer-${retailerId}`
+      : APP_URL;
   const escapedBody = escapeHtml(messageBody).replace(/\n/g, "<br>");
 
   // Recent thread block — rendered below the main message, above the CTA.
@@ -184,10 +193,10 @@ function buildEmailHtml({
           <!-- CTA button -->
           <tr>
             <td style="padding:0 32px 36px;">
-              <a href="${replyUrl}"
+              <a href="${viewReplyUrl}"
                  style="display:inline-block;background:#123b52;color:#78f5cd;text-decoration:none;
                         font-size:14px;font-weight:600;padding:12px 24px;border-radius:8px;">
-                Reply in The Hub →
+                View &amp; Reply →
               </a>
             </td>
           </tr>
@@ -285,7 +294,8 @@ export async function POST(req: Request) {
       retailerName,
       messageBody,
       actorName,
-      replyUrl,
+      brandId,
+      retailerId,
       recentMessages,
     });
 
