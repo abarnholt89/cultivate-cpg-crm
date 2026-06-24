@@ -313,6 +313,8 @@ export async function POST(req: Request) {
           recipients,
           html_body: htmlBody,
           reply_url: replyUrl,
+          brand_id: brandId,
+          retailer_id: retailerId,
         }),
       }
     );
