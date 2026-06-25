@@ -1085,10 +1085,31 @@ export default function AllBrandsBoardPage() {
         if (!newest || brandLevelD > newest) newest = brandLevelD;
         if (!oldest || brandLevelD < oldest) oldest = brandLevelD;
       }
+      // Fallback: when there are zero brand_date_worked entries matching the
+      // rep filter, use the rep's own client messages for this brand. This
+      // catches cases where a rep logged a submission or message via the Gmail
+      // add-on but never stamped a date-worked entry. Only newest is updated —
+      // oldest intentionally stays brand_date_worked-only since it drives sort.
+      if (!newest) {
+        const senderMap = msgBySenderMap[brand.id] ?? {};
+        if (repFilter && repFilter !== MY_TEAM) {
+          const d = senderMap[repFilter];
+          if (d) newest = d;
+        } else if (repFilter === MY_TEAM) {
+          for (const tid of (teamIds ?? new Set<string>())) {
+            const d = senderMap[tid];
+            if (d && (!newest || d > newest)) newest = d;
+          }
+        } else {
+          for (const d of Object.values(senderMap)) {
+            if (!newest || d > newest) newest = d;
+          }
+        }
+      }
       result[brand.id] = { newest, oldest };
     }
     return result;
-  }, [brandSummaries, workedEntries, repFilter, userId, timingByBrand, retailerRepMap]);
+  }, [brandSummaries, workedEntries, repFilter, userId, timingByBrand, retailerRepMap, msgBySenderMap]);
 
   const filteredSummaries = useMemo(() => {
     let result = brandSummaries;
