@@ -1245,9 +1245,18 @@ export default function AllBrandsBoardPage() {
           {filteredSummaries.map((brand) => {
             const isOpen = expandedBrandIds.has(brand.id);
             // Badge = newest per-retailer clock across the brand's owned accounts.
-            // Null only when no owned account has any activity — renders "No Activity".
-            const newestEpoch = activityByBrand[brand.id]?.newestEpoch ?? null;
-            const badge = workedBadge(newestEpoch != null ? new Date(newestEpoch).toISOString() : null);
+            // Badge epoch — must match the sort key so the visible age and order agree.
+            // Specific rep:
+            //   bucket 2 (oldestEpoch != null) → show oldestEpoch (weakest-link account)
+            //   bucket 1 (newestEpoch != null, oldestEpoch null) → show newestEpoch
+            //   bucket 0 (newestEpoch null) → null → "No Activity"
+            // All reps / MY_TEAM: always newestEpoch.
+            const { newestEpoch = null, oldestEpoch = null } = activityByBrand[brand.id] ?? {};
+            const isSpecificRep = !!(repFilter && repFilter !== MY_TEAM);
+            const badgeEpoch = isSpecificRep
+              ? (oldestEpoch !== null ? oldestEpoch : newestEpoch)
+              : newestEpoch;
+            const badge = workedBadge(badgeEpoch != null ? new Date(badgeEpoch).toISOString() : null);
 
             const rawRows = brandRows[brand.id] ?? null;
             const rows = rawRows === null
