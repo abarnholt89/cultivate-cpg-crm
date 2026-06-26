@@ -147,6 +147,7 @@ function daysAgo(iso: string): number {
 function workedBadge(workedAt: string | null): { label: string; bg: string; fg: string } {
   if (!workedAt) return { label: "No Activity", bg: "#ef4444", fg: "#fff" };
   const d = daysAgo(workedAt);
+  if (!isFinite(d)) return { label: "No Activity", bg: "#ef4444", fg: "#fff" };
   const label = d === 0 ? "Today" : d === 1 ? "1d ago" : `${d}d ago`;
   if (d <= 14) return { label, bg: "#15803d", fg: "#fff" };
   if (d <= 30) return { label, bg: "#86efac", fg: "#14532d" };
