@@ -1140,18 +1140,34 @@ export default function AllBrandsBoardPage() {
         return brandTiming.some((t) => retailerRepMap[t.retailer_id] === repFilter);
       });
     }
-    // Both modes: sort by oldestEpoch ascending — stale/untouched at top, fresh at bottom.
-    // Specific rep: oldestEpoch is null if ANY owned retailer has no clock (pins to top).
-    // All reps / MY_TEAM: oldestEpoch is min of non-null clocks only (untouched accounts
-    // don't drag the brand up, but the direction is still oldest-first).
-    // Null pins to top in all cases; ties broken alphabetically.
+    // Specific rep — 3-bucket sort (ascending by bucket, then epoch, then name):
+    //   bucket 0: newestEpoch===null → rep has zero activity on this brand (very top)
+    //   bucket 1: oldestEpoch===null, newestEpoch!==null → has at least one untouched
+    //             owned account; tiebreak = newestEpoch ascending (longest since last
+    //             touch first, so brands the rep touched least recently sort highest)
+    //   bucket 2: oldestEpoch!==null → all owned accounts have activity;
+    //             tiebreak = oldestEpoch ascending (weakest link first)
+    // All reps / MY_TEAM — simple: oldestEpoch ascending, null at top, name tiebreak.
+    const specificRep = !!(repFilter && repFilter !== MY_TEAM);
     result = [...result].sort((a, b) => {
-      const aE = activityByBrand[a.id]?.oldestEpoch ?? null;
-      const bE = activityByBrand[b.id]?.oldestEpoch ?? null;
-      if (aE === null && bE === null) return a.name.localeCompare(b.name);
-      if (aE === null) return -1;
-      if (bE === null) return 1;
-      return aE - bE;
+      const aD = activityByBrand[a.id] ?? { newestEpoch: null, oldestEpoch: null };
+      const bD = activityByBrand[b.id] ?? { newestEpoch: null, oldestEpoch: null };
+      if (specificRep) {
+        const aBkt = aD.newestEpoch === null ? 0 : aD.oldestEpoch === null ? 1 : 2;
+        const bBkt = bD.newestEpoch === null ? 0 : bD.oldestEpoch === null ? 1 : 2;
+        if (aBkt !== bBkt) return aBkt - bBkt;
+        // Same bucket — compare by the bucket's epoch key
+        const aE = aBkt === 2 ? aD.oldestEpoch! : (aD.newestEpoch ?? null);
+        const bE = bBkt === 2 ? bD.oldestEpoch! : (bD.newestEpoch ?? null);
+        if (aE !== bE) return (aE ?? 0) - (bE ?? 0);
+      } else {
+        const aE = aD.oldestEpoch ?? null;
+        const bE = bD.oldestEpoch ?? null;
+        if (aE === null && bE !== null) return -1;
+        if (bE === null && aE !== null) return 1;
+        if (aE !== null && bE !== null && aE !== bE) return aE - bE;
+      }
+      return a.name.localeCompare(b.name);
     });
     return result;
   }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand, userId, activityByBrand]);
