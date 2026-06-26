@@ -144,6 +144,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       .eq("visibility", "client")
       .in("retailer_id", retailerIds)
       .neq("sender_id", userId)
+      .or("source.is.null,source.neq.gmail_addon")
       .order("created_at", { ascending: false })
       .limit(100);
 
