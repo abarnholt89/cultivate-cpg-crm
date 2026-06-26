@@ -1140,22 +1140,18 @@ export default function AllBrandsBoardPage() {
         return brandTiming.some((t) => retailerRepMap[t.retailer_id] === repFilter);
       });
     }
-    // Specific rep: sort by oldest clock (weakest link) — stale at top, fresh at bottom.
-    // Any null-clock owned retailer makes the brand maximally stale (pins to top).
-    // All reps / MY_TEAM: sort by newest clock — brands with no activity float to top.
-    // Both modes: null pins to top; ties broken alphabetically.
-    const specificRep = !!(repFilter && repFilter !== MY_TEAM);
+    // Both modes: sort by oldestEpoch ascending — stale/untouched at top, fresh at bottom.
+    // Specific rep: oldestEpoch is null if ANY owned retailer has no clock (pins to top).
+    // All reps / MY_TEAM: oldestEpoch is min of non-null clocks only (untouched accounts
+    // don't drag the brand up, but the direction is still oldest-first).
+    // Null pins to top in all cases; ties broken alphabetically.
     result = [...result].sort((a, b) => {
-      const aE = specificRep
-        ? (activityByBrand[a.id]?.oldestEpoch ?? null)
-        : (activityByBrand[a.id]?.newestEpoch ?? null);
-      const bE = specificRep
-        ? (activityByBrand[b.id]?.oldestEpoch ?? null)
-        : (activityByBrand[b.id]?.newestEpoch ?? null);
+      const aE = activityByBrand[a.id]?.oldestEpoch ?? null;
+      const bE = activityByBrand[b.id]?.oldestEpoch ?? null;
       if (aE === null && bE === null) return a.name.localeCompare(b.name);
       if (aE === null) return -1;
       if (bE === null) return 1;
-      return aE - bE; // ascending: oldest epoch first
+      return aE - bE;
     });
     return result;
   }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand, userId, activityByBrand]);
