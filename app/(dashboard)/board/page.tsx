@@ -139,6 +139,15 @@ function statusLeftBorderColor(status: string | undefined): string {
   }
 }
 
+function toEpoch(s: string | null | undefined): number | null {
+  if (!s) return null;
+  // Normalize Postgres space-separated timestamps ("2026-06-15 00:00:00+00" → "…T…")
+  // and bare dates ("2026-06-15" → "…T00:00:00") before parsing.
+  const normalized = s.includes("T") ? s : s.includes(" ") ? s.replace(" ", "T") : s + "T00:00:00";
+  const t = new Date(normalized).getTime();
+  return isNaN(t) ? null : t;
+}
+
 function daysAgo(iso: string): number {
   const s = iso.includes("T") ? iso : iso + "T00:00:00";
   return Math.floor((Date.now() - new Date(s).getTime()) / 86400000);
@@ -1025,105 +1034,93 @@ export default function AllBrandsBoardPage() {
 
   // ── Filter ────────────────────────────────────────────────────────────────
 
-  // Per-brand activity derived from brand_date_worked, mode-aware:
-  //   specific rep   → retailers that rep owns, counting only that rep's rows
-  //   MY_TEAM        → retailers owned by anyone on the team, counting team rows
-  //   default        → every retailer in the brand, counting any rep's rows
-  //
-  // Returns two values per brand:
-  //   newest — max(worked_at) across touched retailers. Powers the badge.
-  //   oldest — min(worked_at) across touched retailers, IGNORING ones with
-  //            no rows. Powers the sort. Untouched retailers don't drag a
-  //            brand up the list — only the rep's actual oldest touch does.
-  // Both are null when the rep has zero activity on the brand. That null
-  // floats to the top of the sort and shows the red "No Activity" badge.
-  const activityByBrand = useMemo<Record<string, { newest: string | null; oldest: string | null }>>(() => {
+  // Per-retailer activity clock: brand×retailer → epoch ms of the OWNING rep's
+  // most recent touch = MAX(brand_date_worked, client message) for that owner.
+  // Null when the owning rep has no recorded activity on this account.
+  // Note: brand-level brand_date_worked entries (null retailer_id) are not
+  // included here — they don't map to a specific account.
+  const perRetailerClockMap = useMemo<Map<string, number | null>>(() => {
+    // Build brand×retailer×rep → max worked_at epoch
+    const workedMax = new Map<string, number>();
+    for (const e of workedEntries) {
+      if (!e.retailer_id) continue;
+      const epoch = toEpoch(e.worked_at);
+      if (epoch === null) continue;
+      const k = `${e.brand_id}:${e.retailer_id}:${e.rep_id}`;
+      const cur = workedMax.get(k);
+      if (cur === undefined || epoch > cur) workedMax.set(k, epoch);
+    }
+
+    const map = new Map<string, number | null>();
+    for (const [brandId, rows] of Object.entries(timingByBrand)) {
+      for (const t of rows) {
+        const key = `${brandId}:${t.retailer_id}`;
+        if (map.has(key)) continue; // dedupe — multiple timing rows per retailer
+        const ownerRepId = retailerRepMap[t.retailer_id];
+        if (!ownerRepId) { map.set(key, null); continue; }
+        const workedEpoch = workedMax.get(`${brandId}:${t.retailer_id}:${ownerRepId}`) ?? null;
+        const msgStr = msgByBrandRetailerSenderMap[brandId]?.[t.retailer_id]?.[ownerRepId] ?? null;
+        const msgEpoch = toEpoch(msgStr);
+        const clock =
+          workedEpoch !== null && msgEpoch !== null ? Math.max(workedEpoch, msgEpoch)
+          : workedEpoch !== null ? workedEpoch
+          : msgEpoch;
+        map.set(key, clock);
+      }
+    }
+    return map;
+  }, [workedEntries, timingByBrand, retailerRepMap, msgByBrandRetailerSenderMap]);
+
+  // Per-brand rollup of per-retailer clocks, mode-aware:
+  //   specific rep   → oldest clock across that rep's owned retailers.
+  //                    ANY owned retailer with no clock → oldestEpoch=null
+  //                    (maximally stale, pins brand to top of sort).
+  //   all reps / MY_TEAM → newest clock across all owned retailers
+  //                    (admin overview; untouched accounts don't drag the brand up).
+  // newestEpoch drives the badge; oldestEpoch drives the sort in specific-rep mode.
+  const activityByBrand = useMemo<Record<string, { newestEpoch: number | null; oldestEpoch: number | null }>>(() => {
     const teamIds = repFilter === MY_TEAM
       ? new Set(MANAGER_MAP[userId ?? ""] ?? [])
       : null;
-    const ownerMatches: (repOwnerId: string | undefined) => boolean =
+    const ownerMatches = (repOwnerId: string | undefined): boolean =>
       repFilter === MY_TEAM
-        ? (r) => !!r && teamIds!.has(r)
+        ? !!repOwnerId && teamIds!.has(repOwnerId)
         : repFilter
-          ? (r) => r === repFilter
-          : () => true;
-    const workedRepMatches: ((repId: string) => boolean) | null =
-      repFilter === MY_TEAM
-        ? (rid) => teamIds!.has(rid)
-        : repFilter
-          ? (rid) => rid === repFilter
-          : null;
+          ? repOwnerId === repFilter
+          : true;
+    const specificRep = !!(repFilter && repFilter !== MY_TEAM);
 
-    // (brand_id, retailer_id) → latest worked_at among rows matching the rep filter
-    const latest = new Map<string, string>();
-    // brand_id → latest worked_at among rows that have NO retailer_id (legacy
-    // brand-level snooze entries, etc). The previous version dropped these on
-    // the floor, which made reps with lots of brand-level activity show "No
-    // Activity" on brands they're actively working — see Alana investigation
-    // 2026-06-09 where 137/200 of her rows had retailer_id=NULL. Brand-level
-    // activity is still rep-scoped via workedRepMatches; there's no retailer
-    // ownership check to fail because no retailer is named.
-    const brandLevelLatest = new Map<string, string>();
-    for (const e of workedEntries) {
-      if (workedRepMatches && !workedRepMatches(e.rep_id)) continue;
-      if (!e.retailer_id) {
-        const cur = brandLevelLatest.get(e.brand_id);
-        if (!cur || e.worked_at > cur) brandLevelLatest.set(e.brand_id, e.worked_at);
-        continue;
-      }
-      const k = `${e.brand_id}:${e.retailer_id}`;
-      const cur = latest.get(k);
-      if (!cur || e.worked_at > cur) latest.set(k, e.worked_at);
-    }
-
-    const result: Record<string, { newest: string | null; oldest: string | null }> = {};
+    const result: Record<string, { newestEpoch: number | null; oldestEpoch: number | null }> = {};
     for (const brand of brandSummaries) {
-      const relevantRetailerIds = [...new Set(
+      const ownedRetailerIds = [...new Set(
         (timingByBrand[brand.id] ?? [])
           .map((t) => t.retailer_id)
           .filter((rid) => ownerMatches(retailerRepMap[rid]))
       )];
-      let newest: string | null = null;
-      let oldest: string | null = null;
-      for (const rid of relevantRetailerIds) {
-        const d = latest.get(`${brand.id}:${rid}`);
-        if (!d) continue; // untouched retailers don't pull either bound
-        if (!newest || d > newest) newest = d;
-        if (!oldest || d < oldest) oldest = d;
-      }
-      // Fold in any brand-level (NULL retailer_id) activity for this brand.
-      // These count as the rep's most recent touch on the brand even though
-      // no retailer was named.
-      const brandLevelD = brandLevelLatest.get(brand.id);
-      if (brandLevelD) {
-        if (!newest || brandLevelD > newest) newest = brandLevelD;
-        if (!oldest || brandLevelD < oldest) oldest = brandLevelD;
-      }
-      // Fallback: when there are zero brand_date_worked entries matching the
-      // rep filter, use the rep's own client messages for this brand. This
-      // catches cases where a rep logged a submission or message via the Gmail
-      // add-on but never stamped a date-worked entry. Only newest is updated —
-      // oldest intentionally stays brand_date_worked-only since it drives sort.
-      if (!newest) {
-        const senderMap = msgBySenderMap[brand.id] ?? {};
-        if (repFilter && repFilter !== MY_TEAM) {
-          const d = senderMap[repFilter];
-          if (d) newest = d;
-        } else if (repFilter === MY_TEAM) {
-          for (const tid of (teamIds ?? new Set<string>())) {
-            const d = senderMap[tid];
-            if (d && (!newest || d > newest)) newest = d;
-          }
+
+      let newestEpoch: number | null = null;
+      let oldestEpoch: number | null = null;
+      let anyNull = false;
+
+      for (const rid of ownedRetailerIds) {
+        const clock = perRetailerClockMap.get(`${brand.id}:${rid}`) ?? null;
+        if (clock === null) {
+          anyNull = true;
         } else {
-          for (const d of Object.values(senderMap)) {
-            if (!newest || d > newest) newest = d;
-          }
+          if (newestEpoch === null || clock > newestEpoch) newestEpoch = clock;
+          if (oldestEpoch === null || clock < oldestEpoch) oldestEpoch = clock;
         }
       }
-      result[brand.id] = { newest, oldest };
+
+      result[brand.id] = {
+        newestEpoch,
+        // Specific-rep: any null-clock owned retailer makes the brand maximally stale.
+        // All-reps/MY_TEAM: only dated accounts contribute to oldest.
+        oldestEpoch: specificRep && anyNull ? null : oldestEpoch,
+      };
     }
     return result;
-  }, [brandSummaries, workedEntries, repFilter, userId, timingByBrand, retailerRepMap, msgBySenderMap]);
+  }, [brandSummaries, perRetailerClockMap, repFilter, userId, timingByBrand, retailerRepMap]);
 
   const filteredSummaries = useMemo(() => {
     let result = brandSummaries;
@@ -1143,19 +1140,22 @@ export default function AllBrandsBoardPage() {
         return brandTiming.some((t) => retailerRepMap[t.retailer_id] === repFilter);
       });
     }
-    // Sort by the rep's MOST RECENT touch — same value the badge displays, so
-    // the order matches what users read on the card. Brands with no activity
-    // at all (newest=null) float above every dated brand. Applies in every
-    // mode. The activityByBrand memo still computes `oldest` in case we want
-    // to surface it elsewhere later (e.g. a secondary "most neglected" badge),
-    // but it no longer drives the sort.
+    // Specific rep: sort by oldest clock (weakest link) — stale at top, fresh at bottom.
+    // Any null-clock owned retailer makes the brand maximally stale (pins to top).
+    // All reps / MY_TEAM: sort by newest clock — brands with no activity float to top.
+    // Both modes: null pins to top; ties broken alphabetically.
+    const specificRep = !!(repFilter && repFilter !== MY_TEAM);
     result = [...result].sort((a, b) => {
-      const aN = activityByBrand[a.id]?.newest ?? null;
-      const bN = activityByBrand[b.id]?.newest ?? null;
-      if (aN === null && bN === null) return a.name.localeCompare(b.name);
-      if (aN === null) return -1;
-      if (bN === null) return 1;
-      return aN.localeCompare(bN);
+      const aE = specificRep
+        ? (activityByBrand[a.id]?.oldestEpoch ?? null)
+        : (activityByBrand[a.id]?.newestEpoch ?? null);
+      const bE = specificRep
+        ? (activityByBrand[b.id]?.oldestEpoch ?? null)
+        : (activityByBrand[b.id]?.newestEpoch ?? null);
+      if (aE === null && bE === null) return a.name.localeCompare(b.name);
+      if (aE === null) return -1;
+      if (bE === null) return 1;
+      return aE - bE; // ascending: oldest epoch first
     });
     return result;
   }, [brandSummaries, search, repFilter, retailerRepMap, timingByBrand, userId, activityByBrand]);
@@ -1232,13 +1232,10 @@ export default function AllBrandsBoardPage() {
         <div className="space-y-2">
           {filteredSummaries.map((brand) => {
             const isOpen = expandedBrandIds.has(brand.id);
-            // Badge = MOST RECENT activity across the brand's relevant retailers
-            // (mode-dependent). Null only when the rep has no activity on the
-            // brand at all — then workedBadge renders "No Activity". Untouched
-            // retailers don't affect this; the sort uses the oldest touch
-            // separately so neglected brands still float to the top.
-            const workedAt = activityByBrand[brand.id]?.newest ?? null;
-            const badge = workedBadge(workedAt);
+            // Badge = newest per-retailer clock across the brand's owned accounts.
+            // Null only when no owned account has any activity — renders "No Activity".
+            const newestEpoch = activityByBrand[brand.id]?.newestEpoch ?? null;
+            const badge = workedBadge(newestEpoch != null ? new Date(newestEpoch).toISOString() : null);
 
             const rawRows = brandRows[brand.id] ?? null;
             const rows = rawRows === null
@@ -1275,9 +1272,6 @@ export default function AllBrandsBoardPage() {
                     </span>
                     <span className="text-xs shrink-0" style={{ color: "var(--muted-foreground)" }}>
                       {brand.retailerCount} retailer{brand.retailerCount !== 1 ? "s" : ""}
-                    </span>
-                    <span className="text-xs shrink-0" style={{ color: "var(--muted-foreground)" }}>
-                      Last activity: {relativeTime(activityByBrand[brand.id]?.newest ?? null)}
                     </span>
                     {/* Staleness badge — shows in every mode. Hidden for clients
                         so it doesn't show up on /board for brand owners. */}
@@ -1427,7 +1421,10 @@ export default function AllBrandsBoardPage() {
                                 </td>
 
                                 <td className="px-4 py-2.5" style={{ color: "var(--muted-foreground)" }}>
-                                  {relativeTime(row.latestClientNoteDate)}
+                                  {(() => {
+                                    const e = perRetailerClockMap.get(`${brand.id}:${row.retailerId}`) ?? null;
+                                    return relativeTime(e != null ? new Date(e).toISOString() : null);
+                                  })()}
                                 </td>
 
                                 <td className="px-4 py-2.5 max-w-xs" style={{ color: row.latestClientNote ? "var(--foreground)" : "var(--muted-foreground)" }}>
