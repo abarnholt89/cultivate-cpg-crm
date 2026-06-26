@@ -140,7 +140,8 @@ function statusLeftBorderColor(status: string | undefined): string {
 }
 
 function daysAgo(iso: string): number {
-  return Math.floor((Date.now() - new Date(iso + "T00:00:00").getTime()) / 86400000);
+  const s = iso.includes("T") ? iso : iso + "T00:00:00";
+  return Math.floor((Date.now() - new Date(s).getTime()) / 86400000);
 }
 
 function workedBadge(workedAt: string | null): { label: string; bg: string; fg: string } {
@@ -240,6 +241,8 @@ export default function AllBrandsBoardPage() {
   const [msgBySenderMap, setMsgBySenderMap] = useState<Record<string, Record<string, string>>>({});
   // Per-sender last activity keyed by brand_id → sender_id → latest date string (all messages, for badge fallback)
   const [msgByBrandSenderMap, setMsgByBrandSenderMap] = useState<Record<string, Record<string, string>>>({});
+  // Per-retailer per-sender last client message: brand_id → retailer_id → sender_id → latest ISO
+  const [msgByBrandRetailerSenderMap, setMsgByBrandRetailerSenderMap] = useState<Record<string, Record<string, Record<string, string>>>>({});
   const [timingByBrand, setTimingByBrand] = useState<Record<string, TimingRow[]>>({});
 
   const [brandRows, setBrandRows] = useState<Record<string, BoardRetailerRow[]>>({});
@@ -431,11 +434,11 @@ export default function AllBrandsBoardPage() {
             .select("id, rep_owner_user_id")
             .in("id", allRetailerIds)
         : Promise.resolve({ data: [] as { id: string; rep_owner_user_id: string | null }[], error: null }),
-      // Client messages only — for the "Last activity" display label
-      fetchAll<{ brand_id: string; created_at: string; sender_id: string | null }>(() =>
+      // Client messages only — for the "Last activity" display label and per-retailer clock
+      fetchAll<{ brand_id: string; retailer_id: string; created_at: string; sender_id: string | null }>(() =>
         supabase
           .from("brand_retailer_messages")
-          .select("brand_id, created_at, sender_id")
+          .select("brand_id, retailer_id, created_at, sender_id")
           .eq("visibility", "client")
       ),
       // All messages (client + internal) — for per-rep badge fallback so internal-only activity counts
@@ -449,9 +452,10 @@ export default function AllBrandsBoardPage() {
     // Await the already-running worked promise (runs concurrently with the above)
     const workedResult = await workedPromise;
 
-    // Client messages — for "Last activity" display label and all-reps aggregate
+    // Client messages — for "Last activity" display label, all-reps aggregate, and per-retailer clock
     const msgLastActivity: Record<string, string> = {};
     const msgBySender: Record<string, Record<string, string>> = {};
+    const msgByBrandRetailerSender: Record<string, Record<string, Record<string, string>>> = {};
     (msgActivityRes.data ?? []).forEach((m) => {
       if (!msgLastActivity[m.brand_id] || m.created_at > msgLastActivity[m.brand_id]) {
         msgLastActivity[m.brand_id] = m.created_at;
@@ -461,6 +465,14 @@ export default function AllBrandsBoardPage() {
         const existing = msgBySender[m.brand_id][m.sender_id];
         if (!existing || m.created_at > existing) {
           msgBySender[m.brand_id][m.sender_id] = m.created_at;
+        }
+        if (m.retailer_id) {
+          if (!msgByBrandRetailerSender[m.brand_id]) msgByBrandRetailerSender[m.brand_id] = {};
+          if (!msgByBrandRetailerSender[m.brand_id][m.retailer_id]) msgByBrandRetailerSender[m.brand_id][m.retailer_id] = {};
+          const existing2 = msgByBrandRetailerSender[m.brand_id][m.retailer_id][m.sender_id];
+          if (!existing2 || m.created_at > existing2) {
+            msgByBrandRetailerSender[m.brand_id][m.retailer_id][m.sender_id] = m.created_at;
+          }
         }
       }
     });
@@ -495,6 +507,7 @@ export default function AllBrandsBoardPage() {
     setWorkedEntries(workedResult.data);
     setMsgBySenderMap(msgBySender);
     setMsgByBrandSenderMap(msgByBrandSender);
+    setMsgByBrandRetailerSenderMap(msgByBrandRetailerSender);
 
     if (!repsRes.error) setReps((repsRes.data ?? []) as RepProfile[]);
 
