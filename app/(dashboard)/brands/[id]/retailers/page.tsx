@@ -330,9 +330,9 @@ function BrandRetailersInner() {
   // Per-row "More" toggle (submitted date/notes)
   const [rowMoreOpen, setRowMoreOpen] = useState<Record<string, boolean>>({});
 
-  // Date Worked (brand-level, for the logged-in rep)
-  const [dateWorked, setDateWorked] = useState<string | null>(null);
-  const [dateWorkedSaving, setDateWorkedSaving] = useState(false);
+  // Date Worked — per-retailer, for the logged-in rep
+  const [dateWorkedByRetailer, setDateWorkedByRetailer] = useState<Record<string, string>>({});
+  const [dateWorkedSaving, setDateWorkedSaving] = useState<Record<string, boolean>>({});
   const [snoozeSaving, setSnoozeSaving] = useState<Record<string, boolean>>({});
 
   // Submissions per retailer
@@ -692,15 +692,18 @@ function BrandRetailersInner() {
 
       // Fetch most recent date worked for this brand + logged-in rep
       if ((resolvedRole === "admin" || resolvedRole === "rep") && userId) {
-        const { data: workedData } = await supabase
+        const { data: workedRows } = await supabase
           .from("brand_date_worked")
-          .select("worked_at")
+          .select("retailer_id,worked_at")
           .eq("brand_id", brandId)
           .eq("rep_id", userId)
-          .order("worked_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        setDateWorked(workedData?.worked_at ?? null);
+          .not("retailer_id", "is", null)
+          .order("worked_at", { ascending: false });
+        const byRetailer: Record<string, string> = {};
+        for (const row of (workedRows ?? []) as { retailer_id: string; worked_at: string }[]) {
+          if (!byRetailer[row.retailer_id]) byRetailer[row.retailer_id] = row.worked_at;
+        }
+        setDateWorkedByRetailer(byRetailer);
       }
 
       // Fetch submissions for this brand
@@ -1104,30 +1107,31 @@ function BrandRetailersInner() {
     }));
   }
 
-  async function markWorkedBrand() {
+  async function markWorkedRetailer(retailerId: string) {
     if (!userId || !brandId) return;
-    setDateWorkedSaving(true);
+    setDateWorkedSaving((prev) => ({ ...prev, [retailerId]: true }));
     const today = new Date().toISOString().split("T")[0];
     const { error } = await supabase.from("brand_date_worked").insert({
       brand_id: brandId,
       rep_id: userId,
+      retailer_id: retailerId,
       worked_at: today,
-      // retailer_id intentionally null — brand-level touch
     });
-    if (!error) setDateWorked(today);
-    setDateWorkedSaving(false);
+    if (!error) setDateWorkedByRetailer((prev) => ({ ...prev, [retailerId]: today }));
+    setDateWorkedSaving((prev) => ({ ...prev, [retailerId]: false }));
   }
 
   async function snoozeRetailer(retailerId: string) {
     if (!userId || !brandId) return;
     setSnoozeSaving((prev) => ({ ...prev, [retailerId]: true }));
     const today = new Date().toISOString().split("T")[0];
-    await supabase.from("brand_date_worked").insert({
+    const { error: snoozeErr } = await supabase.from("brand_date_worked").insert({
       brand_id: brandId,
       rep_id: userId,
       retailer_id: retailerId,
       worked_at: today,
     });
+    if (!snoozeErr) setDateWorkedByRetailer((prev) => ({ ...prev, [retailerId]: today }));
     setSnoozeSaving((prev) => ({ ...prev, [retailerId]: false }));
   }
 
@@ -2926,12 +2930,13 @@ function BrandRetailersInner() {
                   );
                 })()}
 
-                {/* Mark Worked Today — rep/admin only */}
+                {/* Mark Worked Today — rep/admin only, scoped to this retailer */}
                 {isRepOrAdmin && (() => {
-                  const badge = workedBadgeStyle(dateWorked);
-                  const daysWorked = dateWorked ? daysAgo(dateWorked) : null;
+                  const workedAt = dateWorkedByRetailer[r.id] ?? null;
+                  const badge = workedBadgeStyle(workedAt);
+                  const daysWorked = workedAt ? daysAgo(workedAt) : null;
                   const lastWorkedLabel = daysWorked === null
-                    ? "Never worked this brand"
+                    ? "Never worked"
                     : daysWorked === 0
                       ? "Last worked: today"
                       : `Last worked: ${daysWorked}d ago`;
@@ -2944,16 +2949,16 @@ function BrandRetailersInner() {
                         {lastWorkedLabel}
                       </span>
                       <button
-                        onClick={markWorkedBrand}
-                        disabled={dateWorkedSaving}
+                        onClick={() => markWorkedRetailer(r.id)}
+                        disabled={!!dateWorkedSaving[r.id]}
                         className="text-xs px-3 py-1 rounded-lg font-medium transition-opacity"
                         style={{
                           background: "#123b52",
                           color: "#78f5cd",
-                          opacity: dateWorkedSaving ? 0.6 : 1,
+                          opacity: dateWorkedSaving[r.id] ? 0.6 : 1,
                         }}
                       >
-                        {dateWorkedSaving ? "Saving…" : "Mark Worked Today"}
+                        {dateWorkedSaving[r.id] ? "Saving…" : "Mark Worked Today"}
                       </button>
                       <button
                         onClick={() => snoozeRetailer(r.id)}

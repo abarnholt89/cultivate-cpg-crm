@@ -1072,12 +1072,13 @@ export default function AllBrandsBoardPage() {
   }, [workedEntries, timingByBrand, retailerRepMap, msgByBrandRetailerSenderMap]);
 
   // Per-brand rollup of per-retailer clocks, mode-aware.
-  // stalenessKey (specific-rep sort + badge): min clock across owned retailers,
-  //   treating null (untouched) as 0 (epoch 0 = infinitely old = most stale).
-  // untouchedCount: owned retailers with no clock (tiebreak for stalenessKey=0).
-  // oldestEpoch: min of non-null clocks (all-reps/MY_TEAM sort).
-  // newestEpoch: max clock (all-reps badge).
-  const activityByBrand = useMemo<Record<string, { newestEpoch: number | null; oldestEpoch: number | null; stalenessKey: number; untouchedCount: number }>>(() => {
+  // Excludes not_a_target_account and retailer_declined from all clock math
+  // (those are parked by decision, not neglect).
+  // touchedCount/untouchedCount drive the specific-rep tier sort.
+  // oldestEpoch: min of non-null clocks (all-reps sort).
+  // newestEpoch: max clock (tier-1/all-reps badge).
+  const INACTIVE_STATUSES = new Set(["not_a_target_account", "retailer_declined"]);
+  const activityByBrand = useMemo<Record<string, { newestEpoch: number | null; oldestEpoch: number | null; touchedCount: number; untouchedCount: number }>>(() => {
     const teamIds = repFilter === MY_TEAM
       ? new Set(MANAGER_MAP[userId ?? ""] ?? [])
       : null;
@@ -1088,35 +1089,35 @@ export default function AllBrandsBoardPage() {
           ? repOwnerId === repFilter
           : true;
 
-    const result: Record<string, { newestEpoch: number | null; oldestEpoch: number | null; stalenessKey: number; untouchedCount: number }> = {};
+    const result: Record<string, { newestEpoch: number | null; oldestEpoch: number | null; touchedCount: number; untouchedCount: number }> = {};
     for (const brand of brandSummaries) {
       const ownedRetailerIds = [...new Set(
         (timingByBrand[brand.id] ?? [])
+          .filter((t) => !INACTIVE_STATUSES.has(t.account_status))
           .map((t) => t.retailer_id)
           .filter((rid) => ownerMatches(retailerRepMap[rid]))
       )];
 
       let newestEpoch: number | null = null;
       let oldestEpoch: number | null = null;
-      let minEpoch = Infinity;
+      let touchedCount = 0;
       let untouchedCount = 0;
 
       for (const rid of ownedRetailerIds) {
         const clock = perRetailerClockMap.get(`${brand.id}:${rid}`) ?? null;
         if (clock === null) {
           untouchedCount++;
-          minEpoch = 0;
         } else {
+          touchedCount++;
           if (newestEpoch === null || clock > newestEpoch) newestEpoch = clock;
           if (oldestEpoch === null || clock < oldestEpoch) oldestEpoch = clock;
-          if (clock < minEpoch) minEpoch = clock;
         }
       }
 
       result[brand.id] = {
         newestEpoch,
         oldestEpoch,
-        stalenessKey: minEpoch === Infinity ? 0 : minEpoch,
+        touchedCount,
         untouchedCount,
       };
     }
@@ -1141,19 +1142,21 @@ export default function AllBrandsBoardPage() {
         return brandTiming.some((t) => retailerRepMap[t.retailer_id] === repFilter);
       });
     }
-    // Specific rep — continuous staleness sort (ascending staleness key, most stale at top):
-    //   stalenessKey = min clock across owned retailers, treating untouched (null) as epoch 0.
-    //   Any untouched account → key=0 (brand floats to top). All touched → key=min actual epoch.
-    //   Tiebreak among key=0: more untouched accounts first, then alphabetical.
+    // Specific rep — 3-tier sort (most needs-attention at top):
+    //   Tier 0: newestEpoch===null → no in-scope accounts touched → "No Activity" (top)
+    //   Tier 1: some touched, some untouched → sort by newestEpoch ASC (oldest last-touch first)
+    //   Tier 2: all in-scope accounts touched → sort by oldestEpoch ASC (weakest link first)
     // All reps / MY_TEAM — oldestEpoch ascending, null at top, name tiebreak.
     const specificRep = !!(repFilter && repFilter !== MY_TEAM);
     result = [...result].sort((a, b) => {
-      const aD = activityByBrand[a.id] ?? { newestEpoch: null, oldestEpoch: null, stalenessKey: 0, untouchedCount: 0 };
-      const bD = activityByBrand[b.id] ?? { newestEpoch: null, oldestEpoch: null, stalenessKey: 0, untouchedCount: 0 };
+      const aD = activityByBrand[a.id] ?? { newestEpoch: null, oldestEpoch: null, touchedCount: 0, untouchedCount: 0 };
+      const bD = activityByBrand[b.id] ?? { newestEpoch: null, oldestEpoch: null, touchedCount: 0, untouchedCount: 0 };
       if (specificRep) {
-        if (aD.stalenessKey !== bD.stalenessKey) return aD.stalenessKey - bD.stalenessKey;
-        if (aD.stalenessKey === 0 && aD.untouchedCount !== bD.untouchedCount)
-          return bD.untouchedCount - aD.untouchedCount;
+        const tier = (d: typeof aD) => d.newestEpoch === null ? 0 : d.untouchedCount > 0 ? 1 : 2;
+        const aTier = tier(aD), bTier = tier(bD);
+        if (aTier !== bTier) return aTier - bTier;
+        if (aTier === 1 && aD.newestEpoch !== bD.newestEpoch) return aD.newestEpoch! - bD.newestEpoch!;
+        if (aTier === 2 && aD.oldestEpoch !== bD.oldestEpoch) return aD.oldestEpoch! - bD.oldestEpoch!;
       } else {
         const aE = aD.oldestEpoch ?? null;
         const bE = bD.oldestEpoch ?? null;
@@ -1241,12 +1244,16 @@ export default function AllBrandsBoardPage() {
             // Badge = newest per-retailer clock across the brand's owned accounts.
             // Badge epoch — must match the sort key so the visible age and order agree.
             // Specific rep:
-            // Specific rep: badge shows same staleness key used for sort.
-            //   stalenessKey > 0 → relative date; stalenessKey = 0 → "No Activity".
+            // Specific rep: badge matches the tier sort key.
+            //   Tier 0 (none touched) → null → "No Activity"
+            //   Tier 1 (some untouched) → newestEpoch (last-touch date)
+            //   Tier 2 (all touched) → oldestEpoch (weakest-link date)
             // All reps / MY_TEAM: always newestEpoch.
-            const { newestEpoch = null, stalenessKey = 0 } = activityByBrand[brand.id] ?? {};
+            const { newestEpoch = null, oldestEpoch = null, untouchedCount = 0 } = activityByBrand[brand.id] ?? {};
             const isSpecificRep = !!(repFilter && repFilter !== MY_TEAM);
-            const badgeEpoch = isSpecificRep ? (stalenessKey || null) : newestEpoch;
+            const badgeEpoch = isSpecificRep
+              ? (newestEpoch === null ? null : untouchedCount > 0 ? newestEpoch : oldestEpoch)
+              : newestEpoch;
             const badge = workedBadge(badgeEpoch != null ? new Date(badgeEpoch).toISOString() : null);
 
             const rawRows = brandRows[brand.id] ?? null;
