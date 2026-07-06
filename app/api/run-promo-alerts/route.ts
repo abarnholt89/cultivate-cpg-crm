@@ -108,6 +108,7 @@ async function runPromoAlerts() {
       brands (
         id,
         name,
+        archived,
         promo_alerts_enabled,
         promo_alert_test_mode,
         promo_alerts_live_date
@@ -125,6 +126,7 @@ async function runPromoAlerts() {
   for (const promo of promos ?? []) {
     const brand = promo.brands as any;
 
+    if (brand?.archived) continue;
     if (!brand?.promo_alerts_enabled) continue;
 
     if (brand.promo_alerts_live_date && todayStr < brand.promo_alerts_live_date) {

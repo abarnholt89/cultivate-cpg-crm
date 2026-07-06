@@ -199,7 +199,7 @@ export default function ProductsLibraryPage() {
     setAuthorized(true);
 
     const [brandsRes, authRowsRes] = await Promise.all([
-      supabase.from("brands").select("id,name").order("name"),
+      supabase.from("brands").select("id,name").eq("archived", false).order("name"),
       supabase.from("authorized_products").select("upc,retailer_id"),
     ]);
 

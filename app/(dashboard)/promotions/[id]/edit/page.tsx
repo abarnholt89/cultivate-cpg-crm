@@ -125,6 +125,7 @@ export default function EditPromotionPage() {
         const { data: brandRows, error: brandError } = await supabase
           .from("brands")
           .select("id,name")
+          .eq("archived", false)
           .order("name", { ascending: true });
 
         if (brandError) {

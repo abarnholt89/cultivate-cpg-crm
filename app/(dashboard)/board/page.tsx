@@ -386,7 +386,7 @@ export default function AllBrandsBoardPage() {
     setRole(resolvedRole);
 
     const { data: brandsData, error: brandsError } = await supabase
-      .from("brands").select("id, name").order("name", { ascending: true });
+      .from("brands").select("id, name").eq("archived", false).order("name", { ascending: true });
 
     if (brandsError) { setError(brandsError.message); setLoading(false); return; }
     let brands = (brandsData as Brand[]) ?? [];

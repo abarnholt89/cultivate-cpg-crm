@@ -69,6 +69,7 @@ export default function BrandsPage() {
       const { data, error } = await supabase
         .from("brands")
         .select("id,name")
+        .eq("archived", false)
         .order("name", { ascending: true });
       if (error) { setError(error.message); setLoading(false); return; }
       loadedBrands = (data as Brand[]) ?? [];

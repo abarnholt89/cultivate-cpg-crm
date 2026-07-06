@@ -15,6 +15,7 @@ export async function GET() {
   const { data: brands, error: brandsError } = await supabase
     .from("brands")
     .select("id, name")
+    .eq("archived", false)
     .order("name", { ascending: true });
 
   const { data: activityTypes, error: activityTypesError } = await supabase

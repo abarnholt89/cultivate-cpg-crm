@@ -167,6 +167,7 @@ export async function GET(req: Request) {
     supabase
       .from("brands")
       .select("id, name, message_notifications_enabled")
+      .eq("archived", false)
       .in("id", brandIds),
   ]);
 

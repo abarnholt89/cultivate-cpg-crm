@@ -467,7 +467,7 @@ function PromotionsInner() {
         setRole(nextRole);
 
         // Fetch brands for bulk builder
-        const { data: brandsData } = await supabase.from("brands").select("id,name").order("name");
+        const { data: brandsData } = await supabase.from("brands").select("id,name").eq("archived", false).order("name");
         const brandsList = (brandsData as BrandOption[]) ?? [];
         setAllBrands(brandsList);
 

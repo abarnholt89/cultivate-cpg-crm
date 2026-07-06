@@ -209,6 +209,7 @@ export default function GlobalCategoryReviewPage() {
       const { data: brandRows, error: brandError } = await supabase
         .from("brands")
         .select("id,name")
+        .eq("archived", false)
         .in("id", brandIds)
         .order("name", { ascending: true });
 
