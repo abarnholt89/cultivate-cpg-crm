@@ -276,7 +276,8 @@ const STATUS_FILTERS: Array<{ value: string; label: string }> = [
   { value: "not_a_target_account", label: "Not a Target Account" },
   { value: "working_to_secure_anchor_account", label: "Distributor Required" },
   { value: "upcoming", label: "Upcoming Reviews (30d)" },
-  { value: "submitted_recent", label: "Recently Submitted" },
+  { value: "submitted_any", label: "Submitted Accounts" },
+  { value: "submitted_recent", label: "Recently Submitted (30d)" },
   { value: "authorized", label: "Authorized" },
 ];
 
@@ -1575,6 +1576,10 @@ function BrandRetailersInner() {
           !!nextReview?.review_date &&
           isBetweenInclusive(nextReview.review_date, t, next30)
         );
+      }
+
+      if (selectedFilter === "submitted_any") {
+        return (submissionsMap[r.id]?.length ?? 0) > 0;
       }
 
       if (selectedFilter === "submitted_recent") {

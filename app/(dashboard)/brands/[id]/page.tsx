@@ -696,7 +696,7 @@ export default function BrandDashboardPage() {
         <SummaryCard
           label="Submitted Accounts"
           value={summary.submittedAccounts}
-          href={`/brands/${brandId}/retailers?filter=submitted_recent`}
+          href={`/brands/${brandId}/retailers?filter=submitted_any`}
           accentColor="#dbeafe"
           accentFg="#1e40af"
         />
@@ -906,10 +906,10 @@ export default function BrandDashboardPage() {
       {recentSubmissions.length > 0 && (
         <div className="border rounded-xl p-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Recent Submissions</h2>
+            <h2 className="text-lg font-semibold">Submitted Accounts</h2>
             {recentSubmissions.length > 5 && (
-              <Link href={`/brands/${brandId}/retailers`} className="text-sm underline">
-                View all
+              <Link href={`/brands/${brandId}/retailers?filter=submitted_any`} className="text-sm underline">
+                View all ({recentSubmissions.length})
               </Link>
             )}
           </div>
