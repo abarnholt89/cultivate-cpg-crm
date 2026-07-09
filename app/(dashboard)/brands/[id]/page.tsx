@@ -58,7 +58,6 @@ type AuthorizedRow = {
 type PromotionRow = {
   id: string;
   retailer_name: string | null;
-  retailer_banner: string | null;
   promo_name: string | null;
   promo_type: string | null;
   start_date: string | null;
@@ -251,8 +250,8 @@ export default function BrandDashboardPage() {
             .select("id,retailer_id,category,category_review_date,reset_date")
             .eq("brand_id", brandId),
           supabase
-            .from("promotions")
-            .select("id,retailer_name,retailer_banner,promo_name,promo_type,start_date,end_date")
+            .from("promotions_stage")
+            .select("id,retailer_name,promo_name,promo_type,start_date,end_date")
             .eq("brand_id", brandId)
             .order("start_date", { ascending: true }),
           supabase
@@ -949,7 +948,7 @@ export default function BrandDashboardPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mt-4">
             {upcomingPromos.map((promo) => (
               <div key={promo.id} className="border rounded-lg p-3" style={{ borderLeft: "3px solid #f59e0b" }}>
-                <div className="font-medium text-sm">{promo.retailer_banner || promo.retailer_name || "Retailer"}</div>
+                <div className="font-medium text-sm">{promo.retailer_name || "Retailer"}</div>
                 {promo.promo_name && <div className="text-xs text-gray-700 mt-0.5">{promo.promo_name}</div>}
                 {promo.promo_type && <div className="text-xs text-gray-500">{promo.promo_type}</div>}
                 <div className="text-xs text-gray-600 mt-1">

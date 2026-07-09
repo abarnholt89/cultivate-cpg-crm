@@ -94,7 +94,7 @@ async function runPromoAlerts() {
   const thirtyDaysStr = format(thirtyDays);
 
   const { data: promos, error } = await supabase
-    .from("promotions")
+    .from("promotions_stage")
     .select(`
       id,
       brand_id,

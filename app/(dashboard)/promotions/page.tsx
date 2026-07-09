@@ -483,50 +483,13 @@ function PromotionsInner() {
           const brandIds = (brandUsers ?? []).map((r: any) => r.brand_id);
           if (brandIds.length === 0) { setPromotions([]); setLoading(false); return; }
 
-          // Resolve brand names for this client (needed for promotions_stage which has no brand_id)
-          const clientBrands = brandsList.filter((b) => brandIds.includes(b.id));
-          const brandNames = clientBrands.map((b) => b.name);
-
-          // Query 1: promotions table (filtered by brand_id)
-          const promotionsRows = await fetchAllRows<PromotionRow>(
-            supabase.from("promotions").select("*").in("brand_id", brandIds)
+          const clientRaw = await fetchAllRows<any>(
+            supabase.from("promotions_stage").select("*")
+              .in("brand_id", brandIds)
+              .order("promo_year", { ascending: false })
+              .order("promo_month", { ascending: true })
           );
-
-          // Query 2: promotions_stage (no brand_id — match on brand_name)
-          let stageRows: PromotionRow[] = [];
-          if (brandNames.length > 0) {
-            // Exact match first
-            const { data: exactData } = await supabase
-              .from("promotions_stage")
-              .select("*")
-              .in("brand_name", brandNames);
-            const seenIds = new Set<string>((exactData ?? []).map((r: any) => String(r.id)));
-            const exactRows = (exactData ?? []) as any[];
-
-            // Fuzzy fallback: ilike on first word of each brand name, deduplicated
-            const fuzzyRows: any[] = [];
-            for (const name of brandNames) {
-              const firstWord = name.split(/\s+/)[0];
-              if (!firstWord || firstWord.length < 3) continue;
-              const { data: fuzzyData } = await supabase
-                .from("promotions_stage")
-                .select("*")
-                .ilike("brand_name", `${firstWord}%`);
-              for (const row of (fuzzyData ?? [])) {
-                const rid = String(row.id);
-                if (!seenIds.has(rid)) { seenIds.add(rid); fuzzyRows.push(row); }
-              }
-            }
-
-            stageRows = [...exactRows, ...fuzzyRows].map(normalizeStageRow).map(applyDisplayStatus);
-          }
-
-          // Merge and sort by promo_year desc, promo_month asc, start_date asc
-          rows = [...promotionsRows, ...stageRows].sort((a, b) => {
-            if (b.promo_year !== a.promo_year) return b.promo_year - a.promo_year;
-            if (a.promo_month !== b.promo_month) return a.promo_month - b.promo_month;
-            return (a.start_date ?? "").localeCompare(b.start_date ?? "");
-          });
+          rows = clientRaw.map(normalizeStageRow).map(applyDisplayStatus);
         } else {
           const rawRows = await fetchAllRows<any>(
             supabase.from("promotions_stage").select("*")
@@ -669,9 +632,7 @@ function PromotionsInner() {
     const insertRows = selectedSkus.map((sku) => ({
       brand_id: bulkBrandId,
       brand_name: bulkBrandName,
-      retailer_id: bulkRetailerId || null,
       retailer_name: bulkRetailerName,
-      retailer_banner: bulkRetailerBanner,
       distributor: bulkRetailerDistributor,
       cultivate_rep: (role === "rep" || role === "admin") ? userId : null,
       sku_description: sku.sku_description,
@@ -681,7 +642,6 @@ function PromotionsInner() {
       promo_name: bulkForm.promo_name.trim() || null,
       promo_type: bulkForm.promo_type.trim(),
       promo_status: bulkForm.promo_status,
-      promo_scope: bulkForm.promo_scope,
       start_date: bulkForm.start_date,
       end_date: bulkForm.end_date || null,
       discount_percent: bulkForm.discount_percent ? parseFloat(bulkForm.discount_percent) : null,
@@ -689,12 +649,12 @@ function PromotionsInner() {
       notes: bulkForm.notes.trim() || null,
     }));
 
-    const { error } = await supabase.from("promotions").insert(insertRows);
+    const { error } = await supabase.from("promotions_stage").insert(insertRows);
     if (error) { setBulkError(error.message); setBulkSaving(false); return; }
 
     // Reload promotions and close builder
-    const newRows = await fetchAllRows<PromotionRow>(supabase.from("promotions").select("*").order("promo_year", { ascending: false }).order("promo_month", { ascending: true }));
-    setPromotions(newRows);
+    const reloadRaw = await fetchAllRows<any>(supabase.from("promotions_stage").select("*").order("promo_year", { ascending: false }).order("promo_month", { ascending: true }));
+    setPromotions(reloadRaw.map(normalizeStageRow).map(applyDisplayStatus));
     setBulkOpen(false);
     setBulkStep(1);
     setBulkBrandId(""); setBulkBrandName(""); setBulkBrandUpcs([]);

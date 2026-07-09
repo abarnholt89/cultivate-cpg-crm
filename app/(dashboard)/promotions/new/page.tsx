@@ -210,13 +210,11 @@ export default function NewPromotionPage() {
     try {
       const payload = {
         brand_id: brandId,
-        retailer_id: promoScope === "retailer" ? retailerId : null,
         brand_name: selectedBrand?.name ?? "",
         retailer_name:
           promoScope === "retailer"
             ? selectedRetailer?.name ?? ""
             : "Distributor Program",
-        retailer_banner: promoScope === "retailer" ? selectedRetailer?.banner ?? null : null,
         distributor: selectedRetailer?.distributor ?? null,
         cultivate_rep: role === "rep" ? userId : null,
         sku_description: skuDescription.trim() || "Manual Promotion Entry",
@@ -226,7 +224,6 @@ export default function NewPromotionPage() {
         promo_name: promoName.trim() || null,
         promo_type: promoType.trim(),
         promo_status: promoStatus.trim(),
-        promo_scope: promoScope,
         start_date: formatDateForInput(startDate),
         end_date: endDate ? formatDateForInput(endDate) : null,
         discount_percent: discountPercent ? Number(discountPercent) : null,
@@ -235,7 +232,7 @@ export default function NewPromotionPage() {
         notes: notes.trim() || null,
       };
 
-      const { error } = await supabase.from("promotions").insert(payload);
+      const { error } = await supabase.from("promotions_stage").insert(payload);
 
       if (error) {
         setStatus(error.message);

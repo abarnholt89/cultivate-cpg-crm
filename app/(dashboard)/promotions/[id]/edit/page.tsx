@@ -23,10 +23,8 @@ type RetailerOption = {
 type PromotionRow = {
   id: string;
   brand_id: string;
-  retailer_id: string | null;
   brand_name: string;
   retailer_name: string;
-  retailer_banner: string | null;
   distributor: string | null;
   cultivate_rep: string | null;
   sku_description: string;
@@ -36,7 +34,6 @@ type PromotionRow = {
   promo_name: string | null;
   promo_type: string;
   promo_status: string;
-  promo_scope: "retailer" | "distributor" | null;
   start_date: string | null;
   end_date: string | null;
   discount_percent: number | null;
@@ -83,6 +80,7 @@ export default function EditPromotionPage() {
   const [notes, setNotes] = useState("");
   const [skuDescription, setSkuDescription] = useState("");
   const [unitUpc, setUnitUpc] = useState("");
+  const [retailerName, setRetailerName] = useState("");
 
   useEffect(() => {
     async function load() {
@@ -170,7 +168,7 @@ export default function EditPromotionPage() {
         setRetailers(retailerRows);
 
         const { data: promo, error: promoError } = await supabase
-          .from("promotions")
+          .from("promotions_stage")
           .select("*")
           .eq("id", promotionId)
           .single();
@@ -184,11 +182,10 @@ export default function EditPromotionPage() {
         const row = promo as PromotionRow;
 
         setBrandId(row.brand_id ?? "");
-        setRetailerId(row.retailer_id ?? "");
+        setRetailerName(row.retailer_name ?? "");
         setPromoName(row.promo_name ?? "");
         setPromoType(row.promo_type ?? "");
         setPromoStatus(row.promo_status ?? "planned");
-        setPromoScope((row.promo_scope as "retailer" | "distributor") ?? "retailer");
         setStartDate(formatDateForInput(row.start_date));
         setEndDate(formatDateForInput(row.end_date));
         setDiscountPercent(
@@ -236,11 +233,6 @@ export default function EditPromotionPage() {
       return;
     }
 
-    if (promoScope === "retailer" && !retailerId) {
-      setStatus("Please select a retailer.");
-      return;
-    }
-
     if (!promoType.trim()) {
       setStatus("Please select a promo type.");
       return;
@@ -277,13 +269,8 @@ export default function EditPromotionPage() {
     try {
       const payload = {
         brand_id: brandId,
-        retailer_id: promoScope === "retailer" ? retailerId : null,
         brand_name: selectedBrand?.name ?? "",
-        retailer_name:
-          promoScope === "retailer"
-            ? selectedRetailer?.name ?? ""
-            : "Distributor Program",
-        retailer_banner: promoScope === "retailer" ? selectedRetailer?.banner ?? null : null,
+        retailer_name: selectedRetailer?.name ?? retailerName,
         distributor: selectedRetailer?.distributor ?? null,
         cultivate_rep: role === "rep" ? userId : null,
         sku_description: skuDescription.trim() || "Manual Promotion Entry",
@@ -293,7 +280,6 @@ export default function EditPromotionPage() {
         promo_name: promoName.trim() || null,
         promo_type: promoType.trim(),
         promo_status: promoStatus.trim(),
-        promo_scope: promoScope,
         start_date: formatDateForInput(startDate),
         end_date: endDate ? formatDateForInput(endDate) : null,
         discount_percent: discountPercent ? Number(discountPercent) : null,
@@ -303,7 +289,7 @@ export default function EditPromotionPage() {
       };
 
       const { error } = await supabase
-        .from("promotions")
+        .from("promotions_stage")
         .update(payload)
         .eq("id", promotionId);
 
