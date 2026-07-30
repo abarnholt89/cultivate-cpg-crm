@@ -297,6 +297,30 @@ export async function POST(req: Request) {
         console.error("[create-activity] brand_retailer_messages unexpected error:", msgErr.message);
         msgMirrorErrors.push(`brand ${brandId}: ${msgErr.message}`);
       }
+
+      // Auto-mark the board's activity clock: a logged email IS working the account.
+      // Deduped: skip if a row already exists for brand+retailer+rep+today.
+      try {
+        const today = sentAt.slice(0, 10);
+        const { data: existingWorked } = await supabase
+          .from("brand_date_worked")
+          .select("id")
+          .eq("brand_id", brandId)
+          .eq("retailer_id", retailerId)
+          .eq("rep_id", repId)
+          .eq("worked_at", today)
+          .maybeSingle();
+        if (!existingWorked) {
+          const { error: workedErr } = await supabase
+            .from("brand_date_worked")
+            .insert({ brand_id: brandId, retailer_id: retailerId, rep_id: repId, worked_at: today });
+          if (workedErr) {
+            console.error("[create-activity] brand_date_worked insert failed:", workedErr.message);
+          }
+        }
+      } catch (workedErr: any) {
+        console.error("[create-activity] brand_date_worked unexpected error:", workedErr.message);
+      }
     }
 
     return Response.json({
