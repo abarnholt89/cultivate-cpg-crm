@@ -251,26 +251,6 @@ export default function BrandRetailerMessagesPage() {
 
       const loadedMessages = (data as MessageRow[]) ?? [];
       setMessages(loadedMessages);
-
-      if (visibilityToLoad === "client") {
-        const { data: authData } = await supabase.auth.getUser();
-        const userId = authData?.user?.id;
-
-        if (userId && data?.length) {
-          const reads = data.map((m) => ({
-            user_id: userId,
-            message_id: m.id,
-          }));
-
-          const { error: readError } = await supabase
-            .from("message_reads")
-            .upsert(reads, { onConflict: "user_id,message_id" });
-
-          if (readError) {
-            setStatus(`Read tracking failed: ${readError.message}`);
-          }
-        }
-      }
     }
 
     loadMessages();
