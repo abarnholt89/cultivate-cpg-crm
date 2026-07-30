@@ -1142,17 +1142,22 @@ export default function AllBrandsBoardPage() {
         return brandTiming.some((t) => retailerRepMap[t.retailer_id] === repFilter);
       });
     }
-    // Specific rep — 3-tier sort (most needs-attention at top):
-    //   Tier 0: newestEpoch===null → no in-scope accounts touched → "No Activity" (top)
+    // Specific rep — 4-tier sort (most needs-attention at top):
+    //   Tier 0: untouched in-scope accounts, none touched → red "No Activity" (top)
     //   Tier 1: some touched, some untouched → sort by newestEpoch ASC (oldest last-touch first)
     //   Tier 2: all in-scope accounts touched → sort by oldestEpoch ASC (weakest link first)
+    //   Tier 3: zero in-scope accounts (all owned are parked) → gray "Not a target" (bottom)
     // All reps / MY_TEAM — oldestEpoch ascending, null at top, name tiebreak.
     const specificRep = !!(repFilter && repFilter !== MY_TEAM);
     result = [...result].sort((a, b) => {
       const aD = activityByBrand[a.id] ?? { newestEpoch: null, oldestEpoch: null, touchedCount: 0, untouchedCount: 0 };
       const bD = activityByBrand[b.id] ?? { newestEpoch: null, oldestEpoch: null, touchedCount: 0, untouchedCount: 0 };
       if (specificRep) {
-        const tier = (d: typeof aD) => d.newestEpoch === null ? 0 : d.untouchedCount > 0 ? 1 : 2;
+        const tier = (d: typeof aD) =>
+          d.untouchedCount > 0 && d.newestEpoch === null ? 0 :
+          d.newestEpoch === null ? 3 :
+          d.untouchedCount > 0 ? 1 :
+          2;
         const aTier = tier(aD), bTier = tier(bD);
         if (aTier !== bTier) return aTier - bTier;
         if (aTier === 1 && aD.newestEpoch !== bD.newestEpoch) return aD.newestEpoch! - bD.newestEpoch!;
@@ -1251,10 +1256,13 @@ export default function AllBrandsBoardPage() {
             // All reps / MY_TEAM: always newestEpoch.
             const { newestEpoch = null, oldestEpoch = null, untouchedCount = 0 } = activityByBrand[brand.id] ?? {};
             const isSpecificRep = !!(repFilter && repFilter !== MY_TEAM);
+            const isParked = isSpecificRep && newestEpoch === null && untouchedCount === 0;
             const badgeEpoch = isSpecificRep
               ? (newestEpoch === null ? null : untouchedCount > 0 ? newestEpoch : oldestEpoch)
               : newestEpoch;
-            const badge = workedBadge(badgeEpoch != null ? new Date(badgeEpoch).toISOString() : null);
+            const badge = isParked
+              ? { label: "Not a target", bg: "#94a3b8", fg: "#fff" }
+              : workedBadge(badgeEpoch != null ? new Date(badgeEpoch).toISOString() : null);
 
             const rawRows = brandRows[brand.id] ?? null;
             const rows = rawRows === null
