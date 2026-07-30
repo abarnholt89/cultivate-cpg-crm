@@ -290,6 +290,9 @@ export default function AllBrandsBoardPage() {
   const [submissionForm, setSubmissionForm] = useState({ submitted_at: "", category: "", notes: "" });
   const [submissionSaving, setSubmissionSaving] = useState(false);
 
+  // Client-only per-brand controls: status filter and last-activity sort direction.
+  const [clientStatusFilter, setClientStatusFilter] = useState<Record<string, string>>({});
+  const [clientActivitySort, setClientActivitySort] = useState<Record<string, "newest" | "oldest">>({});
 
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const errorToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1277,6 +1280,30 @@ export default function AllBrandsBoardPage() {
                   : rawRows;
             const isFetching = loadingBrand[brand.id] ?? false;
 
+            // Client-only: derive filtered + sorted rows. Non-client roles pass through unchanged.
+            const statusFilterVal = role === "client" ? (clientStatusFilter[brand.id] ?? "") : "";
+            const activitySortDir = role === "client" ? (clientActivitySort[brand.id] ?? "newest") : "newest";
+            const displayRows: BoardRetailerRow[] = (() => {
+              if (!rows || role !== "client") return rows ?? [];
+              let r = rows;
+              if (statusFilterVal) {
+                r = r.filter((row) =>
+                  row.categories.some((cat) => {
+                    const s = statusOverrides[cat.timingId] ?? cat.accountStatus;
+                    return s === statusFilterVal;
+                  })
+                );
+              }
+              return [...r].sort((a, b) => {
+                const aE = perRetailerClockMap.get(`${brand.id}:${a.retailerId}`) ?? null;
+                const bE = perRetailerClockMap.get(`${brand.id}:${b.retailerId}`) ?? null;
+                if (aE === null && bE === null) return a.banner.localeCompare(b.banner);
+                if (aE === null) return 1;
+                if (bE === null) return -1;
+                return activitySortDir === "newest" ? bE - aE : aE - bE;
+              });
+            })();
+
             return (
               <div
                 key={brand.id}
@@ -1344,6 +1371,47 @@ export default function AllBrandsBoardPage() {
                       No retailers added yet.
                     </div>
                   ) : (
+                    <>
+                      {role === "client" && (
+                        <div
+                          className="flex items-center gap-3 px-4 py-2"
+                          style={{ borderTop: "1px solid var(--border)", background: "var(--card)" }}
+                        >
+                          <select
+                            value={statusFilterVal}
+                            onChange={(e) => setClientStatusFilter((p) => ({ ...p, [brand.id]: e.target.value }))}
+                            className="text-xs rounded px-2 py-1"
+                            style={{ border: "1px solid var(--border)", background: "var(--muted)", color: "var(--foreground)" }}
+                          >
+                            <option value="">All statuses</option>
+                            <option value="awaiting_submission_opportunity">Awaiting</option>
+                            <option value="in_process">In Process</option>
+                            <option value="active_maintain_and_grow">Active M&amp;G</option>
+                            <option value="working_to_secure_anchor_account">Anchor</option>
+                            <option value="not_a_target_account">Not Target</option>
+                            <option value="retailer_declined">Declined</option>
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => setClientActivitySort((p) => ({
+                              ...p,
+                              [brand.id]: (p[brand.id] ?? "newest") === "newest" ? "oldest" : "newest",
+                            }))}
+                            className="text-xs rounded px-2 py-1"
+                            style={{ border: "1px solid var(--border)", background: "var(--muted)", color: "var(--foreground)" }}
+                          >
+                            {activitySortDir === "newest" ? "↓ Newest first" : "↑ Oldest first"}
+                          </button>
+                        </div>
+                      )}
+                      {displayRows.length === 0 ? (
+                        <div
+                          className="px-4 py-3 text-sm italic"
+                          style={{ borderTop: "1px solid var(--border)", color: "var(--muted-foreground)" }}
+                        >
+                          No retailers match the selected filter.
+                        </div>
+                      ) : (
                     <table className="w-full text-sm" style={{ boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
                       <thead>
                         <tr style={{
@@ -1359,7 +1427,7 @@ export default function AllBrandsBoardPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {rows.map((row, idx) => {
+                        {displayRows.map((row, idx) => {
                           const key = `${brand.id}__${row.retailerId}`;
                           const isNoteOpen = expandedKey === key;
                           const isEven = idx % 2 === 0;
@@ -1936,6 +2004,8 @@ export default function AllBrandsBoardPage() {
                         })}
                       </tbody>
                     </table>
+                      )}
+                    </>
                   )
                 )}
               </div>
