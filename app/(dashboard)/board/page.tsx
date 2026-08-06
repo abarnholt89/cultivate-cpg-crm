@@ -863,6 +863,41 @@ export default function AllBrandsBoardPage() {
     if (visibility === "client") setClientNoteText("");
     else setInternalNoteText("");
 
+    if (visibility === "client") {
+      try {
+        const bName = brandSummaries.find((b) => b.id === brandId)?.name ?? "Brand";
+        const rRow = brandRows[brandId]?.find((r) => r.retailerId === retailerId);
+        const rName = rRow?.banner?.trim() || "Retailer";
+        const { data: brandData } = await supabase
+          .from("brands").select("message_notifications_enabled").eq("id", brandId).maybeSingle();
+        const notificationsEnabled =
+          (brandData as { message_notifications_enabled: boolean | null } | null)
+            ?.message_notifications_enabled ?? false;
+        if (notificationsEnabled) {
+          const { data: clientEmailRows } = await supabase.rpc("get_brand_client_emails", { p_brand_id: brandId });
+          const recipients = ((clientEmailRows ?? []) as { email: string }[]).map((r) => r.email).filter(Boolean);
+          if (recipients.length > 0) {
+            await fetch("/api/send-client-email", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                brand_name: bName,
+                retailer_name: rName,
+                message_body: text,
+                recipients,
+                actor_name: senderName,
+                event_type: "message",
+                brand_id: brandId,
+                retailer_id: retailerId,
+              }),
+            });
+          }
+        }
+      } catch (emailErr) {
+        console.error("Email notification failed", emailErr);
+      }
+    }
+
     // Auto-stamp date worked (silent — no extra UI feedback)
     const today = new Date().toISOString().split("T")[0];
     supabase.from("brand_date_worked").insert({

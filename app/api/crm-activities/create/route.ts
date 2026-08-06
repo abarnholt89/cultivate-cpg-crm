@@ -321,6 +321,43 @@ export async function POST(req: Request) {
       } catch (workedErr: any) {
         console.error("[create-activity] brand_date_worked unexpected error:", workedErr.message);
       }
+
+      // Send client notification email — same path as the manual retailer-card composer.
+      // Non-fatal: a send error must not break activity creation.
+      try {
+        const [{ data: brandRow }, { data: retailerRow }] = await Promise.all([
+          supabase.from("brands").select("name, message_notifications_enabled").eq("id", brandId).maybeSingle(),
+          supabase.from("retailers").select("name, banner").eq("id", retailerId).maybeSingle(),
+        ]);
+        const notificationsEnabled =
+          (brandRow as { message_notifications_enabled: boolean | null } | null)?.message_notifications_enabled ?? false;
+        if (notificationsEnabled) {
+          const bName = (brandRow as { name: string } | null)?.name ?? "Brand";
+          const rData = retailerRow as { name: string | null; banner: string | null } | null;
+          const rName = rData?.banner?.trim() || rData?.name || "Retailer";
+          const { data: clientEmailRows } = await supabase.rpc("get_brand_client_emails", { p_brand_id: brandId });
+          const recipients = ((clientEmailRows ?? []) as { email: string }[]).map((r) => r.email).filter(Boolean);
+          if (recipients.length > 0) {
+            const appUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || "https://cultivate-cpg-crm.vercel.app";
+            await fetch(`${appUrl}/api/send-client-email`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                brand_name: bName,
+                retailer_name: rName,
+                message_body: clientMessage,
+                recipients,
+                actor_name: senderName,
+                event_type: "message",
+                brand_id: brandId,
+                retailer_id: retailerId,
+              }),
+            });
+          }
+        }
+      } catch (emailErr: any) {
+        console.error("[create-activity] client email notification failed:", emailErr.message);
+      }
     }
 
     return Response.json({
