@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState, Suspense } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import * as XLSX from "xlsx";
 
 type Role = "admin" | "rep" | "client" | null;
 
@@ -426,9 +427,8 @@ function PromotionsInner() {
   const [syncingStatuses, setSyncingStatuses] = useState(false);
 
   // View mode (Feature 3)
-  const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
+  const [viewMode, setViewMode] = useState<"list" | "matrix">("list");
   const [calYear, setCalYear] = useState<number>(new Date().getFullYear());
-  const [calDrillKey, setCalDrillKey] = useState<string | null>(null); // "brandName||month"
 
   // Bulk builder (Feature 2)
   const [allBrands, setAllBrands] = useState<BrandOption[]>([]);
@@ -551,25 +551,57 @@ function PromotionsInner() {
     ].join("||")));
   }, [promotions]);
 
-  // ── Calendar data (Feature 3) ──────────────────────────────────────────────
+  // ── Matrix data ────────────────────────────────────────────────────────────
 
-  const calendarData = useMemo(() => {
-    const rows = promotions.filter((r) =>
-      r.promo_year === calYear && !isDistributorRow(r) && !isEdlpEdlc(r)
+  const matrixData = useMemo(() => {
+    const rows = promotions.filter(
+      (r) =>
+        r.promo_year === calYear &&
+        !isDistributorRow(r) &&
+        (!hideEdlp || !isEdlpEdlc(r)) &&
+        (brandFilter === "all" || r.brand_name === brandFilter) &&
+        (retailerFilter === "all" || r.retailer_name === retailerFilter) &&
+        (statusFilter === "all" || r.promo_status === statusFilter) &&
+        (repFilter === "all" || (r.cultivate_rep || "") === repFilter)
     );
-    const brandsApplied = brandFilter !== "all" ? rows.filter((r) => r.brand_name === brandFilter) : rows;
-    const brandMap = new Map<string, { brand_id: string | null; months: Map<number, Set<string>> }>();
-    for (const row of brandsApplied) {
-      if (!brandMap.has(row.brand_name)) brandMap.set(row.brand_name, { brand_id: row.brand_id, months: new Map() });
-      const entry = brandMap.get(row.brand_name)!;
-      if (!entry.months.has(row.promo_month)) entry.months.set(row.promo_month, new Set());
-      const display = row.retailer_banner || row.retailer_name;
-      if (display) entry.months.get(row.promo_month)!.add(display);
+
+    const retailerMap = new Map<string, {
+      displayName: string;
+      skus: Map<string, Record<number, string[]>>;
+    }>();
+
+    for (const row of rows) {
+      const rKey = row.retailer_id ?? row.retailer_name ?? "Unknown";
+      if (!retailerMap.has(rKey)) {
+        retailerMap.set(rKey, {
+          displayName: row.retailer_banner?.trim() || row.retailer_name || "Unknown",
+          skus: new Map(),
+        });
+      }
+      const entry = retailerMap.get(rKey)!;
+      if (!entry.displayName && row.retailer_banner?.trim()) {
+        entry.displayName = row.retailer_banner.trim();
+      }
+      const sku = row.sku_description || "Unknown SKU";
+      if (!entry.skus.has(sku)) entry.skus.set(sku, {});
+      const monthsMap = entry.skus.get(sku)!;
+      const m = row.promo_month;
+      if (m >= 1 && m <= 12) {
+        if (!monthsMap[m]) monthsMap[m] = [];
+        const text = row.promo_text_raw?.trim() || row.promo_type || "";
+        if (text && !monthsMap[m].includes(text)) monthsMap[m].push(text);
+      }
     }
-    return Array.from(brandMap.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([brand_name, { brand_id, months }]) => ({ brand_name, brand_id, months }));
-  }, [promotions, calYear, brandFilter]);
+
+    return Array.from(retailerMap.entries())
+      .sort(([, a], [, b]) => a.displayName.localeCompare(b.displayName))
+      .map(([, entry]) => ({
+        displayName: entry.displayName,
+        skus: Array.from(entry.skus.entries())
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([sku, months]) => ({ sku, months })),
+      }));
+  }, [promotions, calYear, hideEdlp, brandFilter, retailerFilter, statusFilter, repFilter]);
 
   // ── Bulk builder handlers (Feature 2) ──────────────────────────────────────
 
@@ -1338,106 +1370,166 @@ function PromotionsInner() {
     );
   }
 
-  // ── Render: calendar view (Feature 3) ──────────────────────────────────────
+  // ── Render: matrix view ────────────────────────────────────────────────────
 
-  function renderCalendar() {
-    const months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+  function exportToExcel() {
+    const MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const wsData: string[][] = [["Retailer", "SKU", ...MONTH_LABELS]];
+    for (const retailer of matrixData) {
+      for (const skuRow of retailer.skus) {
+        wsData.push([
+          retailer.displayName,
+          skuRow.sku,
+          ...Array.from({ length: 12 }, (_: unknown, i: number) => (skuRow.months[i + 1] ?? []).join(" / ")),
+        ]);
+      }
+    }
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    ws["!freeze"] = { xSplit: 2, ySplit: 1 };
+    ws["!cols"] = [{ wch: 28 }, { wch: 40 }, ...Array.from({ length: 12 }, () => ({ wch: 18 }))];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `Promo Matrix ${calYear}`);
+    XLSX.writeFile(wb, `promo-matrix-${calYear}.xlsx`);
+  }
 
-    // Drill-in rows
-    const drillRows = calDrillKey
-      ? promotions.filter((r) => {
-          const [dn, dm] = calDrillKey.split("||");
-          return r.brand_name === dn && r.promo_month === parseInt(dm) && r.promo_year === calYear && !isDistributorRow(r) && !isEdlpEdlc(r);
-        })
-      : [];
+  function renderMatrix() {
+    const MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    const RETAILER_W = 180;
+    const SKU_W = 220;
 
     return (
       <div className="space-y-4">
-        {/* Year selector */}
-        <div className="flex items-center gap-3">
+        {/* Year selector + Export */}
+        <div className="flex items-center gap-3 flex-wrap">
           <label className="text-sm text-muted-foreground">Year:</label>
           <div className="flex gap-1">
             {years.map((y) => (
-              <button key={y} onClick={() => { setCalYear(y); setCalDrillKey(null); }} className={`px-3 py-1 rounded text-sm ${calYear === y ? "font-semibold text-white" : "text-muted-foreground border border-border hover:bg-secondary"}`} style={calYear === y ? { background: "var(--foreground)" } : {}}>
+              <button
+                key={y}
+                onClick={() => setCalYear(y)}
+                className={`px-3 py-1 rounded text-sm ${calYear === y ? "font-semibold text-white" : "text-muted-foreground border border-border hover:bg-secondary"}`}
+                style={calYear === y ? { background: "var(--foreground)" } : {}}
+              >
                 {y}
               </button>
             ))}
           </div>
-          {calendarData.length > 0 && (
-            <span className="text-xs text-muted-foreground ml-2">{calendarData.length} brand{calendarData.length !== 1 ? "s" : ""} with TPRs</span>
+          {matrixData.length > 0 && (
+            <span className="text-xs text-muted-foreground ml-2">
+              {matrixData.length} retailer{matrixData.length !== 1 ? "s" : ""}
+            </span>
           )}
+          <button
+            onClick={exportToExcel}
+            className="ml-auto px-4 py-1.5 rounded-lg text-sm border border-border text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Export to Excel
+          </button>
         </div>
 
-        {calendarData.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No TPR promotions found for {calYear}.</p>
+        {matrixData.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No retailer promotions found for {calYear}.</p>
         ) : (
           <div className="overflow-x-auto rounded-xl border border-border">
-            <table className="text-xs" style={{ minWidth: "max-content", width: "100%" }}>
+            <table
+              className="text-xs"
+              style={{ minWidth: "max-content", width: "100%", borderCollapse: "collapse" }}
+            >
+              <colgroup>
+                <col style={{ width: RETAILER_W, minWidth: RETAILER_W }} />
+                <col style={{ width: SKU_W, minWidth: SKU_W }} />
+                {MONTHS.map((m) => <col key={m} style={{ minWidth: 110 }} />)}
+              </colgroup>
               <thead>
                 <tr style={{ background: "#1e3a4a" }}>
-                  <th className="px-4 py-2 text-left text-white/80 font-semibold whitespace-nowrap sticky left-0" style={{ background: "#1e3a4a", minWidth: 180 }}>Brand</th>
-                  {months.map((m) => (
-                    <th key={m} className="px-3 py-2 text-center text-white/80 font-semibold whitespace-nowrap" style={{ minWidth: 90 }}>{monthLabel(m)}</th>
+                  <th
+                    className="px-4 py-2 text-left text-white/80 font-semibold whitespace-nowrap sticky left-0"
+                    style={{ background: "#1e3a4a", zIndex: 3 }}
+                  >
+                    Retailer
+                  </th>
+                  <th
+                    className="px-3 py-2 text-left text-white/80 font-semibold whitespace-nowrap sticky"
+                    style={{ background: "#1e3a4a", left: RETAILER_W, zIndex: 3 }}
+                  >
+                    SKU
+                  </th>
+                  {MONTHS.map((m) => (
+                    <th
+                      key={m}
+                      className="px-3 py-2 text-center text-white/80 font-semibold whitespace-nowrap"
+                    >
+                      {monthLabel(m)}
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {calendarData.map((row, idx) => (
-                  <tr key={row.brand_name} className="border-b border-border last:border-0" style={{ background: idx % 2 === 0 ? "var(--card)" : "var(--secondary)" }}>
-                    <td className="px-4 py-2 font-medium text-foreground whitespace-nowrap sticky left-0" style={{ background: idx % 2 === 0 ? "var(--card)" : "var(--secondary)" }}>
-                      {row.brand_id
-                        ? <Link href={`/brands/${row.brand_id}/promotions`} className="hover:underline">{row.brand_name}</Link>
-                        : <span>{row.brand_name}</span>}
-                    </td>
-                    {months.map((m) => {
-                      const retailers = row.months.get(m);
-                      const drillKey = `${row.brand_name}||${m}`;
-                      const isDrilling = calDrillKey === drillKey;
-                      if (!retailers || retailers.size === 0) {
-                        return <td key={m} className="px-3 py-2 text-center text-muted-foreground">—</td>;
-                      }
-                      return (
-                        <td key={m} className="px-3 py-2 text-center">
-                          <button
-                            onClick={() => setCalDrillKey(isDrilling ? null : drillKey)}
-                            className={`inline-flex flex-col items-center gap-0.5 rounded px-2 py-1 transition-colors ${isDrilling ? "ring-2 ring-primary" : "hover:bg-secondary"}`}
+                {matrixData.map((retailer, rIdx) => {
+                  const bg = rIdx % 2 === 0 ? "var(--card)" : "var(--secondary)";
+                  return (
+                    <React.Fragment key={retailer.displayName}>
+                      {retailer.skus.map((skuRow, skuIdx) => (
+                        <tr
+                          key={`${retailer.displayName}__${skuRow.sku}__${skuIdx}`}
+                          style={{
+                            background: bg,
+                            borderTop: skuIdx === 0 && rIdx > 0 ? "2px solid var(--border)" : undefined,
+                          }}
+                        >
+                          {skuIdx === 0 && (
+                            <td
+                              rowSpan={retailer.skus.length}
+                              className="px-4 py-2 font-semibold text-foreground align-top sticky left-0"
+                              style={{
+                                background: bg,
+                                zIndex: 1,
+                                borderRight: "1px solid var(--border)",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {retailer.displayName}
+                            </td>
+                          )}
+                          <td
+                            className="px-3 py-2 text-muted-foreground sticky"
+                            style={{
+                              background: bg,
+                              left: RETAILER_W,
+                              zIndex: 1,
+                              borderRight: "1px solid var(--border)",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
                           >
-                            <span className="text-xs font-semibold text-foreground">{retailers.size}</span>
-                            <span className="text-[10px] text-muted-foreground leading-tight">{retailers.size === 1 ? [...retailers][0].slice(0, 10) : "retailers"}</span>
-                          </button>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
+                            {skuRow.sku}
+                          </td>
+                          {MONTHS.map((m) => {
+                            const texts = skuRow.months[m];
+                            return (
+                              <td
+                                key={m}
+                                className="px-3 py-2 text-center align-top"
+                                style={{ borderBottom: "1px solid var(--border)" }}
+                              >
+                                {texts && texts.length > 0 ? (
+                                  <span className="text-foreground leading-snug">{texts.join(" / ")}</span>
+                                ) : (
+                                  <span className="text-muted-foreground/30">—</span>
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
-          </div>
-        )}
-
-        {/* Drill-in panel */}
-        {calDrillKey && drillRows.length > 0 && (
-          <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-            {(() => {
-              const [dn, dm] = calDrillKey.split("||");
-              return <div className="flex items-center justify-between"><h3 className="text-sm font-semibold text-foreground">{dn} — {monthLabelLong(parseInt(dm))} {calYear}</h3><button onClick={() => setCalDrillKey(null)} className="text-xs text-muted-foreground hover:text-foreground">✕</button></div>;
-            })()}
-            <div className="space-y-2">
-              {groupRetailerActivations(drillRows).map((rg) => (
-                <div key={rg.key} className="border border-border rounded-lg p-3 text-sm">
-                  <div className="font-medium text-foreground">{rg.retailer_banner || rg.retailer_name}</div>
-                  {rg.distributors.length > 0 && <div className="text-xs text-muted-foreground">{rg.distributors.join(" · ")}</div>}
-                  <div className="text-xs text-muted-foreground mt-1">{uniqueSkuCount(rg.rows)} SKU{uniqueSkuCount(rg.rows) !== 1 ? "s" : ""} on deal</div>
-                  {rg.brandGroups.flatMap((bg) => bg.promoGroups).map((pg) => (
-                    <div key={pg.key} className="mt-2 text-xs text-muted-foreground border-t border-border pt-2">
-                      <div>{pg.promo_type}{pg.promo_name ? ` — ${pg.promo_name}` : ""}</div>
-                      <div>Runs: {prettyDate(pg.start_date)} → {prettyDate(pg.end_date)}</div>
-                      <div>{uniqueSkuCount(pg.rows)} SKU{uniqueSkuCount(pg.rows) !== 1 ? "s" : ""} · {pg.promo_status}</div>
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
           </div>
         )}
       </div>
@@ -1481,7 +1573,7 @@ function PromotionsInner() {
         {/* View toggle */}
         <div className="flex rounded-lg overflow-hidden border border-border text-sm">
           <button onClick={() => setViewMode("list")} className={`px-4 py-2 ${viewMode === "list" ? "font-semibold text-white" : "text-muted-foreground hover:bg-secondary"}`} style={viewMode === "list" ? { background: "var(--foreground)" } : {}}>List</button>
-          <button onClick={() => setViewMode("calendar")} className={`px-4 py-2 ${viewMode === "calendar" ? "font-semibold text-white" : "text-muted-foreground hover:bg-secondary"}`} style={viewMode === "calendar" ? { background: "var(--foreground)" } : {}}>Calendar</button>
+          <button onClick={() => setViewMode("matrix")} className={`px-4 py-2 ${viewMode === "matrix" ? "font-semibold text-white" : "text-muted-foreground hover:bg-secondary"}`} style={viewMode === "matrix" ? { background: "var(--foreground)" } : {}}>Matrix</button>
         </div>
 
         {(role === "admin" || role === "rep") && (
@@ -1711,8 +1803,8 @@ function PromotionsInner() {
 
       {loading ? (
         <div className="text-sm text-muted-foreground">Loading promotions…</div>
-      ) : viewMode === "calendar" ? (
-        renderCalendar()
+      ) : viewMode === "matrix" ? (
+        renderMatrix()
       ) : (
         <>
           {role === "client" && (
