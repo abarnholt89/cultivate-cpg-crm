@@ -567,7 +567,7 @@ function PromotionsInner() {
 
     const retailerMap = new Map<string, {
       displayName: string;
-      skus: Map<string, Record<number, string[]>>;
+      skus: Map<string, { upc: string | null; months: Record<number, string[]> }>;
     }>();
 
     for (const row of rows) {
@@ -583,8 +583,10 @@ function PromotionsInner() {
         entry.displayName = row.retailer_banner.trim();
       }
       const sku = row.sku_description || "Unknown SKU";
-      if (!entry.skus.has(sku)) entry.skus.set(sku, {});
-      const monthsMap = entry.skus.get(sku)!;
+      if (!entry.skus.has(sku)) entry.skus.set(sku, { upc: row.unit_upc ?? null, months: {} });
+      const skuEntry = entry.skus.get(sku)!;
+      if (!skuEntry.upc && row.unit_upc) skuEntry.upc = row.unit_upc;
+      const monthsMap = skuEntry.months;
       const m = row.promo_month;
       if (m >= 1 && m <= 12) {
         if (!monthsMap[m]) monthsMap[m] = [];
@@ -599,7 +601,7 @@ function PromotionsInner() {
         displayName: entry.displayName,
         skus: Array.from(entry.skus.entries())
           .sort(([a], [b]) => a.localeCompare(b))
-          .map(([sku, months]) => ({ sku, months })),
+          .map(([sku, { upc, months }]) => ({ sku, upc, months })),
       }));
   }, [promotions, calYear, hideEdlp, brandFilter, retailerFilter, statusFilter, repFilter]);
 
@@ -1374,19 +1376,20 @@ function PromotionsInner() {
 
   function exportToExcel() {
     const MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-    const wsData: string[][] = [["Retailer", "SKU", ...MONTH_LABELS]];
+    const wsData: string[][] = [["Retailer", "SKU", "Unit UPC", ...MONTH_LABELS]];
     for (const retailer of matrixData) {
       for (const skuRow of retailer.skus) {
         wsData.push([
           retailer.displayName,
           skuRow.sku,
+          skuRow.upc ?? "",
           ...Array.from({ length: 12 }, (_: unknown, i: number) => (skuRow.months[i + 1] ?? []).join(" / ")),
         ]);
       }
     }
     const ws = XLSX.utils.aoa_to_sheet(wsData);
-    ws["!freeze"] = { xSplit: 2, ySplit: 1 };
-    ws["!cols"] = [{ wch: 28 }, { wch: 40 }, ...Array.from({ length: 12 }, () => ({ wch: 18 }))];
+    ws["!freeze"] = { xSplit: 3, ySplit: 1 };
+    ws["!cols"] = [{ wch: 28 }, { wch: 40 }, { wch: 16 }, ...Array.from({ length: 12 }, () => ({ wch: 18 }))];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, `Promo Matrix ${calYear}`);
     XLSX.writeFile(wb, `promo-matrix-${calYear}.xlsx`);
@@ -1396,6 +1399,7 @@ function PromotionsInner() {
     const MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
     const RETAILER_W = 180;
     const SKU_W = 220;
+    const UPC_W = 130;
 
     return (
       <div className="space-y-4">
@@ -1438,6 +1442,7 @@ function PromotionsInner() {
               <colgroup>
                 <col style={{ width: RETAILER_W, minWidth: RETAILER_W }} />
                 <col style={{ width: SKU_W, minWidth: SKU_W }} />
+                <col style={{ width: UPC_W, minWidth: UPC_W }} />
                 {MONTHS.map((m) => <col key={m} style={{ minWidth: 110 }} />)}
               </colgroup>
               <thead>
@@ -1453,6 +1458,12 @@ function PromotionsInner() {
                     style={{ background: "#1e3a4a", left: RETAILER_W, zIndex: 3 }}
                   >
                     SKU
+                  </th>
+                  <th
+                    className="px-3 py-2 text-left text-white/80 font-semibold whitespace-nowrap sticky"
+                    style={{ background: "#1e3a4a", left: RETAILER_W + SKU_W, zIndex: 3 }}
+                  >
+                    Unit UPC
                   </th>
                   {MONTHS.map((m) => (
                     <th
@@ -1506,6 +1517,18 @@ function PromotionsInner() {
                             }}
                           >
                             {skuRow.sku}
+                          </td>
+                          <td
+                            className="px-3 py-2 text-muted-foreground sticky"
+                            style={{
+                              background: bg,
+                              left: RETAILER_W + SKU_W,
+                              zIndex: 1,
+                              borderRight: "1px solid var(--border)",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {skuRow.upc ?? ""}
                           </td>
                           {MONTHS.map((m) => {
                             const texts = skuRow.months[m];
