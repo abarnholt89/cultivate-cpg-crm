@@ -567,7 +567,7 @@ function PromotionsInner() {
 
     const retailerMap = new Map<string, {
       displayName: string;
-      skus: Map<string, { upc: string | null; months: Record<number, string[]> }>;
+      brands: Map<string, Map<string, { upc: string | null; months: Record<number, string[]> }>>;
     }>();
 
     for (const row of rows) {
@@ -575,16 +575,19 @@ function PromotionsInner() {
       if (!retailerMap.has(rKey)) {
         retailerMap.set(rKey, {
           displayName: row.retailer_banner?.trim() || row.retailer_name || "Unknown",
-          skus: new Map(),
+          brands: new Map(),
         });
       }
       const entry = retailerMap.get(rKey)!;
       if (!entry.displayName && row.retailer_banner?.trim()) {
         entry.displayName = row.retailer_banner.trim();
       }
+      const brandName = row.brand_name || "Unknown Brand";
+      if (!entry.brands.has(brandName)) entry.brands.set(brandName, new Map());
+      const brandMap = entry.brands.get(brandName)!;
       const sku = row.sku_description || "Unknown SKU";
-      if (!entry.skus.has(sku)) entry.skus.set(sku, { upc: row.unit_upc ?? null, months: {} });
-      const skuEntry = entry.skus.get(sku)!;
+      if (!brandMap.has(sku)) brandMap.set(sku, { upc: row.unit_upc ?? null, months: {} });
+      const skuEntry = brandMap.get(sku)!;
       if (!skuEntry.upc && row.unit_upc) skuEntry.upc = row.unit_upc;
       const monthsMap = skuEntry.months;
       const m = row.promo_month;
@@ -599,9 +602,14 @@ function PromotionsInner() {
       .sort(([, a], [, b]) => a.displayName.localeCompare(b.displayName))
       .map(([, entry]) => ({
         displayName: entry.displayName,
-        skus: Array.from(entry.skus.entries())
+        brands: Array.from(entry.brands.entries())
           .sort(([a], [b]) => a.localeCompare(b))
-          .map(([sku, { upc, months }]) => ({ sku, upc, months })),
+          .map(([brandName, skuMap]) => ({
+            brandName,
+            skus: Array.from(skuMap.entries())
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([sku, { upc, months }]) => ({ sku, upc, months })),
+          })),
       }));
   }, [promotions, calYear, hideEdlp, brandFilter, retailerFilter, statusFilter, repFilter]);
 
@@ -1376,20 +1384,23 @@ function PromotionsInner() {
 
   function exportToExcel() {
     const MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-    const wsData: string[][] = [["Retailer", "SKU", "Unit UPC", ...MONTH_LABELS]];
+    const wsData: string[][] = [["Retailer", "Brand", "SKU", "Unit UPC", ...MONTH_LABELS]];
     for (const retailer of matrixData) {
-      for (const skuRow of retailer.skus) {
-        wsData.push([
-          retailer.displayName,
-          skuRow.sku,
-          skuRow.upc ?? "",
-          ...Array.from({ length: 12 }, (_: unknown, i: number) => (skuRow.months[i + 1] ?? []).join(" / ")),
-        ]);
+      for (const brand of retailer.brands) {
+        for (const skuRow of brand.skus) {
+          wsData.push([
+            retailer.displayName,
+            brand.brandName,
+            skuRow.sku,
+            skuRow.upc ?? "",
+            ...Array.from({ length: 12 }, (_: unknown, i: number) => (skuRow.months[i + 1] ?? []).join(" / ")),
+          ]);
+        }
       }
     }
     const ws = XLSX.utils.aoa_to_sheet(wsData);
-    ws["!freeze"] = { xSplit: 3, ySplit: 1 };
-    ws["!cols"] = [{ wch: 28 }, { wch: 40 }, { wch: 16 }, ...Array.from({ length: 12 }, () => ({ wch: 18 }))];
+    ws["!freeze"] = { xSplit: 4, ySplit: 1 };
+    ws["!cols"] = [{ wch: 28 }, { wch: 24 }, { wch: 40 }, { wch: 16 }, ...Array.from({ length: 12 }, () => ({ wch: 18 }))];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, `Promo Matrix ${calYear}`);
     XLSX.writeFile(wb, `promo-matrix-${calYear}.xlsx`);
@@ -1398,6 +1409,7 @@ function PromotionsInner() {
   function renderMatrix() {
     const MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
     const RETAILER_W = 180;
+    const BRAND_W = 160;
     const SKU_W = 220;
     const UPC_W = 130;
 
@@ -1441,6 +1453,7 @@ function PromotionsInner() {
             >
               <colgroup>
                 <col style={{ width: RETAILER_W, minWidth: RETAILER_W }} />
+                <col style={{ width: BRAND_W, minWidth: BRAND_W }} />
                 <col style={{ width: SKU_W, minWidth: SKU_W }} />
                 <col style={{ width: UPC_W, minWidth: UPC_W }} />
                 {MONTHS.map((m) => <col key={m} style={{ minWidth: 110 }} />)}
@@ -1457,11 +1470,17 @@ function PromotionsInner() {
                     className="px-3 py-2 text-left text-white/80 font-semibold whitespace-nowrap sticky"
                     style={{ background: "#1e3a4a", left: RETAILER_W, zIndex: 3 }}
                   >
+                    Brand
+                  </th>
+                  <th
+                    className="px-3 py-2 text-left text-white/80 font-semibold whitespace-nowrap sticky"
+                    style={{ background: "#1e3a4a", left: RETAILER_W + BRAND_W, zIndex: 3 }}
+                  >
                     SKU
                   </th>
                   <th
                     className="px-3 py-2 text-left text-white/80 font-semibold whitespace-nowrap sticky"
-                    style={{ background: "#1e3a4a", left: RETAILER_W + SKU_W, zIndex: 3 }}
+                    style={{ background: "#1e3a4a", left: RETAILER_W + BRAND_W + SKU_W, zIndex: 3 }}
                   >
                     Unit UPC
                   </th>
@@ -1478,76 +1497,99 @@ function PromotionsInner() {
               <tbody>
                 {matrixData.map((retailer, rIdx) => {
                   const bg = rIdx % 2 === 0 ? "var(--card)" : "var(--secondary)";
+                  const totalSkus = retailer.brands.reduce((sum, b) => sum + b.skus.length, 0);
                   return (
                     <React.Fragment key={retailer.displayName}>
-                      {retailer.skus.map((skuRow, skuIdx) => (
-                        <tr
-                          key={`${retailer.displayName}__${skuRow.sku}__${skuIdx}`}
-                          style={{
-                            background: bg,
-                            borderTop: skuIdx === 0 && rIdx > 0 ? "2px solid var(--border)" : undefined,
-                          }}
-                        >
-                          {skuIdx === 0 && (
-                            <td
-                              rowSpan={retailer.skus.length}
-                              className="px-4 py-2 font-semibold text-foreground align-top sticky left-0"
+                      {retailer.brands.flatMap((brand, brandIdx) =>
+                        brand.skus.map((skuRow, skuIdx) => {
+                          const isFirstRow = brandIdx === 0 && skuIdx === 0;
+                          return (
+                            <tr
+                              key={`${retailer.displayName}__${brand.brandName}__${skuRow.sku}__${brandIdx}__${skuIdx}`}
                               style={{
                                 background: bg,
-                                zIndex: 1,
-                                borderRight: "1px solid var(--border)",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
+                                borderTop: isFirstRow && rIdx > 0 ? "2px solid var(--border)" : undefined,
                               }}
                             >
-                              {retailer.displayName}
-                            </td>
-                          )}
-                          <td
-                            className="px-3 py-2 text-muted-foreground sticky"
-                            style={{
-                              background: bg,
-                              left: RETAILER_W,
-                              zIndex: 1,
-                              borderRight: "1px solid var(--border)",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {skuRow.sku}
-                          </td>
-                          <td
-                            className="px-3 py-2 text-muted-foreground sticky"
-                            style={{
-                              background: bg,
-                              left: RETAILER_W + SKU_W,
-                              zIndex: 1,
-                              borderRight: "1px solid var(--border)",
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {skuRow.upc ?? ""}
-                          </td>
-                          {MONTHS.map((m) => {
-                            const texts = skuRow.months[m];
-                            return (
+                              {isFirstRow && (
+                                <td
+                                  rowSpan={totalSkus}
+                                  className="px-4 py-2 font-semibold text-foreground align-top sticky left-0"
+                                  style={{
+                                    background: bg,
+                                    zIndex: 1,
+                                    borderRight: "1px solid var(--border)",
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {retailer.displayName}
+                                </td>
+                              )}
+                              {skuIdx === 0 && (
+                                <td
+                                  rowSpan={brand.skus.length}
+                                  className="px-3 py-2 text-muted-foreground align-top sticky"
+                                  style={{
+                                    background: bg,
+                                    left: RETAILER_W,
+                                    zIndex: 1,
+                                    borderRight: "1px solid var(--border)",
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {brand.brandName}
+                                </td>
+                              )}
                               <td
-                                key={m}
-                                className="px-3 py-2 text-center align-top"
-                                style={{ borderBottom: "1px solid var(--border)" }}
+                                className="px-3 py-2 text-muted-foreground sticky"
+                                style={{
+                                  background: bg,
+                                  left: RETAILER_W + BRAND_W,
+                                  zIndex: 1,
+                                  borderRight: "1px solid var(--border)",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
                               >
-                                {texts && texts.length > 0 ? (
-                                  <span className="text-foreground leading-snug">{texts.join(" / ")}</span>
-                                ) : (
-                                  <span className="text-muted-foreground/30">—</span>
-                                )}
+                                {skuRow.sku}
                               </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
+                              <td
+                                className="px-3 py-2 text-muted-foreground sticky"
+                                style={{
+                                  background: bg,
+                                  left: RETAILER_W + BRAND_W + SKU_W,
+                                  zIndex: 1,
+                                  borderRight: "1px solid var(--border)",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {skuRow.upc ?? ""}
+                              </td>
+                              {MONTHS.map((m) => {
+                                const texts = skuRow.months[m];
+                                return (
+                                  <td
+                                    key={m}
+                                    className="px-3 py-2 text-center align-top"
+                                    style={{ borderBottom: "1px solid var(--border)" }}
+                                  >
+                                    {texts && texts.length > 0 ? (
+                                      <span className="text-foreground leading-snug">{texts.join(" / ")}</span>
+                                    ) : (
+                                      <span className="text-muted-foreground/30">—</span>
+                                    )}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          );
+                        })
+                      )}
                     </React.Fragment>
                   );
                 })}
