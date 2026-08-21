@@ -299,7 +299,6 @@ export async function POST(req: Request) {
       recentMessages,
     });
 
-    console.log("[send-client-email] recipients:", JSON.stringify(recipients));
     const response = await fetch(
       `${supabaseUrl}/functions/v1/send-client-message-email`,
       {
