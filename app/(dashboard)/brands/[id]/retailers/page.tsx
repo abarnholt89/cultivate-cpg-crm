@@ -344,6 +344,8 @@ function BrandRetailersInner() {
   // brand categories (for submission category dropdown)
   const [brandCategories, setBrandCategories] = useState<string[]>([]);
 
+  const [reactions, setReactions] = useState<Record<string, string[]>>({});
+
   // SKU modal state
   const [skuModal, setSkuModal] = useState<{ retailerId: string; retailerName: string } | null>(null);
   const [skuModalItems, setSkuModalItems] = useState<{ sku_description: string; upc: string }[]>([]);
@@ -785,6 +787,25 @@ function BrandRetailersInner() {
       setSignedImageUrls((prev) => ({ ...prev, ...next }));
     });
   }, [cardAttachments]);
+
+  useEffect(() => {
+    const allMsgs = Object.values(inlineMessages).flatMap((t) => [...t.client, ...t.internal]);
+    if (allMsgs.length === 0) { setReactions({}); return; }
+    const ids = allMsgs.map((m) => m.id);
+    supabase
+      .from("message_reactions")
+      .select("message_id, user_id")
+      .in("message_id", ids)
+      .eq("reaction", "thumbs_up")
+      .then(({ data }) => {
+        const map: Record<string, string[]> = {};
+        (data ?? []).forEach((r: { message_id: string; user_id: string }) => {
+          if (!map[r.message_id]) map[r.message_id] = [];
+          map[r.message_id].push(r.user_id);
+        });
+        setReactions(map);
+      });
+  }, [inlineMessages]);
 
   // Dropdown options: derived from rep_owner_user_id values that appear on the
   // loaded retailers, resolved to profile full_name via repNameById. Values are
@@ -1539,6 +1560,29 @@ function BrandRetailersInner() {
 
     setCardSending((prev) => ({ ...prev, [retailerId]: false }));
     setStatus("Sent ✅");
+  }
+
+  async function toggleReaction(messageId: string) {
+    if (!userId) return;
+    const alreadyLiked = reactions[messageId]?.includes(userId) ?? false;
+    setReactions((prev) => ({
+      ...prev,
+      [messageId]: alreadyLiked
+        ? (prev[messageId] ?? []).filter((uid) => uid !== userId)
+        : [...(prev[messageId] ?? []), userId],
+    }));
+    if (alreadyLiked) {
+      await supabase
+        .from("message_reactions")
+        .delete()
+        .eq("message_id", messageId)
+        .eq("user_id", userId)
+        .eq("reaction", "thumbs_up");
+    } else {
+      await supabase
+        .from("message_reactions")
+        .insert({ message_id: messageId, user_id: userId, reaction: "thumbs_up" });
+    }
   }
 
   const brandName = useMemo(() => brand?.name ?? "Brand", [brand]);
@@ -2596,6 +2640,20 @@ function BrandRetailersInner() {
                                       })}
                                     </div>
                                   )}
+                                  <div className="pt-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleReaction(m.id)}
+                                      className="text-xs flex items-center gap-1 px-2 py-0.5 rounded-full border transition-colors"
+                                      style={
+                                        reactions[m.id]?.includes(userId ?? "")
+                                          ? { background: "rgba(245,158,11,0.1)", borderColor: "#f59e0b", color: "#b45309" }
+                                          : { background: "transparent", borderColor: "var(--border)", color: "var(--muted-foreground)" }
+                                      }
+                                    >
+                                      👍{reactions[m.id]?.length ? ` ${reactions[m.id].length}` : ""}
+                                    </button>
+                                  </div>
                                 </>
                               )}
                             </div>
