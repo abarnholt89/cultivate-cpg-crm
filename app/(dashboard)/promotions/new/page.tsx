@@ -37,9 +37,11 @@ export default function NewPromotionPage() {
 
   const [brands, setBrands] = useState<BrandOption[]>([]);
   const [retailers, setRetailers] = useState<RetailerOption[]>([]);
+  const [repProfiles, setRepProfiles] = useState<{ id: string; full_name: string }[]>([]);
 
   const [brandId, setBrandId] = useState("");
   const [retailerId, setRetailerId] = useState("");
+  const [cultivateRep, setCultivateRep] = useState("");
 
   const [promoName, setPromoName] = useState("");
   const [promoType, setPromoType] = useState("");
@@ -48,6 +50,8 @@ export default function NewPromotionPage() {
 
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [promoMonthExplicit, setPromoMonthExplicit] = useState("");
+  const [promoYearExplicit, setPromoYearExplicit] = useState("");
 
   const [discountPercent, setDiscountPercent] = useState("");
   const [discountAmount, setDiscountAmount] = useState("");
@@ -87,6 +91,12 @@ export default function NewPromotionPage() {
 
         const nextRole = (profile?.role as Role) ?? null;
         setRole(nextRole);
+
+        const { data: repRows } = await supabase.from("profiles").select("id,full_name").in("role", ["rep","admin"]).order("full_name");
+        const repList = ((repRows ?? []) as { id: string; full_name: string }[]).filter((r) => r.full_name);
+        setRepProfiles(repList);
+        const ownRep = repList.find((r) => r.id === currentUserId);
+        if (ownRep) setCultivateRep(ownRep.full_name);
 
         if (nextRole !== "admin" && nextRole !== "rep") {
           setStatus("You do not have access to create promotions.");
@@ -189,20 +199,15 @@ export default function NewPromotionPage() {
       return;
     }
 
-    const start = new Date(startDate);
-    if (Number.isNaN(start.getTime())) {
+    // Parse YYYY-MM-DD directly — new Date("YYYY-MM-DD") is UTC midnight which
+    // shifts getMonth()/getFullYear() by one day in US timezones.
+    const dateParts = startDate.split("-");
+    if (dateParts.length < 2 || !dateParts[0] || !dateParts[1]) {
       setStatus("Start date is invalid.");
       return;
     }
-
-    const end = endDate ? new Date(endDate) : null;
-    if (endDate && (!end || Number.isNaN(end.getTime()))) {
-      setStatus("End date is invalid.");
-      return;
-    }
-
-    const promoYear = start.getFullYear();
-    const promoMonth = start.getMonth() + 1;
+    const promoYear = Number(promoYearExplicit) || parseInt(dateParts[0], 10);
+    const promoMonth = Number(promoMonthExplicit) || parseInt(dateParts[1], 10);
 
     setSaving(true);
     setStatus("");
@@ -216,7 +221,7 @@ export default function NewPromotionPage() {
             ? selectedRetailer?.name ?? ""
             : "Distributor Program",
         distributor: selectedRetailer?.distributor ?? null,
-        cultivate_rep: role === "rep" ? userId : null,
+        cultivate_rep: cultivateRep || null,
         sku_description: skuDescription.trim() || "Manual Promotion Entry",
         unit_upc: unitUpc.trim() || null,
         promo_year: promoYear,
@@ -334,37 +339,19 @@ export default function NewPromotionPage() {
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-medium">Promo Name</label>
-<select
-  className="w-full border rounded px-3 py-2"
-  value={promoType}
-  onChange={(e) => setPromoType(e.target.value)}
->
-  <option value="">Select Promo Type</option>
-  <option value="TPR">TPR</option>
-  <option value="Feature">Feature</option>
-  <option value="Display">Display</option>
-  <option value="Digital">Digital</option>
-  <option value="Distributor OI">Distributor OI</option>
-  <option value="Other">Other</option>
-</select>
+            <label className="text-sm font-medium">Promo Type</label>
+            <select className="w-full border rounded px-3 py-2" value={promoType} onChange={(e) => setPromoType(e.target.value)}>
+              <option value="">— Select —</option>
+              {["EDLP","EDLC","Ad","Display","Demo","TPR","Digital","Other"].map((v) => <option key={v} value={v}>{v}</option>)}
+            </select>
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-medium">Promo Type</label>
-            <select
-  className="w-full border rounded px-3 py-2"
-  value={promoName}
-  onChange={(e) => setPromoName(e.target.value)}
->
-  <option value="">Select Promo Name</option>
-  <option value="TPR">TPR</option>
-  <option value="Feature">Feature</option>
-  <option value="Display">Display</option>
-  <option value="Digital">Digital</option>
-  <option value="Distributor OI">Distributor OI</option>
-  <option value="Other">Other</option>
-</select>
+            <label className="text-sm font-medium">Promo Name</label>
+            <select className="w-full border rounded px-3 py-2" value={promoName} onChange={(e) => setPromoName(e.target.value)}>
+              <option value="">— Select —</option>
+              {["TPR","MCB","OI","Demos","Slotting","OI + MCB","BOGO","Scan","AD","EDLP","EDLC"].map((v) => <option key={v} value={v}>{v}</option>)}
+            </select>
           </div>
 
           <div className="space-y-2">
@@ -394,12 +381,26 @@ export default function NewPromotionPage() {
           </div>
 
           <div className="space-y-2">
+            <label className="text-sm font-medium">Rep</label>
+            <select className="w-full border rounded px-3 py-2" value={cultivateRep} onChange={(e) => setCultivateRep(e.target.value)}>
+              <option value="">— Select rep —</option>
+              {repProfiles.map((r) => <option key={r.id} value={r.full_name}>{r.full_name}</option>)}
+            </select>
+          </div>
+
+          <div className="space-y-2">
             <label className="text-sm font-medium">Start Date</label>
             <input
               type="date"
               className="w-full border rounded px-3 py-2"
               value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                const parts = val.split("-");
+                setStartDate(val);
+                if (parts[0]) setPromoYearExplicit(parts[0]);
+                if (parts[1]) setPromoMonthExplicit(String(parseInt(parts[1], 10)));
+              }}
             />
           </div>
 
@@ -411,6 +412,24 @@ export default function NewPromotionPage() {
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
             />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Promo Month</label>
+            <select className="w-full border rounded px-3 py-2" value={promoMonthExplicit} onChange={(e) => setPromoMonthExplicit(e.target.value)}>
+              <option value="">— Month —</option>
+              {["January","February","March","April","May","June","July","August","September","October","November","December"].map((name, i) => (
+                <option key={i + 1} value={String(i + 1)}>{name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Promo Year</label>
+            <select className="w-full border rounded px-3 py-2" value={promoYearExplicit} onChange={(e) => setPromoYearExplicit(e.target.value)}>
+              <option value="">— Year —</option>
+              {[2024,2025,2026,2027,2028].map((y) => <option key={y} value={String(y)}>{y}</option>)}
+            </select>
           </div>
 
           <div className="space-y-2">

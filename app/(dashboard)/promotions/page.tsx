@@ -92,6 +92,9 @@ type BulkForm = {
   discount_amount: string;
   promo_name: string;
   notes: string;
+  cultivate_rep: string;
+  promo_month: string;
+  promo_year: string;
 };
 
 // Bulk edit at the promotion-group level. Fields here are the union of the
@@ -140,7 +143,13 @@ const EMPTY_BULK_FORM: BulkForm = {
   discount_amount: "",
   promo_name: "",
   notes: "",
+  cultivate_rep: "",
+  promo_month: "",
+  promo_year: "",
 };
+
+const PROMO_TYPE_OPTIONS = ["EDLP","EDLC","Ad","Display","Demo","TPR","Digital","Other"] as const;
+const PROMO_NAME_OPTIONS = ["TPR","MCB","OI","Demos","Slotting","OI + MCB","BOGO","Scan","AD","EDLP","EDLC"] as const;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -433,6 +442,7 @@ function PromotionsInner() {
 
   // Bulk builder (Feature 2)
   const [allBrands, setAllBrands] = useState<BrandOption[]>([]);
+  const [repProfiles, setRepProfiles] = useState<{ id: string; full_name: string }[]>([]);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkStep, setBulkStep] = useState<1 | 2 | 3 | 4>(1);
   const [bulkBrandId, setBulkBrandId] = useState("");
@@ -471,6 +481,11 @@ function PromotionsInner() {
         const { data: brandsData } = await supabase.from("brands").select("id,name").eq("archived", false).order("name");
         const brandsList = (brandsData as BrandOption[]) ?? [];
         setAllBrands(brandsList);
+
+        // Fetch rep names for the cultivate_rep dropdown
+        const { data: repRows } = await supabase.from("profiles").select("id,full_name").in("role", ["rep","admin"]).order("full_name");
+        const repList = ((repRows ?? []) as { id: string; full_name: string }[]).filter((r) => r.full_name);
+        setRepProfiles(repList);
 
         // Auto-apply brand filter when navigating from a brand dashboard
         if (brandIdParam) {
@@ -716,9 +731,11 @@ function PromotionsInner() {
     setBulkSaving(true);
     setBulkError("");
 
-    const start = new Date(bulkForm.start_date);
-    const promoYear = start.getFullYear();
-    const promoMonth = start.getMonth() + 1;
+    // Parse YYYY-MM-DD directly — new Date("YYYY-MM-DD") is UTC midnight which
+    // shifts getMonth()/getFullYear() by one day in US timezones.
+    const dateParts = bulkForm.start_date.split("-");
+    const promoYear = Number(bulkForm.promo_year) || parseInt(dateParts[0], 10);
+    const promoMonth = Number(bulkForm.promo_month) || parseInt(dateParts[1], 10);
 
     const selectedSkus = bulkSkus.filter((s) => bulkSelected.has(s.upc));
     const insertRows = selectedSkus.map((sku) => ({
@@ -726,7 +743,7 @@ function PromotionsInner() {
       brand_name: bulkBrandName,
       retailer_name: bulkRetailerName,
       distributor: bulkRetailerDistributor,
-      cultivate_rep: (role === "rep" || role === "admin") ? userId : null,
+      cultivate_rep: bulkForm.cultivate_rep || null,
       sku_description: sku.sku_description,
       unit_upc: sku.upc,
       promo_year: promoYear,
@@ -1366,14 +1383,14 @@ function PromotionsInner() {
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Promo Type *</label>
                 <select value={bulkForm.promo_type} onChange={(e) => setBulkForm((f) => ({ ...f, promo_type: e.target.value }))} className={inputCls} style={inputStyle}>
-                  <option value="TPR">TPR</option>
-                  <option value="EDLP">EDLP</option>
-                  <option value="EDLC">EDLC</option>
-                  <option value="Ad">Ad</option>
-                  <option value="Display">Display</option>
-                  <option value="Demo">Demo</option>
-                  <option value="Digital">Digital</option>
-                  <option value="Other">Other</option>
+                  {PROMO_TYPE_OPTIONS.map((v) => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Promo Name</label>
+                <select value={bulkForm.promo_name} onChange={(e) => setBulkForm((f) => ({ ...f, promo_name: e.target.value }))} className={inputCls} style={inputStyle}>
+                  <option value="">—</option>
+                  {PROMO_NAME_OPTIONS.map((v) => <option key={v} value={v}>{v}</option>)}
                 </select>
               </div>
               <div>
@@ -1393,16 +1410,50 @@ function PromotionsInner() {
                 </select>
               </div>
               <div>
+                <label className="block text-xs text-muted-foreground mb-1">Rep</label>
+                <select value={bulkForm.cultivate_rep} onChange={(e) => setBulkForm((f) => ({ ...f, cultivate_rep: e.target.value }))} className={inputCls} style={inputStyle}>
+                  <option value="">— Select rep —</option>
+                  {repProfiles.map((r) => <option key={r.id} value={r.full_name}>{r.full_name}</option>)}
+                </select>
+              </div>
+              <div>
                 <label className="block text-xs text-muted-foreground mb-1">Start Date *</label>
-                <input type="date" value={bulkForm.start_date} onChange={(e) => setBulkForm((f) => ({ ...f, start_date: e.target.value }))} className={inputCls} style={inputStyle} />
+                <input
+                  type="date"
+                  value={bulkForm.start_date}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const parts = val.split("-");
+                    setBulkForm((f) => ({
+                      ...f,
+                      start_date: val,
+                      promo_year: parts[0] ?? f.promo_year,
+                      promo_month: parts[1] ? String(parseInt(parts[1], 10)) : f.promo_month,
+                    }));
+                  }}
+                  className={inputCls}
+                  style={inputStyle}
+                />
               </div>
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">End Date</label>
                 <input type="date" value={bulkForm.end_date} onChange={(e) => setBulkForm((f) => ({ ...f, end_date: e.target.value }))} className={inputCls} style={inputStyle} />
               </div>
               <div>
-                <label className="block text-xs text-muted-foreground mb-1">Promo Name</label>
-                <input type="text" value={bulkForm.promo_name} onChange={(e) => setBulkForm((f) => ({ ...f, promo_name: e.target.value }))} placeholder="e.g. Spring Sale" className={inputCls} style={inputStyle} />
+                <label className="block text-xs text-muted-foreground mb-1">Promo Month *</label>
+                <select value={bulkForm.promo_month} onChange={(e) => setBulkForm((f) => ({ ...f, promo_month: e.target.value }))} className={inputCls} style={inputStyle}>
+                  <option value="">— Month —</option>
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                    <option key={m} value={String(m)}>{monthLabelLong(m)}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Promo Year *</label>
+                <select value={bulkForm.promo_year} onChange={(e) => setBulkForm((f) => ({ ...f, promo_year: e.target.value }))} className={inputCls} style={inputStyle}>
+                  <option value="">— Year —</option>
+                  {[2024,2025,2026,2027,2028].map((y) => <option key={y} value={String(y)}>{y}</option>)}
+                </select>
               </div>
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Discount %</label>
@@ -1759,24 +1810,31 @@ function PromotionsInner() {
             </div>
             {editError && <div className="text-sm text-red-600">{editError}</div>}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-              {(["brand_name", "retailer_name", "distributor", "cultivate_rep", "sku_description", "unit_upc"] as const).map((field) => (
+              {(["brand_name", "retailer_name", "distributor", "sku_description", "unit_upc"] as const).map((field) => (
                 <div key={field} className="space-y-1">
                   <label className="text-xs font-medium text-muted-foreground capitalize">{field.replace(/_/g, " ")}</label>
                   <input className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={editForm[field]} onChange={(e) => setEditForm((f) => f ? { ...f, [field]: e.target.value } : f)} />
                 </div>
               ))}
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Promo Name</label>
-                <select className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={editForm.promo_name} onChange={(e) => setEditForm((f) => f ? { ...f, promo_name: e.target.value } : f)}>
+                <label className="text-xs font-medium text-muted-foreground">Rep</label>
+                <select className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={editForm.cultivate_rep} onChange={(e) => setEditForm((f) => f ? { ...f, cultivate_rep: e.target.value } : f)}>
                   <option value="">—</option>
-                  {["TPR","Feature","Display","Digital","Distributor OI","Other"].map((v) => <option key={v} value={v}>{v}</option>)}
+                  {repProfiles.map((r) => <option key={r.id} value={r.full_name}>{r.full_name}</option>)}
                 </select>
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Promo Type</label>
                 <select className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={editForm.promo_type} onChange={(e) => setEditForm((f) => f ? { ...f, promo_type: e.target.value } : f)}>
                   <option value="">—</option>
-                  {["TPR","Feature","Display","Digital","Distributor OI","Other"].map((v) => <option key={v} value={v}>{v}</option>)}
+                  {PROMO_TYPE_OPTIONS.map((v) => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Promo Name</label>
+                <select className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={editForm.promo_name} onChange={(e) => setEditForm((f) => f ? { ...f, promo_name: e.target.value } : f)}>
+                  <option value="">—</option>
+                  {PROMO_NAME_OPTIONS.map((v) => <option key={v} value={v}>{v}</option>)}
                 </select>
               </div>
               <div className="space-y-1">
