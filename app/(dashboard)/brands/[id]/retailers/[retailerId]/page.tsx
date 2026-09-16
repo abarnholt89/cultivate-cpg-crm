@@ -128,6 +128,9 @@ export default function BrandRetailerMessagesPage() {
   const [reviewEdits, setReviewEdits] = useState<Record<string, string>>({});
   const [approvingId, setApprovingId] = useState<string | null>(null);
 
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [reactions, setReactions] = useState<Record<string, string[]>>({});
+
   const [body, setBody] = useState("");
   const [status, setStatus] = useState("");
   const [timingRowId, setTimingRowId] = useState<string | null>(null);
@@ -212,6 +215,8 @@ export default function BrandRetailerMessagesPage() {
         return;
       }
 
+      setCurrentUserId(userId);
+
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
         .select("role")
@@ -288,6 +293,24 @@ export default function BrandRetailerMessagesPage() {
 
     loadAttachments();
   }, [brandId, retailerId, role, tab, isRepOrAdmin]);
+
+  useEffect(() => {
+    if (messages.length === 0) { setReactions({}); return; }
+    const ids = messages.map((m) => m.id);
+    supabase
+      .from("message_reactions")
+      .select("message_id, user_id")
+      .in("message_id", ids)
+      .eq("reaction", "thumbs_up")
+      .then(({ data }) => {
+        const map: Record<string, string[]> = {};
+        (data ?? []).forEach((r: { message_id: string; user_id: string }) => {
+          if (!map[r.message_id]) map[r.message_id] = [];
+          map[r.message_id].push(r.user_id);
+        });
+        setReactions(map);
+      });
+  }, [messages]);
 
   useEffect(() => {
     if (!timingRowId || !isRepOrAdmin || tab !== "internal") {
@@ -749,6 +772,29 @@ export default function BrandRetailerMessagesPage() {
     window.open(data.signedUrl, "_blank");
   }
 
+  async function toggleReaction(messageId: string) {
+    if (!currentUserId) return;
+    const alreadyLiked = reactions[messageId]?.includes(currentUserId) ?? false;
+    setReactions((prev) => ({
+      ...prev,
+      [messageId]: alreadyLiked
+        ? (prev[messageId] ?? []).filter((uid) => uid !== currentUserId)
+        : [...(prev[messageId] ?? []), currentUserId],
+    }));
+    if (alreadyLiked) {
+      await supabase
+        .from("message_reactions")
+        .delete()
+        .eq("message_id", messageId)
+        .eq("user_id", currentUserId)
+        .eq("reaction", "thumbs_up");
+    } else {
+      await supabase
+        .from("message_reactions")
+        .insert({ message_id: messageId, user_id: currentUserId, reaction: "thumbs_up" });
+    }
+  }
+
   const visibleLabel = isRepOrAdmin
     ? tab === "client"
       ? "client-visible message"
@@ -1073,6 +1119,19 @@ const clientTimeline = useMemo<ClientTimelineItem[]>(() => {
                   })}
                 </div>
               ) : null}
+              <div className="mt-2">
+                <button
+                  type="button"
+                  onClick={() => toggleReaction(item.id)}
+                  className={`text-xs flex items-center gap-1 px-2 py-1 rounded-full border transition-colors ${
+                    reactions[item.id]?.includes(currentUserId ?? "")
+                      ? "bg-amber-50 border-amber-300 text-amber-700"
+                      : "border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600"
+                  }`}
+                >
+                  👍{reactions[item.id]?.length ? ` ${reactions[item.id].length}` : ""}
+                </button>
+              </div>
             </div>
           );
         })}
@@ -1137,6 +1196,19 @@ const clientTimeline = useMemo<ClientTimelineItem[]>(() => {
               })}
             </div>
           ) : null}
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={() => toggleReaction(m.id)}
+              className={`text-xs flex items-center gap-1 px-2 py-1 rounded-full border transition-colors ${
+                reactions[m.id]?.includes(currentUserId ?? "")
+                  ? "bg-amber-50 border-amber-300 text-amber-700"
+                  : "border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600"
+              }`}
+            >
+              👍{reactions[m.id]?.length ? ` ${reactions[m.id].length}` : ""}
+            </button>
+          </div>
         </div>
       ))}
     </div>
