@@ -560,7 +560,7 @@ function PromotionsInner() {
 
   // ── Filter options ─────────────────────────────────────────────────────────
 
-  const brands = useMemo(() => [...new Set(promotions.map((r) => r.brand_name).filter(Boolean))].sort(), [promotions]);
+  const brands = useMemo(() => [...new Set(promotionsActive.map((r) => r.brand_name).filter(Boolean))].sort(), [promotionsActive]);
   const retailers = useMemo(() => [...new Set(promotions.map((r) => r.retailer_name).filter(Boolean))].sort(), [promotions]);
   const statuses = useMemo(() => [...new Set(promotions.map((r) => r.promo_status).filter(Boolean))].sort(), [promotions]);
   const reps = useMemo(() => [...new Set(promotions.map((r) => r.cultivate_rep || "").filter((r) => r !== ""))].sort(), [promotions]);
