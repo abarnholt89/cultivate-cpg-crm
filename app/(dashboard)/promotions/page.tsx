@@ -437,7 +437,7 @@ function PromotionsInner() {
   const [syncingStatuses, setSyncingStatuses] = useState(false);
 
   // View mode (Feature 3)
-  const [viewMode, setViewMode] = useState<"list" | "matrix">("list");
+  const [viewMode, setViewMode] = useState<"list" | "matrix">("matrix");
   const [calYear, setCalYear] = useState<number>(new Date().getFullYear());
 
   // Bulk builder (Feature 2)
@@ -630,7 +630,7 @@ function PromotionsInner() {
   }, [promotions, calYear, hideEdlp, brandFilter, retailerFilter, statusFilter, repFilter]);
 
   const oiMatrixData = useMemo(() => {
-    if (!showOis) return [];
+    if (!showOis && role !== "client") return [];
     const rows = promotions.filter(
       (r) =>
         r.promo_year === calYear &&
@@ -676,7 +676,7 @@ function PromotionsInner() {
               .map(([sku, { upc, months }]) => ({ sku, upc, months })),
           })),
       }));
-  }, [promotions, calYear, showOis, hideEdlp, brandFilter, statusFilter, repFilter]);
+  }, [promotions, calYear, showOis, role, hideEdlp, brandFilter, statusFilter, repFilter]);
 
   // ── Bulk builder handlers (Feature 2) ──────────────────────────────────────
 
@@ -1670,7 +1670,7 @@ function PromotionsInner() {
         </div>
 
         {/* Distributor OI section */}
-        {showOis && oiMatrixData.length > 0 && (
+        {(showOis || role === "client") && oiMatrixData.length > 0 && (
           <div className="overflow-x-auto rounded-xl border" style={{ borderColor: "#7c5a2e" }}>
             <table className="text-xs" style={{ minWidth: "max-content", width: "100%", borderCollapse: "collapse" }}>
               <colgroup>
@@ -1773,8 +1773,8 @@ function PromotionsInner() {
 
         {/* View toggle */}
         <div className="flex rounded-lg overflow-hidden border border-border text-sm">
-          <button onClick={() => setViewMode("list")} className={`px-4 py-2 ${viewMode === "list" ? "font-semibold text-white" : "text-muted-foreground hover:bg-secondary"}`} style={viewMode === "list" ? { background: "var(--foreground)" } : {}}>List</button>
           <button onClick={() => setViewMode("matrix")} className={`px-4 py-2 ${viewMode === "matrix" ? "font-semibold text-white" : "text-muted-foreground hover:bg-secondary"}`} style={viewMode === "matrix" ? { background: "var(--foreground)" } : {}}>Matrix</button>
+          <button onClick={() => setViewMode("list")} className={`px-4 py-2 ${viewMode === "list" ? "font-semibold text-white" : "text-muted-foreground hover:bg-secondary"}`} style={viewMode === "list" ? { background: "var(--foreground)" } : {}}>List</button>
         </div>
 
         {(role === "admin" || role === "rep") && (
