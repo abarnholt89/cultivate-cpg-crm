@@ -531,10 +531,22 @@ function PromotionsInner() {
     load();
   }, []);
 
+  // ── Archived-brand exclusion ────────────────────────────────────────────────
+  // allBrands is fetched with archived=false, so this set is always the active
+  // (non-archived) brand IDs. promotionsActive derives from it so all three
+  // full-reload setPromotions paths are covered without touching them.
+
+  const activeBrandIds = useMemo(() => new Set(allBrands.map((b) => b.id)), [allBrands]);
+
+  const promotionsActive = useMemo(
+    () => promotions.filter((r) => !r.brand_id || activeBrandIds.has(r.brand_id)),
+    [promotions, activeBrandIds]
+  );
+
   // ── Filter effect ──────────────────────────────────────────────────────────
 
   useEffect(() => {
-    let rows = [...promotions];
+    let rows = [...promotionsActive];
     if (brandFilter !== "all") rows = rows.filter((r) => r.brand_name === brandFilter);
     if (retailerFilter !== "all") rows = rows.filter((r) => r.retailer_name === retailerFilter);
     if (monthFilter !== "all") rows = rows.filter((r) => String(r.promo_month) === monthFilter);
@@ -544,7 +556,7 @@ function PromotionsInner() {
     if (scopeFilter === "distributor") rows = rows.filter(isDistributorRow);
     else if (scopeFilter === "retailer") rows = rows.filter((r) => !isDistributorRow(r));
     setFiltered(rows);
-  }, [promotions, brandFilter, retailerFilter, monthFilter, yearFilter, statusFilter, repFilter, scopeFilter]);
+  }, [promotionsActive, brandFilter, retailerFilter, monthFilter, yearFilter, statusFilter, repFilter, scopeFilter]);
 
   // ── Filter options ─────────────────────────────────────────────────────────
 
@@ -559,18 +571,18 @@ function PromotionsInner() {
   const retailerGroups = useMemo(() => groupRetailerActivations(retailerActivations), [retailerActivations]);
 
   const distributorOiKeys = useMemo(() => {
-    const rows = promotions.filter(isDistributorRow);
+    const rows = promotionsActive.filter(isDistributorRow);
     return new Set(rows.map((r) => [
       (r.brand_name || "").toLowerCase(),
       r.promo_year,
       r.promo_month,
     ].join("||")));
-  }, [promotions]);
+  }, [promotionsActive]);
 
   // ── Matrix data ────────────────────────────────────────────────────────────
 
   const matrixData = useMemo(() => {
-    const rows = promotions.filter(
+    const rows = promotionsActive.filter(
       (r) =>
         r.promo_year === calYear &&
         !isDistributorRow(r) &&
@@ -627,11 +639,11 @@ function PromotionsInner() {
               .map(([sku, { upc, months }]) => ({ sku, upc, months })),
           })),
       }));
-  }, [promotions, calYear, hideEdlp, brandFilter, retailerFilter, statusFilter, repFilter]);
+  }, [promotionsActive, calYear, hideEdlp, brandFilter, retailerFilter, statusFilter, repFilter]);
 
   const oiMatrixData = useMemo(() => {
     if (!showOis && role !== "client") return [];
-    const rows = promotions.filter(
+    const rows = promotionsActive.filter(
       (r) =>
         r.promo_year === calYear &&
         isDistributorRow(r) &&
@@ -676,7 +688,7 @@ function PromotionsInner() {
               .map(([sku, { upc, months }]) => ({ sku, upc, months })),
           })),
       }));
-  }, [promotions, calYear, showOis, role, hideEdlp, brandFilter, statusFilter, repFilter]);
+  }, [promotionsActive, calYear, showOis, role, hideEdlp, brandFilter, statusFilter, repFilter]);
 
   // ── Bulk builder handlers (Feature 2) ──────────────────────────────────────
 
