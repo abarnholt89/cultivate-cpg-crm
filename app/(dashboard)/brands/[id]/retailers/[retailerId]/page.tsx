@@ -1119,19 +1119,29 @@ const clientTimeline = useMemo<ClientTimelineItem[]>(() => {
                   })}
                 </div>
               ) : null}
-              <div className="mt-2">
-                <button
-                  type="button"
-                  onClick={() => toggleReaction(item.id)}
-                  className={`text-xs flex items-center gap-1 px-2 py-1 rounded-full border transition-colors ${
-                    reactions[item.id]?.includes(currentUserId ?? "")
-                      ? "bg-amber-50 border-amber-300 text-amber-700"
-                      : "border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600"
-                  }`}
-                >
-                  👍{reactions[item.id]?.length ? ` ${reactions[item.id].length}` : ""}
-                </button>
-              </div>
+              {(() => {
+                const myReaction = reactions[item.id]?.includes(currentUserId ?? "");
+                const count = reactions[item.id]?.length ?? 0;
+                return (
+                  <div className="mt-2">
+                    <button
+                      type="button"
+                      onClick={() => toggleReaction(item.id)}
+                      className="inline-flex items-center gap-1 text-xs rounded-full px-2 py-0.5 transition-all"
+                      style={
+                        myReaction
+                          ? { background: "rgba(245,158,11,0.15)", border: "1px solid #f59e0b", color: "#92400e", fontWeight: 600 }
+                          : count > 0
+                            ? { background: "transparent", border: "1px solid #d1d5db", color: "#6b7280" }
+                            : { background: "transparent", border: "1px dashed #d1d5db", color: "#9ca3af", opacity: 0.6 }
+                      }
+                      title={myReaction ? "Remove reaction" : "React with 👍"}
+                    >
+                      👍{count > 0 ? ` ${count}` : ""}
+                    </button>
+                  </div>
+                );
+              })()}
             </div>
           );
         })}
@@ -1196,19 +1206,29 @@ const clientTimeline = useMemo<ClientTimelineItem[]>(() => {
               })}
             </div>
           ) : null}
-          <div className="mt-2">
-            <button
-              type="button"
-              onClick={() => toggleReaction(m.id)}
-              className={`text-xs flex items-center gap-1 px-2 py-1 rounded-full border transition-colors ${
-                reactions[m.id]?.includes(currentUserId ?? "")
-                  ? "bg-amber-50 border-amber-300 text-amber-700"
-                  : "border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600"
-              }`}
-            >
-              👍{reactions[m.id]?.length ? ` ${reactions[m.id].length}` : ""}
-            </button>
-          </div>
+          {(() => {
+            const myReaction = reactions[m.id]?.includes(currentUserId ?? "");
+            const count = reactions[m.id]?.length ?? 0;
+            return (
+              <div className="mt-2">
+                <button
+                  type="button"
+                  onClick={() => toggleReaction(m.id)}
+                  className="inline-flex items-center gap-1 text-xs rounded-full px-2 py-0.5 transition-all"
+                  style={
+                    myReaction
+                      ? { background: "rgba(245,158,11,0.15)", border: "1px solid #f59e0b", color: "#92400e", fontWeight: 600 }
+                      : count > 0
+                        ? { background: "transparent", border: "1px solid #d1d5db", color: "#6b7280" }
+                        : { background: "transparent", border: "1px dashed #d1d5db", color: "#9ca3af", opacity: 0.6 }
+                  }
+                  title={myReaction ? "Remove reaction" : "React with 👍"}
+                >
+                  👍{count > 0 ? ` ${count}` : ""}
+                </button>
+              </div>
+            );
+          })()}
         </div>
       ))}
     </div>

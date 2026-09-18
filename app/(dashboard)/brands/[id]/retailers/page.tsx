@@ -2640,20 +2640,29 @@ function BrandRetailersInner() {
                                       })}
                                     </div>
                                   )}
-                                  <div className="pt-1">
-                                    <button
-                                      type="button"
-                                      onClick={() => toggleReaction(m.id)}
-                                      className="text-xs flex items-center gap-1 px-2 py-0.5 rounded-full border transition-colors"
-                                      style={
-                                        reactions[m.id]?.includes(userId ?? "")
-                                          ? { background: "rgba(245,158,11,0.1)", borderColor: "#f59e0b", color: "#b45309" }
-                                          : { background: "transparent", borderColor: "var(--border)", color: "var(--muted-foreground)" }
-                                      }
-                                    >
-                                      👍{reactions[m.id]?.length ? ` ${reactions[m.id].length}` : ""}
-                                    </button>
-                                  </div>
+                                  {(() => {
+                                    const myReaction = reactions[m.id]?.includes(userId ?? "");
+                                    const count = reactions[m.id]?.length ?? 0;
+                                    return (
+                                      <div className="pt-1.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleReaction(m.id)}
+                                          className="inline-flex items-center gap-1 text-xs rounded-full px-2 py-0.5 transition-all"
+                                          style={
+                                            myReaction
+                                              ? { background: "rgba(245,158,11,0.15)", border: "1px solid #f59e0b", color: "#92400e", fontWeight: 600 }
+                                              : count > 0
+                                                ? { background: "transparent", border: "1px solid var(--border)", color: "var(--muted-foreground)" }
+                                                : { background: "transparent", border: "1px dashed var(--border)", color: "var(--muted-foreground)", opacity: 0.5 }
+                                          }
+                                          title={myReaction ? "Remove reaction" : "React with 👍"}
+                                        >
+                                          👍{count > 0 ? ` ${count}` : ""}
+                                        </button>
+                                      </div>
+                                    );
+                                  })()}
                                 </>
                               )}
                             </div>

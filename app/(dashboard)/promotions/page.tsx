@@ -456,6 +456,7 @@ function PromotionsInner() {
   const [bulkSkus, setBulkSkus] = useState<SkuOption[]>([]);
   const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
   const [bulkForm, setBulkForm] = useState<BulkForm>(EMPTY_BULK_FORM);
+  const [bulkSelectedMonths, setBulkSelectedMonths] = useState<Set<number>>(new Set());
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkError, setBulkError] = useState("");
   const [bulkLoadingStep, setBulkLoadingStep] = useState(false);
@@ -739,36 +740,45 @@ function PromotionsInner() {
   async function saveBulkPromos() {
     if (bulkSelected.size === 0) { setBulkError("Select at least one SKU."); return; }
     if (!bulkForm.promo_type) { setBulkError("Promo type is required."); return; }
-    if (!bulkForm.start_date) { setBulkError("Start date is required."); return; }
+    if (bulkSelectedMonths.size === 0) { setBulkError("Select at least one month."); return; }
+    if (!bulkForm.promo_year) { setBulkError("Promo year is required."); return; }
     setBulkSaving(true);
     setBulkError("");
 
-    // Parse YYYY-MM-DD directly — new Date("YYYY-MM-DD") is UTC midnight which
-    // shifts getMonth()/getFullYear() by one day in US timezones.
-    const dateParts = bulkForm.start_date.split("-");
-    const promoYear = Number(bulkForm.promo_year) || parseInt(dateParts[0], 10);
-    const promoMonth = Number(bulkForm.promo_month) || parseInt(dateParts[1], 10);
-
+    const yearNum = parseInt(bulkForm.promo_year, 10);
     const selectedSkus = bulkSkus.filter((s) => bulkSelected.has(s.upc));
-    const insertRows = selectedSkus.map((sku) => ({
-      brand_id: bulkBrandId,
-      brand_name: bulkBrandName,
-      retailer_name: bulkRetailerName,
-      distributor: bulkRetailerDistributor,
-      cultivate_rep: bulkForm.cultivate_rep || null,
-      sku_description: sku.sku_description,
-      unit_upc: sku.upc,
-      promo_year: promoYear,
-      promo_month: promoMonth,
-      promo_name: bulkForm.promo_name.trim() || null,
-      promo_type: bulkForm.promo_type.trim(),
-      promo_status: bulkForm.promo_status,
-      start_date: bulkForm.start_date,
-      end_date: bulkForm.end_date || null,
-      discount_percent: bulkForm.discount_percent ? parseFloat(bulkForm.discount_percent) : null,
-      discount_amount: bulkForm.discount_amount ? parseFloat(bulkForm.discount_amount) : null,
-      notes: bulkForm.notes.trim() || null,
-    }));
+
+    // Build one row-set per selected month. Dates auto-computed to first/last of
+    // month so the rep doesn't have to type dates — edit individual rows later if needed.
+    const insertRows: object[] = [];
+    for (const month of Array.from(bulkSelectedMonths).sort((a, b) => a - b)) {
+      const mm = String(month).padStart(2, "0");
+      const startDate = `${yearNum}-${mm}-01`;
+      // new Date(year, month, 0) = last day of `month` (1-indexed), using local time
+      const lastDay = new Date(yearNum, month, 0).getDate();
+      const endDate = `${yearNum}-${mm}-${String(lastDay).padStart(2, "0")}`;
+      for (const sku of selectedSkus) {
+        insertRows.push({
+          brand_id: bulkBrandId,
+          brand_name: bulkBrandName,
+          retailer_name: bulkRetailerName,
+          distributor: bulkRetailerDistributor,
+          cultivate_rep: bulkForm.cultivate_rep || null,
+          sku_description: sku.sku_description,
+          unit_upc: sku.upc,
+          promo_year: yearNum,
+          promo_month: month,
+          promo_name: bulkForm.promo_name.trim() || null,
+          promo_type: bulkForm.promo_type.trim(),
+          promo_status: bulkForm.promo_status,
+          start_date: startDate,
+          end_date: endDate,
+          discount_percent: bulkForm.discount_percent ? parseFloat(bulkForm.discount_percent) : null,
+          discount_amount: bulkForm.discount_amount ? parseFloat(bulkForm.discount_amount) : null,
+          notes: bulkForm.notes.trim() || null,
+        });
+      }
+    }
 
     const { error } = await supabase.from("promotions_stage").insert(insertRows);
     if (error) { setBulkError(error.message); setBulkSaving(false); return; }
@@ -781,7 +791,7 @@ function PromotionsInner() {
     setBulkBrandId(""); setBulkBrandName(""); setBulkBrandUpcs([]);
     setBulkRetailerId(""); setBulkRetailerName(""); setBulkRetailerBanner(null); setBulkRetailerDistributor(null);
     setBulkAvailableRetailers([]); setBulkSkus([]); setBulkSelected(new Set());
-    setBulkForm(EMPTY_BULK_FORM);
+    setBulkForm(EMPTY_BULK_FORM); setBulkSelectedMonths(new Set());
     setBulkSaving(false);
   }
 
@@ -967,6 +977,63 @@ function PromotionsInner() {
     setGroupEditError("");
   }
 
+  function openDuplicateGroup(pg: RetailerPromoGroup, brandGroup: RetailerBrandGroup, group: RetailerGroup) {
+    const firstRow = pg.rows[0];
+    if (!firstRow) return;
+    const seenUpcs = new Set<string>();
+    const skus: SkuOption[] = pg.rows
+      .filter((r) => r.unit_upc && !seenUpcs.has(r.unit_upc!) && !!seenUpcs.add(r.unit_upc!))
+      .map((r) => ({ upc: r.unit_upc!, sku_description: r.sku_description || "" }));
+    setBulkBrandId(firstRow.brand_id ?? "");
+    setBulkBrandName(brandGroup.brand_name);
+    setBulkRetailerId(firstRow.retailer_id ?? "");
+    setBulkRetailerName(group.retailer_name);
+    setBulkRetailerBanner(group.retailer_banner);
+    setBulkRetailerDistributor(firstRow.distributor);
+    setBulkSkus(skus);
+    setBulkSelected(new Set(skus.map((s) => s.upc)));
+    setBulkSelectedMonths(new Set());
+    setBulkForm({
+      ...EMPTY_BULK_FORM,
+      promo_type: pg.promo_type || "TPR",
+      promo_name: pg.promo_name || "",
+      promo_status: pg.promo_status || "planned",
+      cultivate_rep: firstRow.cultivate_rep || "",
+      discount_percent: firstRow.discount_percent != null ? String(firstRow.discount_percent) : "",
+      discount_amount: firstRow.discount_amount != null ? String(firstRow.discount_amount) : "",
+      notes: firstRow.notes || "",
+    });
+    setBulkOpen(true);
+    setBulkStep(4);
+  }
+
+  function openDuplicateItem(item: PromotionRow) {
+    const skus: SkuOption[] = item.unit_upc
+      ? [{ upc: item.unit_upc, sku_description: item.sku_description || "" }]
+      : [];
+    setBulkBrandId(item.brand_id ?? "");
+    setBulkBrandName(item.brand_name || "");
+    setBulkRetailerId(item.retailer_id ?? "");
+    setBulkRetailerName(item.retailer_name || "");
+    setBulkRetailerBanner(item.retailer_banner ?? null);
+    setBulkRetailerDistributor(item.distributor);
+    setBulkSkus(skus);
+    setBulkSelected(new Set(skus.map((s) => s.upc)));
+    setBulkSelectedMonths(new Set());
+    setBulkForm({
+      ...EMPTY_BULK_FORM,
+      promo_type: item.promo_type || "TPR",
+      promo_name: item.promo_name || "",
+      promo_status: item.promo_status || "planned",
+      cultivate_rep: item.cultivate_rep || "",
+      discount_percent: item.discount_percent != null ? String(item.discount_percent) : "",
+      discount_amount: item.discount_amount != null ? String(item.discount_amount) : "",
+      notes: item.notes || "",
+    });
+    setBulkOpen(true);
+    setBulkStep(4);
+  }
+
   async function handleSaveGroupEdit() {
     if (!groupEditing || !groupEditForm || !groupEditInitial) return;
     const { pg, brandName, retailerName } = groupEditing;
@@ -1145,6 +1212,7 @@ function PromotionsInner() {
                       {(role === "admin" || role === "rep") && (
                         <div className="mt-2 flex items-center gap-3">
                           <button type="button" onClick={() => openEdit(item)} className="text-xs underline text-blue-600 hover:text-blue-800">Edit</button>
+                          <button type="button" onClick={() => openDuplicateItem(item)} className="text-xs underline text-green-700 hover:text-green-900">Copy</button>
                           {deletingItem === item ? (
                             <span className="flex items-center gap-1 text-xs">
                               <span className="text-gray-600">Delete?</span>
@@ -1238,6 +1306,7 @@ function PromotionsInner() {
                                         ) : (
                                           <>
                                             <button type="button" onClick={() => openGroupEdit(promoGroup, brandGroup.brand_name, group.retailer_name)} className="text-xs underline text-blue-600 hover:text-blue-800" title={`Edit shared fields for all ${promoSkuCount} SKUs in this promotion`}>Edit</button>
+                                            <button type="button" onClick={() => openDuplicateGroup(promoGroup, brandGroup, group)} className="text-xs underline text-green-700 hover:text-green-900" title="Duplicate this promotion to a new month">Copy</button>
                                             <button type="button" onClick={() => setDeletingPromoGroupKey(promoGroup.key)} className="text-gray-400 hover:text-red-500" title="Delete all SKUs in this promotion">🗑</button>
                                           </>
                                         )}
@@ -1258,6 +1327,7 @@ function PromotionsInner() {
                                           {(role === "admin" || role === "rep") && (
                                             <div className="mt-2 flex items-center gap-3">
                                               <button type="button" onClick={() => openEdit(item)} className="text-xs underline text-blue-600 hover:text-blue-800">Edit</button>
+                                              <button type="button" onClick={() => openDuplicateItem(item)} className="text-xs underline text-green-700 hover:text-green-900">Copy</button>
                                               {deletingItem === item ? (
                                                 <span className="flex items-center gap-1 text-xs">
                                                   <span className="text-gray-600">Delete?</span>
@@ -1301,7 +1371,7 @@ function PromotionsInner() {
       <div className="rounded-xl border border-border bg-card p-5 space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold text-foreground">Bulk Promo Builder</h2>
-          <button onClick={() => { setBulkOpen(false); setBulkStep(1); setBulkBrandId(""); setBulkRetailerId(""); }} className="text-sm text-muted-foreground hover:text-foreground">✕ Cancel</button>
+          <button onClick={() => { setBulkOpen(false); setBulkStep(1); setBulkBrandId(""); setBulkRetailerId(""); setBulkSelectedMonths(new Set()); }} className="text-sm text-muted-foreground hover:text-foreground">✕ Cancel</button>
         </div>
 
         {/* Step indicator */}
@@ -1429,38 +1499,6 @@ function PromotionsInner() {
                 </select>
               </div>
               <div>
-                <label className="block text-xs text-muted-foreground mb-1">Start Date *</label>
-                <input
-                  type="date"
-                  value={bulkForm.start_date}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    const parts = val.split("-");
-                    setBulkForm((f) => ({
-                      ...f,
-                      start_date: val,
-                      promo_year: parts[0] ?? f.promo_year,
-                      promo_month: parts[1] ? String(parseInt(parts[1], 10)) : f.promo_month,
-                    }));
-                  }}
-                  className={inputCls}
-                  style={inputStyle}
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-muted-foreground mb-1">End Date</label>
-                <input type="date" value={bulkForm.end_date} onChange={(e) => setBulkForm((f) => ({ ...f, end_date: e.target.value }))} className={inputCls} style={inputStyle} />
-              </div>
-              <div>
-                <label className="block text-xs text-muted-foreground mb-1">Promo Month *</label>
-                <select value={bulkForm.promo_month} onChange={(e) => setBulkForm((f) => ({ ...f, promo_month: e.target.value }))} className={inputCls} style={inputStyle}>
-                  <option value="">— Month —</option>
-                  {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-                    <option key={m} value={String(m)}>{monthLabelLong(m)}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
                 <label className="block text-xs text-muted-foreground mb-1">Promo Year *</label>
                 <select value={bulkForm.promo_year} onChange={(e) => setBulkForm((f) => ({ ...f, promo_year: e.target.value }))} className={inputCls} style={inputStyle}>
                   <option value="">— Year —</option>
@@ -1480,10 +1518,38 @@ function PromotionsInner() {
                 <input type="text" value={bulkForm.notes} onChange={(e) => setBulkForm((f) => ({ ...f, notes: e.target.value }))} className={inputCls} style={inputStyle} />
               </div>
             </div>
+            {/* Multi-month picker — one checkbox per month, auto first/last dates on save */}
+            <div>
+              <label className="block text-xs text-muted-foreground mb-2">Promo Month(s) * <span className="opacity-60">(dates auto set to first–last of each month)</span></label>
+              <div className="grid grid-cols-6 gap-1.5">
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                  <label key={m} className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg border cursor-pointer text-xs transition-colors select-none"
+                    style={bulkSelectedMonths.has(m)
+                      ? { background: "var(--foreground)", color: "var(--background)", borderColor: "var(--foreground)" }
+                      : { borderColor: "var(--border)", color: "var(--muted-foreground)" }
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={bulkSelectedMonths.has(m)}
+                      onChange={(e) => {
+                        const next = new Set(bulkSelectedMonths);
+                        e.target.checked ? next.add(m) : next.delete(m);
+                        setBulkSelectedMonths(next);
+                      }}
+                    />
+                    {monthLabel(m)}
+                  </label>
+                ))}
+              </div>
+            </div>
             {bulkError && <p className="text-sm text-red-600">{bulkError}</p>}
             <div className="flex gap-3 items-center">
               <button onClick={saveBulkPromos} disabled={bulkSaving} className="px-5 py-2 rounded-lg text-sm font-medium disabled:opacity-50" style={{ background: "var(--foreground)", color: "var(--background)" }}>
-                {bulkSaving ? "Saving…" : `Save ${bulkSelected.size} Promo${bulkSelected.size !== 1 ? "s" : ""}`}
+                {bulkSaving ? "Saving…" : bulkSelectedMonths.size > 1
+                  ? `Save ${bulkSelected.size * bulkSelectedMonths.size} rows (${bulkSelectedMonths.size}mo × ${bulkSelected.size} SKU${bulkSelected.size !== 1 ? "s" : ""})`
+                  : `Save ${bulkSelected.size} Promo${bulkSelected.size !== 1 ? "s" : ""}`}
               </button>
               <button onClick={() => setBulkStep(3)} className="text-xs text-muted-foreground hover:text-foreground">← Back to SKUs</button>
             </div>
