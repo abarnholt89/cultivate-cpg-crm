@@ -520,9 +520,15 @@ function PromotionsInner() {
         // Do NOT call setFiltered here — the filter useEffect owns that
         // to ensure other filters are always applied consistently.
 
-        // Default calYear to most recent year in data
-        const mostRecentYear = rows.reduce((max, r) => Math.max(max, r.promo_year), new Date().getFullYear());
-        setCalYear(mostRecentYear);
+        // Default to the most recent year with data that is <= current year.
+        // Future years (e.g. 2027 planning rows) exist as selectable options
+        // but should not hijack the default view away from the current year.
+        const currentYear = new Date().getFullYear();
+        const defaultYear = rows.reduce(
+          (max, r) => r.promo_year <= currentYear ? Math.max(max, r.promo_year) : max,
+          currentYear
+        );
+        setCalYear(defaultYear);
       } catch (err: any) {
         setStatus(err?.message || "Failed to load promotions.");
       } finally {
@@ -625,8 +631,9 @@ function PromotionsInner() {
       const m = row.promo_month;
       if (m >= 1 && m <= 12) {
         if (!monthsMap[m]) monthsMap[m] = [];
-        // Prefer promo_text_raw; else compose promo_name + promo_type (BUG B fix)
-        const text = row.promo_text_raw?.trim() ||
+        // Prefer promo_text_raw, then notes (actual allowance e.g. "15% OI + 5% MCB"),
+        // then compose promo_name + promo_type as a final fallback.
+        const text = row.promo_text_raw?.trim() || row.notes?.trim() ||
           [row.promo_name, row.promo_type].filter(Boolean).join(" · ") || "";
         if (text && !monthsMap[m].includes(text)) monthsMap[m].push(text);
       }
@@ -676,7 +683,7 @@ function PromotionsInner() {
       const m = row.promo_month;
       if (m >= 1 && m <= 12) {
         if (!skuEntry.months[m]) skuEntry.months[m] = [];
-        const text = row.promo_text_raw?.trim() ||
+        const text = row.promo_text_raw?.trim() || row.notes?.trim() ||
           [row.promo_name, row.promo_type].filter(Boolean).join(" · ") || "";
         if (text && !skuEntry.months[m].includes(text)) skuEntry.months[m].push(text);
       }
