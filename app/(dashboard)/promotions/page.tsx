@@ -639,6 +639,16 @@ function PromotionsInner() {
       }
     }
 
+    // Debug: log months map for each SKU so we can verify accumulation vs render
+    console.log("[Matrix] rows entering accumulation:", rows.length,
+      "| Earth Fare/HGS months:",
+      (() => {
+        const ef = retailerMap.get("Earth Fare");
+        const hgs = ef?.brands.get("Hotgirlsauce");
+        return hgs ? Array.from(hgs.entries()).map(([sku, e]) => `${sku.slice(0,12)}→${Object.keys(e.months)}`) : "not found";
+      })()
+    );
+
     return Array.from(retailerMap.entries())
       .sort(([, a], [, b]) => a.displayName.localeCompare(b.displayName))
       .map(([, entry]) => ({
@@ -1618,7 +1628,10 @@ function PromotionsInner() {
     ws["!cols"] = [{ wch: 28 }, { wch: 24 }, { wch: 40 }, { wch: 16 }, ...Array.from({ length: 12 }, () => ({ wch: 18 }))];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, `Promo Matrix ${calYear}`);
-    XLSX.writeFile(wb, `promo-matrix-${calYear}.xlsx`);
+    const brandSlug = brandFilter === "all"
+      ? "All-Brands"
+      : brandFilter.replace(/[/\\:*?"<>|]+/g, "").replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "All-Brands";
+    XLSX.writeFile(wb, `promo-matrix-${brandSlug}-${calYear}.xlsx`);
   }
 
   function renderMatrix() {
