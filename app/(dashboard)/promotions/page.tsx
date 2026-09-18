@@ -600,7 +600,10 @@ function PromotionsInner() {
     }>();
 
     for (const row of rows) {
-      const rKey = row.retailer_id ?? row.retailer_name ?? "Unknown";
+      // Use retailer_name as primary key — retailer_id is absent from bulk-builder
+      // inserts, causing retailer_id ?? retailer_name to produce different keys for
+      // the same retailer when some rows were created via different paths.
+      const rKey = row.retailer_name ?? row.retailer_id ?? "Unknown";
       if (!retailerMap.has(rKey)) {
         retailerMap.set(rKey, {
           displayName: row.retailer_banner?.trim() || row.retailer_name || "Unknown",
@@ -622,7 +625,9 @@ function PromotionsInner() {
       const m = row.promo_month;
       if (m >= 1 && m <= 12) {
         if (!monthsMap[m]) monthsMap[m] = [];
-        const text = row.promo_text_raw?.trim() || row.promo_type || "";
+        // Prefer promo_text_raw; else compose promo_name + promo_type (BUG B fix)
+        const text = row.promo_text_raw?.trim() ||
+          [row.promo_name, row.promo_type].filter(Boolean).join(" · ") || "";
         if (text && !monthsMap[m].includes(text)) monthsMap[m].push(text);
       }
     }
@@ -671,7 +676,8 @@ function PromotionsInner() {
       const m = row.promo_month;
       if (m >= 1 && m <= 12) {
         if (!skuEntry.months[m]) skuEntry.months[m] = [];
-        const text = row.promo_text_raw?.trim() || row.promo_type || "";
+        const text = row.promo_text_raw?.trim() ||
+          [row.promo_name, row.promo_type].filter(Boolean).join(" · ") || "";
         if (text && !skuEntry.months[m].includes(text)) skuEntry.months[m].push(text);
       }
     }
