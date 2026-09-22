@@ -163,6 +163,12 @@ function monthLabelLong(month: number) {
 
 function prettyDate(value: string | null) {
   if (!value) return "—";
+  // Parse YYYY-MM-DD parts directly so we never hit UTC midnight → local-day rollback.
+  const parts = value.split("-");
+  if (parts.length === 3) {
+    const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+    if (!Number.isNaN(d.getTime())) return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  }
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
   return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
@@ -765,21 +771,24 @@ function PromotionsInner() {
     if (!bulkForm.promo_type) { setBulkError("Promo type is required."); return; }
     if (bulkSelectedMonths.size === 0) { setBulkError("Select at least one month."); return; }
     if (!bulkForm.promo_year) { setBulkError("Promo year is required."); return; }
+    const hasSpecificDates = !!(bulkForm.start_date || bulkForm.end_date);
+    if (hasSpecificDates && bulkSelectedMonths.size > 1) {
+      setBulkError("Specific dates apply to a single month — select only one month, or clear Start/End dates for multi-month.");
+      return;
+    }
     setBulkSaving(true);
     setBulkError("");
 
     const yearNum = parseInt(bulkForm.promo_year, 10);
     const selectedSkus = bulkSkus.filter((s) => bulkSelected.has(s.upc));
 
-    // Build one row-set per selected month. Dates auto-computed to first/last of
-    // month so the rep doesn't have to type dates — edit individual rows later if needed.
     const insertRows: object[] = [];
     for (const month of Array.from(bulkSelectedMonths).sort((a, b) => a - b)) {
       const mm = String(month).padStart(2, "0");
-      const startDate = `${yearNum}-${mm}-01`;
-      // new Date(year, month, 0) = last day of `month` (1-indexed), using local time
+      // Use rep-entered dates if provided; otherwise auto-compute first→last of month.
+      const startDate = bulkForm.start_date || `${yearNum}-${mm}-01`;
       const lastDay = new Date(yearNum, month, 0).getDate();
-      const endDate = `${yearNum}-${mm}-${String(lastDay).padStart(2, "0")}`;
+      const endDate = bulkForm.end_date || `${yearNum}-${mm}-${String(lastDay).padStart(2, "0")}`;
       for (const sku of selectedSkus) {
         insertRows.push({
           brand_id: bulkBrandId,
@@ -1540,10 +1549,22 @@ function PromotionsInner() {
                 <label className="block text-xs text-muted-foreground mb-1">Notes</label>
                 <input type="text" value={bulkForm.notes} onChange={(e) => setBulkForm((f) => ({ ...f, notes: e.target.value }))} className={inputCls} style={inputStyle} />
               </div>
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Start Date <span className="opacity-60">(optional)</span></label>
+                <input type="date" value={bulkForm.start_date} onChange={(e) => setBulkForm((f) => ({ ...f, start_date: e.target.value }))} className={inputCls} style={inputStyle} />
+              </div>
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">End Date <span className="opacity-60">(optional)</span></label>
+                <input type="date" value={bulkForm.end_date} onChange={(e) => setBulkForm((f) => ({ ...f, end_date: e.target.value }))} className={inputCls} style={inputStyle} />
+              </div>
             </div>
-            {/* Multi-month picker — one checkbox per month, auto first/last dates on save */}
+            {/* Multi-month picker — one checkbox per month. When specific dates are entered, switches to single-select. */}
             <div>
-              <label className="block text-xs text-muted-foreground mb-2">Promo Month(s) * <span className="opacity-60">(dates auto set to first–last of each month)</span></label>
+              {(bulkForm.start_date || bulkForm.end_date) ? (
+                <label className="block text-xs text-muted-foreground mb-2">Promo Month * <span className="opacity-60">(one month only when specific dates are set)</span></label>
+              ) : (
+                <label className="block text-xs text-muted-foreground mb-2">Promo Month(s) * <span className="opacity-60">(dates auto set to first–last of each month)</span></label>
+              )}
               <div className="grid grid-cols-6 gap-1.5">
                 {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
                   <label key={m} className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg border cursor-pointer text-xs transition-colors select-none"
@@ -1557,9 +1578,14 @@ function PromotionsInner() {
                       className="sr-only"
                       checked={bulkSelectedMonths.has(m)}
                       onChange={(e) => {
-                        const next = new Set(bulkSelectedMonths);
-                        e.target.checked ? next.add(m) : next.delete(m);
-                        setBulkSelectedMonths(next);
+                        if (bulkForm.start_date || bulkForm.end_date) {
+                          // Single-select mode when specific dates are entered
+                          setBulkSelectedMonths(e.target.checked ? new Set([m]) : new Set());
+                        } else {
+                          const next = new Set(bulkSelectedMonths);
+                          e.target.checked ? next.add(m) : next.delete(m);
+                          setBulkSelectedMonths(next);
+                        }
                       }}
                     />
                     {monthLabel(m)}
