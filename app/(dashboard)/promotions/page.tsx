@@ -161,17 +161,16 @@ function monthLabelLong(month: number) {
   return new Date(2026, month - 1, 1).toLocaleString(undefined, { month: "long" });
 }
 
+const MONTH_NAMES_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 function prettyDate(value: string | null) {
   if (!value) return "—";
-  // Parse YYYY-MM-DD parts directly so we never hit UTC midnight → local-day rollback.
   const parts = value.split("-");
   if (parts.length === 3) {
-    const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
-    if (!Number.isNaN(d.getTime())) return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    const mo = parseInt(parts[1], 10);
+    const dy = parseInt(parts[2], 10);
+    if (mo >= 1 && mo <= 12 && dy >= 1) return `${MONTH_NAMES_SHORT[mo - 1]} ${dy}, ${parts[0]}`;
   }
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  return value;
 }
 
 function getPromoStart(rows: PromotionRow[]) {
