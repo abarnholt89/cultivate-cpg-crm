@@ -22,7 +22,7 @@ function buildMonthlyReportEmail({
   messageBody: string;
   folderUrl: string;
 }) {
-  const typeLabel = reportType === "distributor" ? "Distributor" : "SPINS";
+  const typeLabel = reportType === "distributor" ? "Distributor Depletion" : "SPINS";
   const escapedBody = escapeHtml(messageBody).replace(/\n/g, "<br>");
 
   return `<!DOCTYPE html>
@@ -30,7 +30,7 @@ function buildMonthlyReportEmail({
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Monthly ${typeLabel} Report — ${escapeHtml(brandName)}</title>
+  <title>${typeLabel} Monthly Report — ${escapeHtml(brandName)}</title>
 </head>
 <body style="margin:0;padding:0;background:#f4f6f8;font-family:Inter,Helvetica,Arial,sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f8;padding:32px 0;">
@@ -62,7 +62,7 @@ function buildMonthlyReportEmail({
             <td style="background:#f0faf6;padding:12px 32px;border-bottom:1px solid #e2e8f0;">
               <span style="font-size:13px;color:#4a5568;">
                 <strong style="color:#123b52;">${escapeHtml(brandName)}</strong>
-                &nbsp;·&nbsp;Monthly ${typeLabel} Report
+                &nbsp;·&nbsp;${typeLabel} Monthly Report
               </span>
             </td>
           </tr>
@@ -80,7 +80,7 @@ function buildMonthlyReportEmail({
               <a href="${folderUrl}"
                  style="display:inline-block;background:#123b52;color:#78f5cd;text-decoration:none;
                         font-size:14px;font-weight:600;padding:12px 24px;border-radius:8px;">
-                View Monthly Reports →
+                View ${typeLabel} Report →
               </a>
             </td>
           </tr>

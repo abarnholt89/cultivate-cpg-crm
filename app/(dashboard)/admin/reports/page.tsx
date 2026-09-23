@@ -164,7 +164,7 @@ export default function AdminReportsPage() {
 
   const withUrl = brands.filter((b) => b.monthly_sales_folder_url);
   const withoutUrl = brands.filter((b) => !b.monthly_sales_folder_url);
-  const typeLabel = modalType === "distributor" ? "Distributor" : "SPINS";
+  const typeLabel = modalType === "distributor" ? "Distributor Depletion Report" : "SPINS Report";
 
   return (
     <div className="p-6 space-y-8 max-w-5xl mx-auto">
@@ -182,13 +182,13 @@ export default function AdminReportsPage() {
           className="px-4 py-2 rounded-lg text-sm font-medium"
           style={{ background: "var(--foreground)", color: "var(--background)" }}
         >
-          Notify Distributor Contacts
+          Notify: Distributor Depletion Report
         </button>
         <button
           onClick={() => openModal("spins")}
           className="px-4 py-2 rounded-lg text-sm font-medium border"
         >
-          Notify SPINS Contacts
+          Notify: SPINS Report
         </button>
       </div>
 
@@ -360,7 +360,7 @@ export default function AdminReportsPage() {
               </>
             ) : (
               <>
-                <h2 className="text-lg font-semibold">Send Monthly {typeLabel} Report</h2>
+                <h2 className="text-lg font-semibold">Send {typeLabel}</h2>
 
                 <div>
                   <label className="block text-xs text-muted-foreground mb-1.5">Message</label>
@@ -369,7 +369,7 @@ export default function AdminReportsPage() {
                     value={messageBody}
                     onChange={(e) => { setMessageBody(e.target.value); setPreview(null); }}
                     rows={5}
-                    placeholder={`Hi team, your monthly ${typeLabel.toLowerCase()} sales data is ready…`}
+                    placeholder={`Hi team, your ${typeLabel} is ready…`}
                     className="w-full border rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-blue-400"
                   />
                 </div>
