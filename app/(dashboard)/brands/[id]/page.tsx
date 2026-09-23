@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabaseClient";
 
 type Role = "admin" | "rep" | "client" | null;
 
-type Brand = { id: string; name: string };
+type Brand = { id: string; name: string; monthly_sales_folder_url: string | null };
 
 type PipelineStatus =
   | ""
@@ -215,7 +215,7 @@ export default function BrandDashboardPage() {
 
       const { data: brandData, error: brandError } = await supabase
         .from("brands")
-        .select("id,name")
+        .select("id,name,monthly_sales_folder_url")
         .eq("id", brandId)
         .maybeSingle();
 
@@ -957,6 +957,25 @@ export default function BrandDashboardPage() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* ── Monthly Reports ─────────────────────────────────────────────────── */}
+      {brand?.monthly_sales_folder_url && (
+        <div className="border rounded-xl p-4 flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-base font-semibold">Monthly Reports</h2>
+            <p className="text-xs text-gray-500 mt-0.5">Monthly sales data in Google Drive</p>
+          </div>
+          <a
+            href={brand.monthly_sales_folder_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap"
+            style={{ background: "var(--foreground)", color: "var(--background)" }}
+          >
+            Monthly Reports →
+          </a>
         </div>
       )}
     </div>
