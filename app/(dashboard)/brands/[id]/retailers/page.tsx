@@ -181,8 +181,8 @@ function accountStatusLabel(status: AccountStatus | undefined) {
     case "active_maintain_and_grow":       return "Active - Maintain & Grow";
     case "awaiting_submission_opportunity": return "Awaiting Submission Opportunity";
     case "in_process":                     return "In Process";
-    case "retailer_declined":              return "Retailer Declined";
-    case "not_a_target_account":           return "Not a Target Account";
+    case "retailer_declined":              return "Retailer Said No";
+    case "not_a_target_account":           return "Not Our Target";
     case "working_to_secure_anchor_account": return "Distributor Required";
     // legacy
     case "active_account":                 return "Active Account";
@@ -272,8 +272,8 @@ const STATUS_FILTERS: Array<{ value: string; label: string }> = [
   { value: "active_maintain_and_grow", label: "Active - Maintain & Grow" },
   { value: "awaiting_submission_opportunity", label: "Awaiting Submission Opportunity" },
   { value: "in_process", label: "In Process" },
-  { value: "retailer_declined", label: "Retailer Declined" },
-  { value: "not_a_target_account", label: "Not a Target Account" },
+  { value: "retailer_declined", label: "Retailer Said No" },
+  { value: "not_a_target_account", label: "Not Our Target" },
   { value: "working_to_secure_anchor_account", label: "Distributor Required" },
   { value: "upcoming", label: "Upcoming Reviews (30d)" },
   { value: "submitted_any", label: "Submitted Accounts" },
@@ -1982,9 +1982,10 @@ function BrandRetailersInner() {
                             <option value="active_maintain_and_grow">Active - Maintain &amp; Grow</option>
                             <option value="awaiting_submission_opportunity">Awaiting Submission Opportunity</option>
                             <option value="in_process">In Process</option>
-                            <option value="retailer_declined">Retailer Declined</option>
-                            <option value="not_a_target_account">Not a Target Account</option>
                             <option value="working_to_secure_anchor_account">Distributor Required</option>
+                            <option disabled>────────────</option>
+                            <option value="retailer_declined">Retailer Said No</option>
+                            <option value="not_a_target_account">Not Our Target</option>
                           </select>
 
                           {moreOpen && (

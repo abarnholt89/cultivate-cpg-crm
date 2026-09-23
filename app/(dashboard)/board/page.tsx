@@ -125,8 +125,8 @@ const STATUS_OPTIONS = [
   { value: "active_maintain_and_grow", label: "Active - Maintain & Grow" },
   { value: "awaiting_submission_opportunity", label: "Awaiting Submission Opportunity" },
   { value: "in_process", label: "In Process" },
-  { value: "retailer_declined", label: "Retailer Declined" },
-  { value: "not_a_target_account", label: "Not a Target Account" },
+  { value: "retailer_declined", label: "Retailer Said No" },
+  { value: "not_a_target_account", label: "Not Our Target" },
   { value: "working_to_secure_anchor_account", label: "Distributor Required" },
 ];
 
@@ -192,8 +192,8 @@ function statusShortLabel(status: string): string {
     case "active_maintain_and_grow":       return "Active M&G";
     case "awaiting_submission_opportunity": return "Awaiting";
     case "in_process":                     return "In Process";
-    case "retailer_declined":              return "Declined";
-    case "not_a_target_account":           return "Not Target";
+    case "retailer_declined":              return "Said No";
+    case "not_a_target_account":           return "Not Our Target";
     case "working_to_secure_anchor_account": return "Distributor";
     default:                               return "—";
   }
@@ -1444,8 +1444,9 @@ export default function AllBrandsBoardPage() {
                             <option value="in_process">In Process</option>
                             <option value="active_maintain_and_grow">Active M&amp;G</option>
                             <option value="working_to_secure_anchor_account">Anchor</option>
-                            <option value="not_a_target_account">Not Target</option>
-                            <option value="retailer_declined">Declined</option>
+                            <option disabled>────────────</option>
+                            <option value="retailer_declined">Said No</option>
+                            <option value="not_a_target_account">Not Our Target</option>
                           </select>
                           <button
                             type="button"
