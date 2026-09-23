@@ -145,6 +145,7 @@ export async function POST(req: Request) {
     const { data: brands, error: brandsError } = await admin
       .from("brands")
       .select("id,name,monthly_sales_folder_url")
+      .eq("archived", false)
       .order("name");
 
     if (brandsError) {

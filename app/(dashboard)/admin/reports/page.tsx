@@ -78,6 +78,7 @@ export default function AdminReportsPage() {
     const { data } = await supabase
       .from("brands")
       .select("id,name,monthly_sales_folder_url")
+      .eq("archived", false)
       .order("name");
     setBrands((data ?? []) as BrandRow[]);
   }
