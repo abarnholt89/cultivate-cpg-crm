@@ -672,7 +672,7 @@ export default function BrandDashboardPage() {
       )}
 
       {/* ── KPI tiles ───────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+      <div className={`grid grid-cols-2 gap-4 ${brand?.monthly_sales_folder_url ? "md:grid-cols-3 lg:grid-cols-6" : "md:grid-cols-3 lg:grid-cols-5"}`}>
         <SummaryCard
           label="Upcoming Reviews"
           value={summary.upcomingReviews}
@@ -709,6 +709,19 @@ export default function BrandDashboardPage() {
             happeningRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
           }}
         />
+        {brand?.monthly_sales_folder_url && (
+          <a
+            href={brand.monthly_sales_folder_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-lg p-4 transition block hover:opacity-90"
+            style={{ background: "#78f5cd", border: "1px solid #4de8b8" }}
+          >
+            <div className="text-2xl" style={{ color: "#123b52" }}>↗</div>
+            <div className="text-sm font-semibold mt-1" style={{ color: "#123b52" }}>Monthly Reports</div>
+            <div className="text-xs mt-0.5" style={{ color: "#0d2e40", opacity: 0.7 }}>View Folder</div>
+          </a>
+        )}
       </div>
 
       {/* ── Main two-column layout ────────────────────────────────────────── */}
@@ -960,24 +973,7 @@ export default function BrandDashboardPage() {
         </div>
       )}
 
-      {/* ── Monthly Reports ─────────────────────────────────────────────────── */}
-      {brand?.monthly_sales_folder_url && (
-        <div className="border rounded-xl p-4 flex items-center justify-between gap-4">
-          <div>
-            <h2 className="text-base font-semibold">Monthly Reports</h2>
-            <p className="text-xs text-gray-500 mt-0.5">Monthly sales data in Google Drive</p>
-          </div>
-          <a
-            href={brand.monthly_sales_folder_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap"
-            style={{ background: "var(--foreground)", color: "var(--background)" }}
-          >
-            Monthly Reports →
-          </a>
-        </div>
-      )}
+
     </div>
   );
 }
