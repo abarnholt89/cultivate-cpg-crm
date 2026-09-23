@@ -176,28 +176,36 @@ export default function BrandRosterPage() {
     else { setSortCol(col); setSortDir("asc"); }
   }
 
-  const activeCount = brands.filter((b) => b.brand_status !== "Inactive").length;
-  const inactiveCount = brands.filter((b) => b.brand_status === "Inactive").length;
+  // Unified inactive definition: brand_status='Inactive' OR archived=true.
+  // Trigger-paused brands (archived=true, status may differ) count as inactive.
+  const isInactiveBrand = (b: BrandRow) => b.brand_status === "Inactive" || b.archived;
+
+  const activeCount = brands.filter((b) => !isInactiveBrand(b)).length;
+  const inactiveCount = brands.filter((b) => isInactiveBrand(b)).length;
 
   const visible = useMemo(() => {
     let rows = [...brands];
 
-    // Filter
-    if (filterTab === "active") rows = rows.filter((b) => b.brand_status !== "Inactive");
-    else if (filterTab === "inactive") rows = rows.filter((b) => b.brand_status === "Inactive");
+    // Filter — uses unified inactive definition so archived=true rows go to "Inactive" tab
+    if (filterTab === "active") rows = rows.filter((b) => !isInactiveBrand(b));
+    else if (filterTab === "inactive") rows = rows.filter((b) => isInactiveBrand(b));
 
     // Search
     const q = search.trim().toLowerCase();
     if (q) rows = rows.filter((b) => b.name.toLowerCase().includes(q));
 
-    // Sort
+    // Sort — status column normalizes to "Active"/"Inactive" so archived=true rows
+    // cluster with brand_status='Inactive' rows regardless of their raw status value.
     rows.sort((a, b) => {
       let va = "";
       let vb = "";
       if (sortCol === "name") { va = a.name; vb = b.name; }
       else if (sortCol === "lead") { va = a.cultivate_lead ?? ""; vb = b.cultivate_lead ?? ""; }
       else if (sortCol === "tier") { va = a.tier ?? ""; vb = b.tier ?? ""; }
-      else if (sortCol === "status") { va = a.brand_status ?? ""; vb = b.brand_status ?? ""; }
+      else if (sortCol === "status") {
+        va = isInactiveBrand(a) ? "Inactive" : "Active";
+        vb = isInactiveBrand(b) ? "Inactive" : "Active";
+      }
       const cmp = va.localeCompare(vb);
       return sortDir === "asc" ? cmp : -cmp;
     });
@@ -286,7 +294,7 @@ export default function BrandRosterPage() {
               {visible.map((brand) => {
                 const draft = drafts[brand.id];
                 if (!draft) return null;
-                const isInactive = draft.brand_status === "Inactive";
+                const isInactive = isInactiveBrand(brand);
                 const isSaving = saving[brand.id] ?? false;
                 const rowErr = rowErrors[brand.id];
                 const pendingArchive = archiveConfirm === brand.id;
