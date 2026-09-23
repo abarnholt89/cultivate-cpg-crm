@@ -278,6 +278,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </Link>
           ) : null}
 
+          {(role === "admin" || role === "rep") ? (
+            <Link href="/admin/roster" className={linkClass("/admin/roster")}>
+              <span className="relative inline-block pb-1">
+                Roster
+                {isActive("/admin/roster") && (
+                  <span className="absolute -bottom-[17px] left-0 h-[3px] w-full rounded-full bg-primary" />
+                )}
+              </span>
+            </Link>
+          ) : null}
+
           {role === "admin" ? (
             <Link href="/admin/reports" className={linkClass("/admin/reports")}>
               <span className="relative inline-block pb-1">

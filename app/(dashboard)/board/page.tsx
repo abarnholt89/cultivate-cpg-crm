@@ -71,6 +71,9 @@ type BrandSummary = {
   name: string;
   retailerCount: number;
   lastActivity: string | null;
+  cultivate_lead: string | null;
+  tier: string | null;
+  brand_status: string | null;
 };
 
 type RepProfile = {
@@ -389,7 +392,7 @@ export default function AllBrandsBoardPage() {
     setRole(resolvedRole);
 
     const { data: brandsData, error: brandsError } = await supabase
-      .from("brands").select("id, name").eq("archived", false).order("name", { ascending: true });
+      .from("brands").select("id,name,cultivate_lead,tier,brand_status").eq("archived", false).order("name", { ascending: true });
 
     if (brandsError) { setError(brandsError.message); setLoading(false); return; }
     let brands = (brandsData as Brand[]) ?? [];
@@ -511,6 +514,9 @@ export default function AllBrandsBoardPage() {
           name: brand.name,
           retailerCount: uniqueRetailers,
           lastActivity: msgLastActivity[brand.id] ?? null,
+          cultivate_lead: (brand as any).cultivate_lead ?? null,
+          tier: (brand as any).tier ?? null,
+          brand_status: (brand as any).brand_status ?? null,
         };
       })
 ;
@@ -1362,6 +1368,21 @@ export default function AllBrandsBoardPage() {
                     <span className="text-xs shrink-0" style={{ color: "var(--muted-foreground)" }}>
                       {brand.retailerCount} retailer{brand.retailerCount !== 1 ? "s" : ""}
                     </span>
+                    {/* Internal roster badge — lead/tier/status, admin+rep only, never shown to clients */}
+                    {(role === "admin" || role === "rep") && (brand.tier || brand.brand_status === "Inactive") && (
+                      brand.brand_status === "Inactive" ? (
+                        <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0"
+                          style={{ background: "#fecaca", color: "#991b1b" }}>
+                          Inactive
+                        </span>
+                      ) : brand.tier ? (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0"
+                          style={{ background: "var(--muted)", color: "var(--muted-foreground)" }}>
+                          Tier {brand.tier}
+                          {brand.cultivate_lead ? ` · ${brand.cultivate_lead}` : ""}
+                        </span>
+                      ) : null
+                    )}
                     {/* Staleness badge — shows in every mode. Hidden for clients
                         so it doesn't show up on /board for brand owners. */}
                     {role !== "client" && (

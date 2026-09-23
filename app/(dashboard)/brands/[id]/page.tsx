@@ -7,7 +7,14 @@ import { supabase } from "@/lib/supabaseClient";
 
 type Role = "admin" | "rep" | "client" | null;
 
-type Brand = { id: string; name: string; monthly_sales_folder_url: string | null };
+type Brand = {
+  id: string;
+  name: string;
+  monthly_sales_folder_url: string | null;
+  cultivate_lead: string | null;
+  tier: string | null;
+  brand_status: string | null;
+};
 
 type PipelineStatus =
   | ""
@@ -215,7 +222,7 @@ export default function BrandDashboardPage() {
 
       const { data: brandData, error: brandError } = await supabase
         .from("brands")
-        .select("id,name,monthly_sales_folder_url")
+        .select("id,name,monthly_sales_folder_url,cultivate_lead,tier,brand_status")
         .eq("id", brandId)
         .maybeSingle();
 
@@ -617,6 +624,32 @@ export default function BrandDashboardPage() {
             ) : null}
           </p>
           {error ? <div className="text-red-600 text-sm mt-2">{error}</div> : null}
+          {/* Internal-only status badge — never visible to client role */}
+          {role !== null && role !== "client" && (brand?.brand_status || brand?.cultivate_lead || brand?.tier) && (
+            <div className="flex items-center gap-2 mt-2 flex-wrap">
+              <span className="text-xs text-muted-foreground font-medium">Cultivate:</span>
+              {brand?.cultivate_lead && (
+                <span className="text-xs text-muted-foreground">{brand.cultivate_lead}</span>
+              )}
+              {brand?.tier && (
+                <span className="text-xs px-1.5 py-0.5 rounded font-medium"
+                  style={{ background: "var(--muted)", color: "var(--muted-foreground)" }}>
+                  Tier {brand.tier}
+                </span>
+              )}
+              {brand?.brand_status === "Inactive" ? (
+                <span className="text-xs px-2 py-0.5 rounded font-bold uppercase"
+                  style={{ background: "#fecaca", color: "#991b1b" }}>
+                  Inactive
+                </span>
+              ) : brand?.brand_status === "Active" ? (
+                <span className="text-xs px-1.5 py-0.5 rounded"
+                  style={{ background: "#dcfce7", color: "#15803d" }}>
+                  Active
+                </span>
+              ) : null}
+            </div>
+          )}
         </div>
 
         <div className="flex gap-2 text-sm flex-wrap">
