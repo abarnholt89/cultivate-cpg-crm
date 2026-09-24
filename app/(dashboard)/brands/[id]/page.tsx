@@ -14,6 +14,7 @@ type Brand = {
   cultivate_lead: string | null;
   tier: string | null;
   brand_status: string | null;
+  message_notifications_enabled: boolean | null;
 };
 
 type PipelineStatus =
@@ -81,6 +82,7 @@ type ManualTimingRow = {
 
 type MsgSummary = {
   count: number;
+  latest_id: string | null;
   latest_at: string | null;
   latest_sender: string | null;
   latest_body: string | null;
@@ -199,8 +201,13 @@ export default function BrandDashboardPage() {
   const [recentOnlyFilter, setRecentOnlyFilter] = useState(false);
   const [promotionRows, setPromotionRows] = useState<PromotionRow[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
+  const [userFullName, setUserFullName] = useState<string | null>(null);
   const [dismissedReviewKeys, setDismissedReviewKeys] = useState<Set<string>>(new Set());
   const [submissionRows, setSubmissionRows] = useState<SubmissionRow[]>([]);
+  const [reactions, setReactions] = useState<Record<string, string[]>>({});
+  const [replyCompose, setReplyCompose] = useState<Record<string, string>>({});
+  const [replySending, setReplySending] = useState<Record<string, boolean>>({});
+  const [replyOpen, setReplyOpen] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!brandId) return;
@@ -214,15 +221,16 @@ export default function BrandDashboardPage() {
       if (userId) {
         const { data: profileData } = await supabase
           .from("profiles")
-          .select("role")
+          .select("role,full_name")
           .eq("id", userId)
           .maybeSingle();
         setRole((profileData?.role as Role) ?? "client");
+        setUserFullName((profileData as { role: string; full_name: string | null } | null)?.full_name ?? null);
       }
 
       const { data: brandData, error: brandError } = await supabase
         .from("brands")
-        .select("id,name,monthly_sales_folder_url,cultivate_lead,tier,brand_status")
+        .select("id,name,monthly_sales_folder_url,cultivate_lead,tier,brand_status,message_notifications_enabled")
         .eq("id", brandId)
         .maybeSingle();
 
@@ -352,17 +360,34 @@ export default function BrandDashboardPage() {
       const byRetailer: Record<string, MsgSummary> = {};
       allMsgs.forEach((m) => {
         if (!byRetailer[m.retailer_id]) {
-          byRetailer[m.retailer_id] = { count: 0, latest_at: null, latest_sender: null, latest_body: null };
+          byRetailer[m.retailer_id] = { count: 0, latest_id: null, latest_at: null, latest_sender: null, latest_body: null };
         }
         byRetailer[m.retailer_id].count += 1;
         // messages are already ordered newest-first, so first one encountered is latest
         if (!byRetailer[m.retailer_id].latest_at) {
+          byRetailer[m.retailer_id].latest_id = m.id;
           byRetailer[m.retailer_id].latest_at = m.created_at;
           byRetailer[m.retailer_id].latest_sender = m.sender_name;
           byRetailer[m.retailer_id].latest_body = m.body ?? null;
         }
       });
       setMessagesByRetailer(byRetailer);
+
+      // Load 👍 reactions for the latest message per retailer
+      const latestIds = Object.values(byRetailer).map((s) => s.latest_id).filter(Boolean) as string[];
+      if (latestIds.length > 0) {
+        const { data: rxData } = await supabase
+          .from("message_reactions")
+          .select("message_id,user_id")
+          .in("message_id", latestIds)
+          .eq("reaction", "thumbs_up");
+        const rxMap: Record<string, string[]> = {};
+        ((rxData ?? []) as { message_id: string; user_id: string }[]).forEach((r) => {
+          if (!rxMap[r.message_id]) rxMap[r.message_id] = [];
+          rxMap[r.message_id].push(r.user_id);
+        });
+        setReactions(rxMap);
+      }
 
       // ── retailer name map ─────────────────────────────────────────────────
       const retailerIds = [
@@ -402,6 +427,102 @@ export default function BrandDashboardPage() {
 
     load();
   }, [brandId]);
+
+  // ── reply + reaction actions ──────────────────────────────────────────────
+
+  async function toggleReaction(messageId: string) {
+    if (!userId) return;
+    const alreadyLiked = reactions[messageId]?.includes(userId) ?? false;
+    setReactions((prev) => ({
+      ...prev,
+      [messageId]: alreadyLiked
+        ? (prev[messageId] ?? []).filter((uid) => uid !== userId)
+        : [...(prev[messageId] ?? []), userId],
+    }));
+    if (alreadyLiked) {
+      await supabase
+        .from("message_reactions")
+        .delete()
+        .eq("message_id", messageId)
+        .eq("user_id", userId)
+        .eq("reaction", "thumbs_up");
+    } else {
+      await supabase
+        .from("message_reactions")
+        .insert({ message_id: messageId, user_id: userId, reaction: "thumbs_up" });
+    }
+  }
+
+  async function sendReply(retailerId: string) {
+    const text = (replyCompose[retailerId] ?? "").trim();
+    if (!text || !brandId) return;
+    setReplySending((prev) => ({ ...prev, [retailerId]: true }));
+    const senderName = userFullName || "Cultivate";
+
+    const { data: insertedMsg, error: msgErr } = await supabase
+      .from("brand_retailer_messages")
+      .insert({
+        brand_id: brandId,
+        retailer_id: retailerId,
+        visibility: "client",
+        sender_id: userId,
+        sender_name: senderName,
+        body: text,
+      })
+      .select("id,created_at")
+      .single();
+
+    if (msgErr || !insertedMsg) {
+      setReplySending((prev) => ({ ...prev, [retailerId]: false }));
+      return;
+    }
+
+    // Optimistically update the What's New summary
+    setMessagesByRetailer((prev) => {
+      const existing = prev[retailerId] ?? { count: 0, latest_id: null, latest_at: null, latest_sender: null, latest_body: null };
+      return {
+        ...prev,
+        [retailerId]: {
+          ...existing,
+          count: existing.count + 1,
+          latest_id: insertedMsg.id,
+          latest_at: insertedMsg.created_at,
+          latest_sender: senderName,
+          latest_body: text,
+        },
+      };
+    });
+
+    setReplyCompose((prev) => ({ ...prev, [retailerId]: "" }));
+    setReplyOpen((prev) => ({ ...prev, [retailerId]: false }));
+    setReplySending((prev) => ({ ...prev, [retailerId]: false }));
+
+    // Fire client notification email (same path as retailers page)
+    if (brand?.message_notifications_enabled) {
+      try {
+        const retailer = retailersById[retailerId];
+        const retailerName = retailer?.banner?.trim() ? retailer.banner : retailer?.name ?? "Retailer";
+        const { data: emailRows } = await supabase.rpc("get_brand_client_emails", { p_brand_id: brandId });
+        const recipients = ((emailRows ?? []) as { email: string }[]).map((r) => r.email).filter(Boolean);
+        if (recipients.length > 0) {
+          await fetch("/api/send-client-email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              brand_name: brand!.name,
+              retailer_name: retailerName,
+              message_body: text,
+              recipients,
+              actor_name: senderName,
+              event_type: "message",
+              brand_id: brandId,
+              retailer_id: retailerId,
+            }),
+          });
+        }
+      } catch { /* non-fatal */ }
+    }
+  }
 
   // ── derived data ──────────────────────────────────────────────────────────
 
@@ -809,17 +930,22 @@ export default function BrandDashboardPage() {
                 const latestAt = msgInfo?.latest_at || row.submitted_date;
                 const latestSender = msgInfo?.latest_sender;
                 const msgCount = msgInfo?.count ?? 0;
+                const latestId = msgInfo?.latest_id ?? null;
+                const isRepOrAdmin = role === "admin" || role === "rep";
 
                 const sevenDaysAgo = nDaysAgoISO(7);
                 const twentyOneDaysAgo = nDaysAgoISO(21);
                 const isRecent = !!latestAt && latestAt >= sevenDaysAgo;
                 const isStale = !latestAt || latestAt < twentyOneDaysAgo;
 
+                const likeCount = latestId ? (reactions[latestId]?.length ?? 0) : 0;
+                const iLiked = !!(latestId && userId && reactions[latestId]?.includes(userId));
+                const isReplyOpen = replyOpen[row.retailer_id] ?? false;
+
                 return (
-                  <Link
+                  <div
                     key={row.id ?? `${row.retailer_id ?? "no-retailer"}-${index}`}
-                    href={`/brands/${brandId}/retailers#retailer-${row.retailer_id}`}
-                    className="block rounded-lg p-3 transition hover:bg-gray-50"
+                    className="rounded-lg p-3"
                     style={{
                       border: "1px solid #e5e7eb",
                       borderLeft: isRecent ? "3px solid #0F6E56" : "1px solid #e5e7eb",
@@ -836,24 +962,80 @@ export default function BrandDashboardPage() {
                         : "No recent activity"}
                     </div>
                     {row.notes ? (
-                      <div className="text-sm text-gray-700 mt-2 line-clamp-2">{row.notes}</div>
+                      <div className="text-sm text-gray-700 mt-2">{row.notes}</div>
                     ) : null}
-                    <div className="flex items-center justify-between mt-2">
+                    {msgInfo?.latest_body ? (
+                      <div className="text-xs text-gray-500 mt-2 whitespace-pre-wrap">{msgInfo.latest_body}</div>
+                    ) : null}
+
+                    {/* Action row: message count · 👍 · Reply · Open */}
+                    <div className="flex items-center gap-3 mt-2 flex-wrap">
                       <span className="text-xs text-gray-400">
                         {msgCount > 0
-                          ? `${msgCount} message${msgCount !== 1 ? "s" : ""} · last ${msgInfo?.latest_at ? relativeTime(msgInfo.latest_at) : "—"}`
+                          ? `${msgCount} message${msgCount !== 1 ? "s" : ""}`
                           : "No messages yet"}
                       </span>
-                      <span className="text-xs underline text-gray-500">Open retailer →</span>
+
+                      {isRepOrAdmin && latestId && (
+                        <button
+                          type="button"
+                          onClick={() => toggleReaction(latestId)}
+                          className="text-xs flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors"
+                          style={{
+                            background: iLiked ? "#dcfce7" : "transparent",
+                            color: iLiked ? "#15803d" : "#9ca3af",
+                            border: "1px solid",
+                            borderColor: iLiked ? "#86efac" : "#e5e7eb",
+                          }}
+                        >
+                          👍{likeCount > 0 ? ` ${likeCount}` : ""}
+                        </button>
+                      )}
+
+                      {isRepOrAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => setReplyOpen((prev) => ({ ...prev, [row.retailer_id]: !isReplyOpen }))}
+                          className="text-xs text-gray-400 hover:text-gray-700 transition-colors"
+                        >
+                          {isReplyOpen ? "Cancel" : "Reply"}
+                        </button>
+                      )}
+
+                      <Link
+                        href={`/brands/${brandId}/retailers#retailer-${row.retailer_id}`}
+                        className="text-xs underline text-gray-500 ml-auto"
+                      >
+                        Open →
+                      </Link>
                     </div>
-                    {msgInfo?.latest_body ? (
-                      <div className="text-xs font-medium text-gray-400 mt-1 truncate">
-                        {msgInfo.latest_body.length > 80
-                          ? msgInfo.latest_body.slice(0, 80) + "…"
-                          : msgInfo.latest_body}
+
+                    {/* Inline reply compose */}
+                    {isRepOrAdmin && isReplyOpen && (
+                      <div className="mt-2 space-y-1.5">
+                        <textarea
+                          rows={2}
+                          placeholder="Write a client-visible reply…"
+                          value={replyCompose[row.retailer_id] ?? ""}
+                          onChange={(e) => setReplyCompose((prev) => ({ ...prev, [row.retailer_id]: e.target.value }))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) sendReply(row.retailer_id);
+                          }}
+                          className="w-full text-xs rounded-lg px-2 py-1.5 resize-none focus:outline-none focus:ring-1"
+                          style={{ border: "1px solid #d1d5db", color: "#374151" }}
+                        />
+                        <button
+                          type="button"
+                          disabled={!replyCompose[row.retailer_id]?.trim() || !!replySending[row.retailer_id]}
+                          onClick={() => sendReply(row.retailer_id)}
+                          className="text-xs px-3 py-1 rounded-lg font-medium disabled:opacity-50"
+                          style={{ background: "#0F6E56", color: "#fff" }}
+                        >
+                          {replySending[row.retailer_id] ? "Sending…" : "Send reply"}
+                        </button>
                       </div>
-                    ) : null}
-                  </Link>
+                    )}
+                  </div>
                 );
               })}
             </div>

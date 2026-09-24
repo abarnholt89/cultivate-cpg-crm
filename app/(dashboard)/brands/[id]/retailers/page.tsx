@@ -1421,6 +1421,8 @@ function BrandRetailersInner() {
   }
 
   async function deleteMessage(messageId: string, retailerId: string, visibility: "client" | "internal") {
+    // message_reads has no confirmed FK cascade in live DB — clean up manually
+    await supabase.from("message_reads").delete().eq("message_id", messageId);
     const { error } = await supabase
       .from("brand_retailer_messages")
       .delete()
