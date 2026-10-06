@@ -1439,12 +1439,16 @@ function PromotionsInner() {
               <p className="text-sm text-muted-foreground">No authorized retailers found for this brand.</p>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-64 overflow-y-auto">
-                {bulkAvailableRetailers.map((r) => (
-                  <button key={r.id} onClick={() => handleBulkRetailerSelect(r)} className="text-left px-3 py-2 rounded-lg border text-sm hover:bg-secondary transition-colors" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
-                    <div className="font-medium truncate">{r.banner || r.name}</div>
-                    {r.banner && <div className="text-xs text-muted-foreground truncate">{r.name}</div>}
-                  </button>
-                ))}
+                {bulkAvailableRetailers.map((r) => {
+                  const banner = r.banner?.trim();
+                  const showBanner = !!banner && banner.toLowerCase() !== r.name.trim().toLowerCase();
+                  return (
+                    <button key={r.id} onClick={() => handleBulkRetailerSelect(r)} className="text-left px-3 py-2 rounded-lg border text-sm hover:bg-secondary transition-colors" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
+                      <div className="font-medium truncate">{showBanner ? banner : r.name}</div>
+                      {showBanner && <div className="text-xs text-muted-foreground truncate">{r.name}</div>}
+                    </button>
+                  );
+                })}
               </div>
             )}
             <button onClick={() => setBulkStep(1)} className="text-xs text-muted-foreground hover:text-foreground mt-2">← Back</button>

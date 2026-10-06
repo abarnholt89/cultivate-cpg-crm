@@ -328,13 +328,18 @@ export default function NewPromotionPage() {
                   ? "Not required for distributor promos"
                   : "Select retailer"}
               </option>
-              {retailers.map((retailer) => (
-                <option key={retailer.id} value={retailer.id}>
-                  {retailer.banner?.trim()
-                    ? `${retailer.banner} (${retailer.name})`
-                    : retailer.name}
-                </option>
-              ))}
+              {retailers.map((retailer) => {
+                const banner = retailer.banner?.trim();
+                const label =
+                  banner && banner.toLowerCase() !== retailer.name.trim().toLowerCase()
+                    ? `${retailer.name} — ${banner}`
+                    : retailer.name;
+                return (
+                  <option key={retailer.id} value={retailer.id}>
+                    {label}
+                  </option>
+                );
+              })}
             </select>
           </div>
 
