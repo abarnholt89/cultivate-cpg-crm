@@ -5,103 +5,6 @@ const APP_URL =
   process.env.NEXT_PUBLIC_SITE_URL ||
   process.env.NEXT_PUBLIC_APP_URL ||
   "https://cultivate-cpg-crm.vercel.app";
-const LOGO_URL = `${APP_URL}/cultivate-icon.jpeg`;
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function buildMonthlyReportEmail({
-  brandName,
-  reportType,
-  messageBody,
-  folderUrl,
-}: {
-  brandName: string;
-  reportType: string;
-  messageBody: string;
-  folderUrl: string;
-}) {
-  const typeLabel = reportType === "distributor" ? "Distributor Depletion" : "SPINS";
-  const escapedBody = escapeHtml(messageBody).replace(/\n/g, "<br>");
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${typeLabel} Monthly Report — ${escapeHtml(brandName)}</title>
-</head>
-<body style="margin:0;padding:0;background:#f4f6f8;font-family:Inter,Helvetica,Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f8;padding:32px 0;">
-    <tr>
-      <td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
-
-          <!-- Logo header -->
-          <tr>
-            <td style="background:#123b52;padding:24px 32px;">
-              <table cellpadding="0" cellspacing="0">
-                <tr>
-                  <td style="vertical-align:middle;padding-right:12px;">
-                    <img src="${LOGO_URL}" alt="The Hub" width="36" height="36"
-                         style="border-radius:6px;display:block;" />
-                  </td>
-                  <td style="vertical-align:middle;">
-                    <span style="color:#78f5cd;font-size:18px;font-weight:700;letter-spacing:-0.3px;">
-                      The Hub
-                    </span>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
-          <!-- Context bar -->
-          <tr>
-            <td style="background:#f0faf6;padding:12px 32px;border-bottom:1px solid #e2e8f0;">
-              <span style="font-size:13px;color:#4a5568;">
-                <strong style="color:#123b52;">${escapeHtml(brandName)}</strong>
-                &nbsp;·&nbsp;${typeLabel} Monthly Report
-              </span>
-            </td>
-          </tr>
-
-          <!-- Message body -->
-          <tr>
-            <td style="padding:32px 32px 24px;">
-              <div style="font-size:15px;line-height:1.6;color:#2d3748;">${escapedBody}</div>
-            </td>
-          </tr>
-
-          <!-- CTA button -->
-          <tr>
-            <td style="padding:0 32px 36px;">
-              <a href="${folderUrl}"
-                 style="display:inline-block;background:#123b52;color:#78f5cd;text-decoration:none;
-                        font-size:14px;font-weight:600;padding:12px 24px;border-radius:8px;">
-                View ${typeLabel} Report →
-              </a>
-            </td>
-          </tr>
-
-          <!-- Footer -->
-          <tr>
-            <td style="padding:20px 32px;border-top:1px solid #e2e8f0;">
-              <p style="margin:0;font-size:12px;color:#a0aec0;">
-                You're receiving this because you're a client of ${escapeHtml(brandName)} on The Hub.
-              </p>
-            </td>
-          </tr>
-
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`;
-}
-
 type BrandRow = { id: string; name: string; monthly_sales_folder_url: string | null };
 type EmailRow = { email: string };
 
@@ -111,6 +14,7 @@ export async function POST(req: Request) {
     const reportType: string = body.report_type ?? "distributor";
     const messageBody: string = body.message_body ?? "";
     const preview: boolean = body.preview === true;
+    const typeLabel = reportType === "distributor" ? "Distributor Depletion" : "SPINS";
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -178,31 +82,25 @@ export async function POST(req: Request) {
       if (preview) continue;
 
       for (const email of emails) {
-        const htmlBody = buildMonthlyReportEmail({
-          brandName: brand.name,
-          reportType,
-          messageBody,
-          folderUrl: brand.monthly_sales_folder_url!,
-        });
-
         let sendOk = false;
         let sendError: string | null = null;
 
         try {
-          const resp = await fetch(
-            `${supabaseUrl}/functions/v1/send-client-message-email`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                apikey: supabaseAnonKey,
-                Authorization: `Bearer ${supabaseAnonKey}`,
-              },
-              body: JSON.stringify({ recipients: [email], html_body: htmlBody }),
-            }
-          );
+          const resp = await fetch(`${APP_URL}/api/send-client-email`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              brand_name: brand.name,
+              message_body: `${messageBody}\n\n${typeLabel} Report: ${brand.monthly_sales_folder_url}`,
+              recipients: [email],
+              actor_name: "The Hub",
+              event_type: "message",
+              brand_id: brand.id,
+            }),
+          });
+          const result = await resp.json().catch(() => ({}));
           sendOk = resp.ok;
-          if (!resp.ok) sendError = `HTTP ${resp.status}`;
+          if (!resp.ok) sendError = result?.error || `HTTP ${resp.status}`;
         } catch (e) {
           sendError = e instanceof Error ? e.message : "send_error";
         }
