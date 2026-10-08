@@ -58,6 +58,13 @@ export default function AdminReportsPage() {
   const [sendResult, setSendResult] = useState<SendResult | null>(null);
   const [sendError, setSendError] = useState("");
 
+  // Test-send state — sends one email, to one brand's template, to a single address.
+  const [testBrandId, setTestBrandId] = useState("");
+  const [testEmail, setTestEmail] = useState("");
+  const [testSending, setTestSending] = useState(false);
+  const [testSentMsg, setTestSentMsg] = useState("");
+  const [testError, setTestError] = useState("");
+
   const messageRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -69,6 +76,7 @@ export default function AdminReportsPage() {
       if ((profile as { role: Role } | null)?.role !== "admin") { router.replace("/brands"); return; }
       setAuthorized(true);
       setAuthChecked(true);
+      setTestEmail(authData?.user?.email ?? "");
       await Promise.all([loadBrands(), loadSendLog()]);
     }
     check();
@@ -108,6 +116,9 @@ export default function AdminReportsPage() {
     setPreview(null);
     setSendResult(null);
     setSendError("");
+    setTestBrandId(brands[0]?.id ?? "");
+    setTestSentMsg("");
+    setTestError("");
   }
 
   async function fetchPreview() {
@@ -155,6 +166,34 @@ export default function AdminReportsPage() {
     setSendResult(null);
     setSendError("");
     setMessageBody("");
+    setTestSentMsg("");
+    setTestError("");
+  }
+
+  async function sendTest() {
+    setTestSending(true);
+    setTestError("");
+    setTestSentMsg("");
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      const jwt = session.session?.access_token;
+      const resp = await fetch("/api/send-monthly-reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({
+          report_type: modalType,
+          message_body: messageBody,
+          brand_id: testBrandId,
+          test_email: testEmail.trim(),
+        }),
+      });
+      const result = await resp.json();
+      if (!resp.ok) { setTestError(result.error ?? "Test send failed."); return; }
+      if (result.failed > 0) { setTestError("Send failed — check the send log below for the error."); return; }
+      setTestSentMsg(`Sent ✓ — check ${testEmail.trim()}`);
+    } finally {
+      setTestSending(false);
+    }
   }
 
   if (!authChecked) {
@@ -372,6 +411,40 @@ export default function AdminReportsPage() {
                     placeholder={`Hi team, your ${typeLabel} is ready…`}
                     className="w-full border rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-blue-400"
                   />
+                </div>
+
+                <div className="rounded-lg border border-dashed border-amber-400 p-3 space-y-2 bg-amber-50">
+                  <div className="text-xs font-medium text-amber-800">
+                    Test send — goes only to the email below, using one brand's real folder link.
+                  </div>
+                  <div className="flex gap-2">
+                    <select
+                      value={testBrandId}
+                      onChange={(e) => setTestBrandId(e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="">Select brand…</option>
+                      {brands.map((b) => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="email"
+                      value={testEmail}
+                      onChange={(e) => setTestEmail(e.target.value)}
+                      placeholder="you@example.com"
+                      className={inputCls}
+                    />
+                  </div>
+                  <button
+                    onClick={sendTest}
+                    disabled={testSending || !testBrandId || !testEmail.trim() || !messageBody.trim()}
+                    className="w-full py-1.5 rounded-lg text-xs font-semibold border border-amber-500 text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                  >
+                    {testSending ? "Sending test…" : "Send Test →"}
+                  </button>
+                  {testSentMsg && <div className="text-xs text-green-700">{testSentMsg}</div>}
+                  {testError && <div className="text-xs text-red-600">{testError}</div>}
                 </div>
 
                 {!preview && (

@@ -15,6 +15,9 @@ export async function POST(req: Request) {
     const messageBody: string = body.message_body ?? "";
     const preview: boolean = body.preview === true;
     const typeLabel = reportType === "distributor" ? "Distributor Depletion" : "SPINS";
+    // Optional test-send overrides — additive, no effect on the real send path when omitted.
+    const brandId: string = typeof body.brand_id === "string" ? body.brand_id : "";
+    const testEmail: string = typeof body.test_email === "string" ? body.test_email.trim() : "";
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -45,12 +48,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Admin only" }, { status: 403 });
     }
 
-    // Fetch all brands.
-    const { data: brands, error: brandsError } = await admin
+    // Fetch all brands (or a single one, for a test send).
+    let brandsQuery = admin
       .from("brands")
       .select("id,name,monthly_sales_folder_url")
       .eq("archived", false)
       .order("name");
+    if (brandId) brandsQuery = brandsQuery.eq("id", brandId);
+    const { data: brands, error: brandsError } = await brandsQuery;
 
     if (brandsError) {
       return NextResponse.json({ error: brandsError.message }, { status: 500 });
@@ -68,8 +73,14 @@ export async function POST(req: Request) {
         continue;
       }
 
-      const { data: emailRows } = await admin.rpc("get_brand_client_emails", { p_brand_id: brand.id });
-      const emails: string[] = ((emailRows ?? []) as EmailRow[]).map((r) => r.email).filter(Boolean);
+      // Test send: skip real client contacts entirely, send only to the override address.
+      let emails: string[];
+      if (testEmail) {
+        emails = [testEmail];
+      } else {
+        const { data: emailRows } = await admin.rpc("get_brand_client_emails", { p_brand_id: brand.id });
+        emails = ((emailRows ?? []) as EmailRow[]).map((r) => r.email).filter(Boolean);
+      }
 
       if (emails.length === 0) {
         totalSkipped++;
