@@ -102,6 +102,7 @@ export async function POST(req: Request) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               brand_name: brand.name,
+              retailer_name: `${typeLabel} Report`,
               message_body: `${messageBody}\n\n${typeLabel} Report: ${brand.monthly_sales_folder_url}`,
               recipients: [email],
               actor_name: "The Hub",
