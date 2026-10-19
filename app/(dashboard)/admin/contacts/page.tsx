@@ -58,7 +58,6 @@ export default function BrandContactsAdminPage() {
   const [newRowId, setNewRowId] = useState<string | null>(null);
 
   const [showInactive, setShowInactive] = useState(false);
-  const [expandedBrands, setExpandedBrands] = useState<Set<string>>(new Set());
   const [showOrphanPanel, setShowOrphanPanel] = useState(false);
   const [filterBrand, setFilterBrand] = useState("");
   const [filterLead, setFilterLead] = useState("");
@@ -192,14 +191,6 @@ export default function BrandContactsAdminPage() {
   }, [contacts, brandsMap, showInactive, filterBrand, filterLead, newRowId]);
 
   const totalVisible = groups.reduce((n, [, g]) => n + g.length, 0);
-
-  function toggleExpand(groupKey: string) {
-    setExpandedBrands((prev) => {
-      const next = new Set(prev);
-      next.has(groupKey) ? next.delete(groupKey) : next.add(groupKey);
-      return next;
-    });
-  }
 
   // ── toast ────────────────────────────────────────────────────────────────
 
@@ -385,13 +376,6 @@ export default function BrandContactsAdminPage() {
               const displayName = meta?.name ?? groupContacts[0]?.brand_name?.trim() ?? "(No Brand)";
               const inactive = isInactiveBrand(brandId);
               const orphan = isOrphan(brandId);
-              const isExpanded = expandedBrands.has(groupKey);
-
-              const primary = groupContacts.find((c) =>
-                c.role?.toLowerCase().includes("primary")
-              ) ?? groupContacts[0];
-              const visible = isExpanded ? groupContacts : [primary];
-              const hiddenCount = groupContacts.length - 1;
 
               return (
                 <tbody key={groupKey}>
@@ -430,22 +414,12 @@ export default function BrandContactsAdminPage() {
                             Active
                           </span>
                         ) : null}
-
-                        {hiddenCount > 0 && (
-                          <button
-                            onClick={() => toggleExpand(groupKey)}
-                            className="ml-auto text-xs hover:underline"
-                            style={{ color: "var(--muted-foreground)" }}
-                          >
-                            {isExpanded ? "↑ Collapse" : `↓ ${hiddenCount} more`}
-                          </button>
-                        )}
                       </div>
                     </td>
                   </tr>
 
                   {/* Contact rows */}
-                  {visible.map((c, idx) => (
+                  {groupContacts.map((c, idx) => (
                     <tr
                       key={c.id}
                       style={{
