@@ -8,6 +8,7 @@ type Role = "admin" | "rep" | "client" | "owner" | null;
 
 type BrandContact = {
   id: string;
+  brand_id: string | null;
   brand_name: string | null;
   contact_name: string | null;
   role: string | null;
@@ -20,6 +21,7 @@ type BrandContact = {
 };
 
 type BrandMeta = {
+  id: string;
   name: string;
   brand_status: string | null;
   cultivate_lead: string | null;
@@ -88,17 +90,17 @@ export default function BrandContactsAdminPage() {
     const [contactsRes, brandsRes] = await Promise.all([
       supabase
         .from("brand_contacts")
-        .select("id,brand_name,contact_name,role,notes,email,phone,is_day_to_day,website,created_at")
+        .select("id,brand_id,brand_name,contact_name,role,notes,email,phone,is_day_to_day,website,created_at")
         .order("brand_name", { ascending: true, nullsFirst: false }),
       supabase
         .from("brands")
-        .select("name,brand_status,cultivate_lead,archived"),
+        .select("id,name,brand_status,cultivate_lead,archived"),
     ]);
     if (contactsRes.error) { setError(contactsRes.error.message); setLoading(false); return; }
 
-    // Build lookup keyed by normalized brand name
+    // Build lookup keyed by brand_id
     const map = new Map<string, BrandMeta>();
-    (brandsRes.data ?? []).forEach((b: BrandMeta) => map.set(norm(b.name), b));
+    (brandsRes.data ?? []).forEach((b: BrandMeta) => map.set(b.id, b));
     setBrandsMap(map);
     setContacts((contactsRes.data as BrandContact[]) ?? []);
     setLoading(false);
@@ -106,17 +108,19 @@ export default function BrandContactsAdminPage() {
 
   // ── helpers ──────────────────────────────────────────────────────────────
 
-  const getMeta = (brandName: string | null) => brandsMap.get(norm(brandName));
+  const getMeta = (brandId: string | null) => (brandId ? brandsMap.get(brandId) : undefined);
 
-  const isInactiveBrand = (brandName: string | null) => {
-    const m = getMeta(brandName);
+  const isInactiveBrand = (brandId: string | null) => {
+    const m = getMeta(brandId);
     if (!m) return false;
     return m.brand_status === "Inactive" || m.archived;
   };
 
-  const isOrphan = (brandName: string | null) => {
-    if (!brandName?.trim()) return false;
-    return !brandsMap.has(norm(brandName));
+  // Orphan now means a dangling brand_id — it points at a brand row that no
+  // longer exists. A null brand_id (no link) is not an orphan.
+  const isOrphan = (brandId: string | null) => {
+    if (!brandId) return false;
+    return !brandsMap.has(brandId);
   };
 
   // Lead options from brands table (not from stale contact rows)
@@ -126,14 +130,15 @@ export default function BrandContactsAdminPage() {
     return [...leads].sort();
   }, [brandsMap]);
 
-  // Orphan brand names — brands in contacts not present in brands table
+  // Orphan contacts — brand_id set but not found in the brands table
+  // (a real integrity problem, distinct from "no brand linked yet")
   const orphanBrandNames = useMemo(() => {
     const seen = new Set<string>();
     const orphans: string[] = [];
     contacts.forEach((c) => {
-      if (c.brand_name?.trim() && isOrphan(c.brand_name) && !seen.has(c.brand_name)) {
-        seen.add(c.brand_name);
-        orphans.push(c.brand_name);
+      if (c.brand_id && isOrphan(c.brand_id) && !seen.has(c.brand_id)) {
+        seen.add(c.brand_id);
+        orphans.push(c.brand_name?.trim() || c.brand_id);
       }
     });
     return orphans.sort();
@@ -142,8 +147,8 @@ export default function BrandContactsAdminPage() {
 
   // Count of inactive brand groups (for toggle label)
   const inactiveBrandCount = useMemo(() => {
-    const names = new Set(contacts.map((c) => c.brand_name).filter(Boolean));
-    return [...names].filter((n) => isInactiveBrand(n)).length;
+    const ids = new Set(contacts.map((c) => c.brand_id).filter(Boolean) as string[]);
+    return [...ids].filter((id) => isInactiveBrand(id)).length;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contacts, brandsMap]);
 
@@ -155,35 +160,43 @@ export default function BrandContactsAdminPage() {
     );
 
     // Inactive brand filter
-    if (!showInactive) rows = rows.filter((c) => !isInactiveBrand(c.brand_name));
+    if (!showInactive) rows = rows.filter((c) => !isInactiveBrand(c.brand_id));
 
-    // Brand search
+    // Brand search (by display name, falling back to stored text if unlinked)
     const q = filterBrand.trim().toLowerCase();
-    if (q) rows = rows.filter((c) => norm(c.brand_name).includes(q));
+    if (q) rows = rows.filter((c) => {
+      const label = getMeta(c.brand_id)?.name ?? c.brand_name ?? "";
+      return norm(label).includes(q);
+    });
 
     // Lead filter (from brands map)
     if (filterLead) {
-      rows = rows.filter((c) => getMeta(c.brand_name)?.cultivate_lead === filterLead);
+      rows = rows.filter((c) => getMeta(c.brand_id)?.cultivate_lead === filterLead);
     }
 
-    // Group by brand_name
+    // Group by brand_id; contacts with no link fall back to their raw
+    // brand_name text, or "(No Brand)" when that's blank too.
     const map = new Map<string, BrandContact[]>();
     rows.forEach((c) => {
-      const key = c.brand_name?.trim() || "(No Brand)";
+      const key = c.brand_id ?? (c.brand_name?.trim() || "(No Brand)");
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(c);
     });
 
-    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
+    return [...map.entries()].sort(([aKey, aRows], [bKey, bRows]) => {
+      const aLabel = getMeta(aRows[0]?.brand_id ?? null)?.name ?? aRows[0]?.brand_name ?? aKey;
+      const bLabel = getMeta(bRows[0]?.brand_id ?? null)?.name ?? bRows[0]?.brand_name ?? bKey;
+      return aLabel.localeCompare(bLabel);
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contacts, brandsMap, showInactive, filterBrand, filterLead, newRowId]);
 
   const totalVisible = groups.reduce((n, [, g]) => n + g.length, 0);
 
-  function toggleExpand(brandName: string) {
+  function toggleExpand(groupKey: string) {
     setExpandedBrands((prev) => {
       const next = new Set(prev);
-      next.has(brandName) ? next.delete(brandName) : next.add(brandName);
+      next.has(groupKey) ? next.delete(groupKey) : next.add(groupKey);
       return next;
     });
   }
@@ -247,7 +260,7 @@ export default function BrandContactsAdminPage() {
     const { data, error: err } = await supabase
       .from("brand_contacts")
       .insert({ is_day_to_day: false })
-      .select("id,brand_name,contact_name,role,notes,email,phone,is_day_to_day,website,created_at")
+      .select("id,brand_id,brand_name,contact_name,role,notes,email,phone,is_day_to_day,website,created_at")
       .single();
     if (err) { showToast(`Add failed · ${err.message}`); return; }
     const row = data as BrandContact;
@@ -297,7 +310,7 @@ export default function BrandContactsAdminPage() {
         <div className="rounded-lg border px-4 py-3 text-sm" style={{ background: "#fff7ed", borderColor: "#fed7aa" }}>
           <div className="flex items-center justify-between">
             <span className="font-medium text-orange-800">
-              ⚠ {orphanBrandNames.length} brand{orphanBrandNames.length !== 1 ? "s" : ""} in Contacts not found in the brands table
+              ⚠ {orphanBrandNames.length} contact{orphanBrandNames.length !== 1 ? "s" : ""} linked to a brand_id that no longer exists
             </span>
             <button onClick={() => setShowOrphanPanel((p) => !p)}
               className="text-xs text-orange-700 hover:underline ml-4">
@@ -366,11 +379,13 @@ export default function BrandContactsAdminPage() {
               </tr>
             </thead>
 
-            {groups.map(([brandName, groupContacts]) => {
-              const meta = getMeta(brandName);
-              const inactive = isInactiveBrand(brandName);
-              const orphan = isOrphan(brandName) && brandName !== "(No Brand)";
-              const isExpanded = expandedBrands.has(brandName);
+            {groups.map(([groupKey, groupContacts]) => {
+              const brandId = groupContacts[0]?.brand_id ?? null;
+              const meta = getMeta(brandId);
+              const displayName = meta?.name ?? groupContacts[0]?.brand_name?.trim() ?? "(No Brand)";
+              const inactive = isInactiveBrand(brandId);
+              const orphan = isOrphan(brandId);
+              const isExpanded = expandedBrands.has(groupKey);
 
               const primary = groupContacts.find((c) =>
                 c.role?.toLowerCase().includes("primary")
@@ -379,7 +394,7 @@ export default function BrandContactsAdminPage() {
               const hiddenCount = groupContacts.length - 1;
 
               return (
-                <tbody key={brandName}>
+                <tbody key={groupKey}>
                   {/* Brand group header */}
                   <tr style={{
                     background: inactive ? "#fff1f2" : "var(--muted)",
@@ -388,7 +403,7 @@ export default function BrandContactsAdminPage() {
                     <td colSpan={N_COLS} className="px-3 py-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-semibold text-xs" style={{ color: "var(--foreground)" }}>
-                          {brandName}
+                          {displayName}
                         </span>
 
                         {orphan && (
@@ -418,7 +433,7 @@ export default function BrandContactsAdminPage() {
 
                         {hiddenCount > 0 && (
                           <button
-                            onClick={() => toggleExpand(brandName)}
+                            onClick={() => toggleExpand(groupKey)}
                             className="ml-auto text-xs hover:underline"
                             style={{ color: "var(--muted-foreground)" }}
                           >
