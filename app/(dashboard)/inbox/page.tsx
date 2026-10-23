@@ -569,7 +569,6 @@ if (clientMessagesResult.error) {
               .from("brand_category_review_dismissals")
               .select("category_review_id")
               .in("brand_id", calendarBrandIds)
-              .eq("dismissed_by_user_id", userId)
           : Promise.resolve({ data: [], error: null }),
         subMonthQueryPromise,
         submittedPairsQueryPromise,
