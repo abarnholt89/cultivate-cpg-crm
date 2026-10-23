@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
+import { notInBrandIdsFilter } from "@/lib/activeBrands";
 
 type Role = "admin" | "rep" | "client" | "owner" | null;
 
@@ -391,11 +392,19 @@ export default function AllBrandsBoardPage() {
     const resolvedRole = (profileData?.role as Role) ?? "client";
     setRole(resolvedRole);
 
-    const { data: brandsData, error: brandsError } = await supabase
-      .from("brands").select("id,name,cultivate_lead,tier,brand_status").eq("archived", false).order("name", { ascending: true });
+    // NOTE: brand_status="Inactive" (but archived=false) brands are intentionally kept here —
+    // the board renders a distinct "Inactive" badge for them (see brand.brand_status check
+    // below), so only archived=true brands are excluded from the board itself. Downstream
+    // activity queries (timing/worked/messages) use this same archived=true set to avoid
+    // fetching rows for brands the board will never display.
+    const { data: allBrandsData, error: brandsError } = await supabase
+      .from("brands").select("id,name,cultivate_lead,tier,brand_status,archived").order("name", { ascending: true });
 
     if (brandsError) { setError(brandsError.message); setLoading(false); return; }
-    let brands = (brandsData as Brand[]) ?? [];
+    const allBrands = (allBrandsData as (Brand & { archived: boolean | null })[]) ?? [];
+    const archivedBrandIds = new Set(allBrands.filter((b) => b.archived).map((b) => b.id));
+    const archivedBrandFilter = notInBrandIdsFilter(archivedBrandIds);
+    let brands = allBrands.filter((b) => !b.archived);
 
     // Clients only see brands they are explicitly associated with via brand_users
     if (resolvedRole === "client" || resolvedRole === "owner") {
@@ -411,11 +420,13 @@ export default function AllBrandsBoardPage() {
       }
     }
 
-    const { data: timing, error: timingErr } = await fetchAll<TimingRow>(() =>
-      supabase
+    const { data: timing, error: timingErr } = await fetchAll<TimingRow>(() => {
+      let q = supabase
         .from("brand_retailer_timing")
-        .select("id, brand_id, retailer_id, account_status, submitted_date, universal_category")
-    );
+        .select("id, brand_id, retailer_id, account_status, submitted_date, universal_category");
+      if (archivedBrandFilter) q = q.not("brand_id", "in", archivedBrandFilter);
+      return q;
+    });
 
     if (timingErr) { setError(timingErr); setLoading(false); return; }
 
@@ -432,11 +443,13 @@ export default function AllBrandsBoardPage() {
     // Using fetchAll (paginated) instead of a plain .select() so we never hit the 1 000-row
     // default limit — a system with many reps × many brands can easily exceed that, causing
     // entries (e.g. JJ's 46) to be silently truncated.
-    const workedPromise = fetchAll<WorkedEntry>(() =>
-      supabase
+    const workedPromise = fetchAll<WorkedEntry>(() => {
+      let q = supabase
         .from("brand_date_worked")
-        .select("brand_id, rep_id, worked_at, retailer_id")
-    );
+        .select("brand_id, rep_id, worked_at, retailer_id");
+      if (archivedBrandFilter) q = q.not("brand_id", "in", archivedBrandFilter);
+      return q;
+    });
 
     const [repsRes, retailerRepRes, msgActivityRes, allMsgActivityRes] = await Promise.all([
       supabase
@@ -451,18 +464,22 @@ export default function AllBrandsBoardPage() {
             .in("id", allRetailerIds)
         : Promise.resolve({ data: [] as { id: string; rep_owner_user_id: string | null }[], error: null }),
       // Client messages only — for the "Last activity" display label and per-retailer clock
-      fetchAll<{ brand_id: string; retailer_id: string; created_at: string; sender_id: string | null }>(() =>
-        supabase
+      fetchAll<{ brand_id: string; retailer_id: string; created_at: string; sender_id: string | null }>(() => {
+        let q = supabase
           .from("brand_retailer_messages")
           .select("brand_id, retailer_id, created_at, sender_id")
-          .eq("visibility", "client")
-      ),
+          .eq("visibility", "client");
+        if (archivedBrandFilter) q = q.not("brand_id", "in", archivedBrandFilter);
+        return q;
+      }),
       // All messages (client + internal) — for per-rep badge fallback so internal-only activity counts
-      fetchAll<{ brand_id: string; created_at: string; sender_id: string | null }>(() =>
-        supabase
+      fetchAll<{ brand_id: string; created_at: string; sender_id: string | null }>(() => {
+        let q = supabase
           .from("brand_retailer_messages")
-          .select("brand_id, created_at, sender_id")
-      ),
+          .select("brand_id, created_at, sender_id");
+        if (archivedBrandFilter) q = q.not("brand_id", "in", archivedBrandFilter);
+        return q;
+      }),
     ]);
 
     // Await the already-running worked promise (runs concurrently with the above)

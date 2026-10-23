@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { headers } from "next/headers";
 import { createClient } from "@supabase/supabase-js";
+import { isInactiveBrand } from "@/lib/activeBrands";
 
 async function authorizeRequest() {
   const headerStore = await headers();
@@ -109,6 +110,7 @@ async function runPromoAlerts() {
         id,
         name,
         archived,
+        brand_status,
         promo_alerts_enabled,
         promo_alert_test_mode,
         promo_alerts_live_date
@@ -126,7 +128,7 @@ async function runPromoAlerts() {
   for (const promo of promos ?? []) {
     const brand = promo.brands as any;
 
-    if (brand?.archived) continue;
+    if (isInactiveBrand(brand)) continue;
     if (!brand?.promo_alerts_enabled) continue;
 
     if (brand.promo_alerts_live_date && todayStr < brand.promo_alerts_live_date) {

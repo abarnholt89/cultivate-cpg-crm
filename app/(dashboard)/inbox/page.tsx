@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import StatusBadge from "@/components/StatusBadge";
+import { fetchInactiveBrandIds, notInBrandIdsFilter } from "@/lib/activeBrands";
 
 type Role = "admin" | "rep" | "client" | null;
 
@@ -313,29 +314,47 @@ export default function RepInboxPage() {
   ownedRetailerIdsRef.current = ownedRetailerIds;
 }
 
+// Rep-facing signals must exclude archived/inactive brands — fetched once per
+// load and applied as a NOT IN filter so each query stays DB-side (preserves
+// the exact head:true counts below rather than fetching rows to filter in JS).
+const inactiveBrandIds = await fetchInactiveBrandIds(supabase);
+const inactiveBrandFilter = notInBrandIdsFilter(inactiveBrandIds);
+
 const followUpCountPromise =
   nextRole === "rep"
     ? ownedRetailerIds.length === 0
       ? Promise.resolve({ count: 0, error: null })
-      : supabase
+      : (() => {
+          let q = supabase
+            .from("brand_retailer_timing")
+            .select("*", { count: "exact", head: true })
+            .in("retailer_id", ownedRetailerIds)
+            .lt("next_follow_up_at", new Date().toISOString());
+          if (inactiveBrandFilter) q = q.not("brand_id", "in", inactiveBrandFilter);
+          return q;
+        })()
+    : (() => {
+        let q = supabase
           .from("brand_retailer_timing")
           .select("*", { count: "exact", head: true })
-          .in("retailer_id", ownedRetailerIds)
-          .lt("next_follow_up_at", new Date().toISOString())
-    : supabase
-        .from("brand_retailer_timing")
-        .select("*", { count: "exact", head: true })
-        .lt("next_follow_up_at", new Date().toISOString());
+          .lt("next_follow_up_at", new Date().toISOString());
+        if (inactiveBrandFilter) q = q.not("brand_id", "in", inactiveBrandFilter);
+        return q;
+      })();
 
 const timingPromise =
   ownedRetailerIds.length === 0
     ? Promise.resolve({ data: [], error: null })
-    : supabase
-        .from("brand_retailer_timing")
-        .select(
-          "id,brand_id,retailer_id,account_status,category_review_date,reset_date,next_follow_up_at"
-        )
-        .in("retailer_id", ownedRetailerIds);
+    : (() => {
+        let q = supabase
+          .from("brand_retailer_timing")
+          .select(
+            "id,brand_id,retailer_id,account_status,category_review_date,reset_date,next_follow_up_at"
+          )
+          .in("retailer_id", ownedRetailerIds);
+        if (inactiveBrandFilter) q = q.not("brand_id", "in", inactiveBrandFilter);
+        return q;
+      })();
 
 const clientMessagesPromise =
   ownedRetailerIds.length === 0
@@ -353,24 +372,32 @@ const clientMessagesPromise =
 const calendarPromise =
   ownedRetailerIds.length === 0
     ? Promise.resolve({ data: [], error: null })
-    : supabase
-        .from("brand_category_review_view")
-        .select("brand_id,retailer_id,retailer_name,retailer_category_review_name,universal_category,review_date")
-        .in("retailer_id", ownedRetailerIds)
-        .not("review_date", "is", null)
-        .gte("review_date", prev30)
-        .lte("review_date", next30);
+    : (() => {
+        let q = supabase
+          .from("brand_category_review_view")
+          .select("brand_id,retailer_id,retailer_name,retailer_category_review_name,universal_category,review_date")
+          .in("retailer_id", ownedRetailerIds)
+          .not("review_date", "is", null)
+          .gte("review_date", prev30)
+          .lte("review_date", next30);
+        if (inactiveBrandFilter) q = q.not("brand_id", "in", inactiveBrandFilter);
+        return q;
+      })();
 
 const catTimingPromise =
   ownedRetailerIds.length === 0
     ? Promise.resolve({ data: [], error: null })
-    : supabase
-        .from("brand_retailer_category_timing")
-        .select("id,brand_id,retailer_id,category,category_review_date,reset_date")
-        .in("retailer_id", ownedRetailerIds)
-        .not("category_review_date", "is", null)
-        .gte("category_review_date", prev30)
-        .lte("category_review_date", next30);
+    : (() => {
+        let q = supabase
+          .from("brand_retailer_category_timing")
+          .select("id,brand_id,retailer_id,category,category_review_date,reset_date")
+          .in("retailer_id", ownedRetailerIds)
+          .not("category_review_date", "is", null)
+          .gte("category_review_date", prev30)
+          .lte("category_review_date", next30);
+        if (inactiveBrandFilter) q = q.not("brand_id", "in", inactiveBrandFilter);
+        return q;
+      })();
 
       const tasksBaseQuery = supabase
         .from("tasks")
@@ -397,6 +424,8 @@ const catTimingPromise =
         tasksQuery,
         timingPromise,
         clientMessagesPromise,
+        // NOTE: get_rep_aging_accounts is a DB-side RPC (not defined in this repo) and does
+        // not yet exclude archived/inactive brands — pending a direct fix to the function.
         supabase.rpc("get_rep_aging_accounts", {
           p_limit: 50,
           p_offset: 0,
