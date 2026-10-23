@@ -59,6 +59,7 @@ type CategoryReviewRow = {
   universal_category: string;
   review_date: string | null;
   reset_date: string | null;
+  category_review_id: string;
 };
 
 type AuthorizedRow = {
@@ -320,7 +321,7 @@ function BrandRetailersInner() {
   const [cardAttachments, setCardAttachments] = useState<Record<string, Record<string, AttachmentRow[]>>>({});
   const [signedImageUrls, setSignedImageUrls] = useState<Record<string, string>>({});
   // Category review dismissals
-  const [dismissedReviewKeys, setDismissedReviewKeys] = useState<Set<string>>(new Set());
+  const [dismissedReviewIds, setDismissedReviewIds] = useState<Set<string>>(new Set());
   const [cardDismissedOpen, setCardDismissedOpen] = useState<Record<string, boolean>>({});
   // Manual category review entries
   const [pendingManualReviews, setPendingManualReviews] = useState<Record<string, ManualReviewDraft[]>>({});
@@ -530,7 +531,7 @@ function BrandRetailersInner() {
       const { data: calendarData, error: calendarError } = await supabase
         .from("brand_category_review_view")
         .select(
-          "brand_id,retailer_id,retailer_name,retailer_category_review_name,universal_department,universal_category,review_date,reset_date"
+          "brand_id,retailer_id,retailer_name,retailer_category_review_name,universal_department,universal_category,review_date,reset_date,category_review_id"
         )
         .eq("brand_id", brandId);
 
@@ -573,24 +574,22 @@ function BrandRetailersInner() {
       setDateOverrides(overrideMap);
       setPendingDateEdits({});
 
-      const { data: dismissalData } = await supabase
+      const { data: dismissalData, error: dismissalError } = await supabase
         .from("brand_category_review_dismissals")
         .select("category_review_id")
         .eq("brand_id", brandId);
 
-      const dismissalCalIds = ((dismissalData ?? []) as { category_review_id: string }[])
-        .map((d) => d.category_review_id).filter(Boolean);
-
-      const dismissedKeys = new Set<string>();
-      if (dismissalCalIds.length) {
-        const { data: dismissalCalRows } = await supabase
-          .from("category_review_calendar")
-          .select("id,retailer_name,universal_category,retailer_category_review_name")
-          .in("id", dismissalCalIds);
-        ((dismissalCalRows ?? []) as { id: string; retailer_name: string; universal_category: string; retailer_category_review_name: string }[])
-          .forEach((c) => dismissedKeys.add(rowKey(c.retailer_name, c.universal_category, c.retailer_category_review_name)));
+      if (dismissalError) {
+        setStatus((prev) => prev || dismissalError.message);
       }
-      setDismissedReviewKeys(dismissedKeys);
+
+      setDismissedReviewIds(
+        new Set(
+          ((dismissalData ?? []) as { category_review_id: string }[])
+            .map((d) => d.category_review_id)
+            .filter(Boolean)
+        )
+      );
 
       const { data: manualData } = await supabase
         .from("brand_retailer_category_timing")
@@ -1267,30 +1266,12 @@ function BrandRetailersInner() {
     window.open(data.signedUrl, "_blank");
   }
 
-  async function lookupCalendarIdForReview(review: CategoryReviewRow): Promise<string | null> {
-    const { data } = await supabase
-      .from("category_review_calendar")
-      .select("id")
-      .eq("retailer_name", review.retailer_name)
-      .eq("retailer_category_review_name", review.retailer_category_review_name ?? "")
-      .eq("universal_category", review.universal_category)
-      .maybeSingle();
-    return (data as { id: string } | null)?.id ?? null;
-  }
-
   async function dismissReview(review: CategoryReviewRow) {
     if (!userId) return;
-    const key = rowKey(review.retailer_name, review.universal_category, review.retailer_category_review_name);
+    const calId = review.category_review_id;
 
     // Optimistic
-    setDismissedReviewKeys((prev) => new Set([...prev, key]));
-
-    const calId = await lookupCalendarIdForReview(review);
-    if (!calId) {
-      setDismissedReviewKeys((prev) => { const next = new Set(prev); next.delete(key); return next; });
-      setStatus("Could not find calendar entry for this review.");
-      return;
-    }
+    setDismissedReviewIds((prev) => new Set([...prev, calId]));
 
     const { error } = await supabase
       .from("brand_category_review_dismissals")
@@ -1300,9 +1281,9 @@ function BrandRetailersInner() {
       );
 
     if (error) {
-      setDismissedReviewKeys((prev) => {
+      setDismissedReviewIds((prev) => {
         const next = new Set(prev);
-        next.delete(key);
+        next.delete(calId);
         return next;
       });
       setStatus(error.message);
@@ -1310,17 +1291,14 @@ function BrandRetailersInner() {
   }
 
   async function restoreReview(review: CategoryReviewRow) {
-    const key = rowKey(review.retailer_name, review.universal_category, review.retailer_category_review_name);
+    const calId = review.category_review_id;
 
     // Optimistic
-    setDismissedReviewKeys((prev) => {
+    setDismissedReviewIds((prev) => {
       const next = new Set(prev);
-      next.delete(key);
+      next.delete(calId);
       return next;
     });
-
-    const calId = await lookupCalendarIdForReview(review);
-    if (!calId) return;
 
     const { error } = await supabase
       .from("brand_category_review_dismissals")
@@ -1329,7 +1307,7 @@ function BrandRetailersInner() {
       .eq("category_review_id", calId);
 
     if (error) {
-      setDismissedReviewKeys((prev) => new Set([...prev, key]));
+      setDismissedReviewIds((prev) => new Set([...prev, calId]));
       setStatus(error.message);
     }
   }
@@ -1813,12 +1791,10 @@ function BrandRetailersInner() {
             const headline = r.banner?.trim() ? r.banner : r.name;
             const allReviewRows = calendarMap[r.id] ?? [];
             const reviewRows = allReviewRows.filter(
-              (rev) => !dismissedReviewKeys.has(rowKey(rev.retailer_name, rev.universal_category, rev.retailer_category_review_name))
+              (rev) => !dismissedReviewIds.has(rev.category_review_id)
             );
             const dismissedCardRows = isRepOrAdmin
-              ? allReviewRows.filter((rev) =>
-                  dismissedReviewKeys.has(rowKey(rev.retailer_name, rev.universal_category, rev.retailer_category_review_name))
-                )
+              ? allReviewRows.filter((rev) => dismissedReviewIds.has(rev.category_review_id))
               : [];
             const authorized = authorizedMap[r.id];
             const hasLegacyNotes = !!row.notes?.trim();

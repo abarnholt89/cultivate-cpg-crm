@@ -21,13 +21,7 @@ type CategoryReviewRow = {
   universal_category: string;
   review_date: string | null;
   reset_date: string | null;
-};
-
-type CalendarLookup = {
-  id: string;
-  retailer_name: string;
-  universal_category: string;
-  retailer_category_review_name: string;
+  category_review_id: string;
 };
 
 type DateOverrideRow = {
@@ -84,7 +78,7 @@ export default function BrandCategoryReviewPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [brand, setBrand] = useState<Brand | null>(null);
   const [rows, setRows] = useState<CategoryReviewRow[]>([]);
-  const [dismissals, setDismissals] = useState<Set<string>>(new Set());
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
   const [dateOverrides, setDateOverrides] = useState<Record<string, DateOverrideRow>>({});
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
@@ -139,7 +133,7 @@ export default function BrandCategoryReviewPage() {
     const { data, error: reviewError } = await supabase
       .from("brand_category_review_view")
       .select(
-        "brand_id,retailer_id,retailer_name,retailer_category_review_name,universal_department,universal_category,review_date,reset_date"
+        "brand_id,retailer_id,retailer_name,retailer_category_review_name,universal_department,universal_category,review_date,reset_date,category_review_id"
       )
       .eq("brand_id", brandId)
       .order("review_date", { ascending: true, nullsFirst: false });
@@ -147,26 +141,21 @@ export default function BrandCategoryReviewPage() {
     if (reviewError) { setError(reviewError.message); return; }
     setRows((data as CategoryReviewRow[]) ?? []);
 
-    // Dismissals — fetch category_review_ids then join to calendar for text fields
-    const { data: dismissalData } = await supabase
+    // Dismissals
+    const { data: dismissalData, error: dismissalError } = await supabase
       .from("brand_category_review_dismissals")
       .select("category_review_id")
       .eq("brand_id", brandId);
 
-    const calIds = ((dismissalData ?? []) as { category_review_id: string }[])
-      .map((d) => d.category_review_id).filter(Boolean);
+    if (dismissalError) { setError((prev) => prev || dismissalError.message); }
 
-    const dismissedKeys = new Set<string>();
-    if (calIds.length) {
-      const { data: calRows } = await supabase
-        .from("category_review_calendar")
-        .select("id,retailer_name,universal_category,retailer_category_review_name")
-        .in("id", calIds);
-      ((calRows ?? []) as CalendarLookup[]).forEach((c) =>
-        dismissedKeys.add(rowKey(c.retailer_name, c.universal_category, c.retailer_category_review_name))
-      );
-    }
-    setDismissals(dismissedKeys);
+    setDismissedIds(
+      new Set(
+        ((dismissalData ?? []) as { category_review_id: string }[])
+          .map((d) => d.category_review_id)
+          .filter(Boolean)
+      )
+    );
 
     // Date overrides
     const { data: overrideData } = await supabase
@@ -183,23 +172,9 @@ export default function BrandCategoryReviewPage() {
     setDateOverrides(overrideMap);
   }
 
-  async function lookupCalendarId(row: CategoryReviewRow): Promise<string | null> {
-    const { data } = await supabase
-      .from("category_review_calendar")
-      .select("id")
-      .eq("retailer_name", row.retailer_name)
-      .eq("retailer_category_review_name", row.retailer_category_review_name ?? "")
-      .eq("universal_category", row.universal_category)
-      .maybeSingle();
-    return (data as { id: string } | null)?.id ?? null;
-  }
-
   async function dismiss(row: CategoryReviewRow) {
     if (!userId) return;
-    const key = rowKey(row.retailer_name, row.universal_category, row.retailer_category_review_name);
-
-    const calId = await lookupCalendarId(row);
-    if (!calId) { setError("Could not find calendar entry for this review."); return; }
+    const calId = row.category_review_id;
 
     const { error } = await supabase
       .from("brand_category_review_dismissals")
@@ -209,12 +184,11 @@ export default function BrandCategoryReviewPage() {
       );
 
     if (error) { setError(error.message); return; }
-    setDismissals((prev) => new Set([...prev, key]));
+    setDismissedIds((prev) => new Set([...prev, calId]));
   }
 
   async function undismiss(row: CategoryReviewRow) {
-    const calId = await lookupCalendarId(row);
-    if (!calId) return;
+    const calId = row.category_review_id;
 
     const { error } = await supabase
       .from("brand_category_review_dismissals")
@@ -223,10 +197,9 @@ export default function BrandCategoryReviewPage() {
       .eq("category_review_id", calId);
 
     if (error) { setError(error.message); return; }
-    const key = rowKey(row.retailer_name, row.universal_category, row.retailer_category_review_name);
-    setDismissals((prev) => {
+    setDismissedIds((prev) => {
       const next = new Set(prev);
-      next.delete(key);
+      next.delete(calId);
       return next;
     });
   }
@@ -310,8 +283,7 @@ export default function BrandCategoryReviewPage() {
     const next90 = addDaysISO(today, 90);
 
     return mergedRows.filter((row) => {
-      const key = rowKey(row.retailer_name, row.universal_category, row.retailer_category_review_name);
-      if (dismissals.has(key)) return false;
+      if (dismissedIds.has(row.category_review_id)) return false;
 
       const matchesSearch =
         !q ||
@@ -329,14 +301,12 @@ export default function BrandCategoryReviewPage() {
       if (dateFilter === "past") return row.review_date < today;
       return true;
     });
-  }, [mergedRows, dismissals, search, dateFilter]);
+  }, [mergedRows, dismissedIds, search, dateFilter]);
 
   const dismissedRows = useMemo(() => {
     if (!isRepOrAdmin) return [];
-    return mergedRows.filter((row) =>
-      dismissals.has(rowKey(row.retailer_name, row.universal_category, row.retailer_category_review_name))
-    );
-  }, [mergedRows, dismissals, isRepOrAdmin]);
+    return mergedRows.filter((row) => dismissedIds.has(row.category_review_id));
+  }, [mergedRows, dismissedIds, isRepOrAdmin]);
 
   const stats = useMemo(() => {
     const today = todayISO();
@@ -344,9 +314,7 @@ export default function BrandCategoryReviewPage() {
     const next90 = addDaysISO(today, 90);
     let next30Count = 0, next90Count = 0, pastDueCount = 0, missingCount = 0;
 
-    const activeRows = mergedRows.filter(
-      (r) => !dismissals.has(rowKey(r.retailer_name, r.universal_category, r.retailer_category_review_name))
-    );
+    const activeRows = mergedRows.filter((r) => !dismissedIds.has(r.category_review_id));
 
     activeRows.forEach((row) => {
       if (!row.review_date) { missingCount++; return; }
@@ -356,7 +324,7 @@ export default function BrandCategoryReviewPage() {
     });
 
     return { total: activeRows.length, next30: next30Count, next90: next90Count, pastDue: pastDueCount, missing: missingCount };
-  }, [mergedRows, dismissals]);
+  }, [mergedRows, dismissedIds]);
 
   if (!brandId) return <div className="p-6">No brand ID in URL.</div>;
 

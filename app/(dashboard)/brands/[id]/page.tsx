@@ -52,6 +52,7 @@ type CategoryReviewRow = {
   universal_category: string;
   review_date: string | null;
   reset_date: string | null;
+  category_review_id: string;
 };
 
 type Retailer = { id: string; name: string; banner: string | null };
@@ -202,7 +203,7 @@ export default function BrandDashboardPage() {
   const [promotionRows, setPromotionRows] = useState<PromotionRow[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
   const [userFullName, setUserFullName] = useState<string | null>(null);
-  const [dismissedReviewKeys, setDismissedReviewKeys] = useState<Set<string>>(new Set());
+  const [dismissedReviewIds, setDismissedReviewIds] = useState<Set<string>>(new Set());
   const [submissionRows, setSubmissionRows] = useState<SubmissionRow[]>([]);
   const [reactions, setReactions] = useState<Record<string, string[]>>({});
   const [replyCompose, setReplyCompose] = useState<Record<string, string>>({});
@@ -247,7 +248,7 @@ export default function BrandDashboardPage() {
           supabase
             .from("brand_category_review_view")
             .select(
-              "brand_id,retailer_id,retailer_name,retailer_category_review_name,universal_department,universal_category,review_date,reset_date"
+              "brand_id,retailer_id,retailer_name,retailer_category_review_name,universal_department,universal_category,review_date,reset_date,category_review_id"
             )
             .eq("brand_id", brandId),
           supabase
@@ -304,19 +305,17 @@ export default function BrandDashboardPage() {
       setPromotionRows((promotionsResponse.data as PromotionRow[]) ?? []);
       setSubmissionRows(((submissionsResponse.data ?? []) as unknown as SubmissionRow[]));
 
-      const dismissalCalIds = ((dismissalsResponse.data ?? []) as { category_review_id: string }[])
-        .map((d) => d.category_review_id).filter(Boolean);
-
-      const dismissedKeys = new Set<string>();
-      if (dismissalCalIds.length) {
-        const { data: dismissalCalRows } = await supabase
-          .from("category_review_calendar")
-          .select("retailer_name,universal_category,retailer_category_review_name")
-          .in("id", dismissalCalIds);
-        ((dismissalCalRows ?? []) as { retailer_name: string; universal_category: string; retailer_category_review_name: string }[])
-          .forEach((c) => dismissedKeys.add(`${c.retailer_name}||${c.universal_category}||${c.retailer_category_review_name ?? ""}`));
+      if (dismissalsResponse.error) {
+        setError((prev) => prev || dismissalsResponse.error.message);
       }
-      setDismissedReviewKeys(dismissedKeys);
+
+      setDismissedReviewIds(
+        new Set(
+          ((dismissalsResponse.data ?? []) as { category_review_id: string }[])
+            .map((d) => d.category_review_id)
+            .filter(Boolean)
+        )
+      );
 
       // ── activity banner ──────────────────────────────────────────────────
       const sevenDaysAgo = nDaysAgoISO(7);
@@ -567,18 +566,17 @@ export default function BrandDashboardPage() {
     category_label: string;
     date: string;
     retailer_id: string | null;
+    category_review_id: string | null;
   };
 
   const upcomingList = useMemo(() => {
     const today = todayISO();
     const prev30 = addDaysISO(today, -30);
     const next90 = addDaysISO(today, 90);
-    const dismissKey = (rn: string, uc: string, rcn: string | null) =>
-      `${rn}||${uc}||${rcn ?? ""}`;
 
     const calendarItems: ReviewActivityItem[] = calendarRows
       .filter((r) => !!r.review_date && isBetweenInclusive(r.review_date, prev30, next90))
-      .filter((r) => !dismissedReviewKeys.has(dismissKey(r.retailer_name, r.universal_category, r.retailer_category_review_name ?? null)))
+      .filter((r) => !dismissedReviewIds.has(r.category_review_id))
       .map((r) => {
         const ret = r.retailer_id ? retailersById[r.retailer_id] : null;
         const headline = ret?.banner?.trim() ? ret.banner : ret?.name ?? r.retailer_name;
@@ -591,6 +589,7 @@ export default function BrandDashboardPage() {
           category_label: r.retailer_category_review_name || r.universal_category,
           date: r.review_date!,
           retailer_id: r.retailer_id,
+          category_review_id: r.category_review_id,
           isPast: r.review_date! < today,
         };
       });
@@ -609,13 +608,14 @@ export default function BrandDashboardPage() {
           category_label: r.category || "Category Review",
           date: r.category_review_date!,
           retailer_id: r.retailer_id,
+          category_review_id: null,
           isPast: r.category_review_date! < today,
         };
       });
 
     return [...calendarItems, ...manualItems]
       .sort((a, b) => a.date.localeCompare(b.date));
-  }, [calendarRows, manualTimingRows, retailersById, dismissedReviewKeys]);
+  }, [calendarRows, manualTimingRows, retailersById, dismissedReviewIds]);
 
   const recentWorkflow = useMemo(() => {
     const sevenDaysAgo = nDaysAgoISO(7);
@@ -705,23 +705,27 @@ export default function BrandDashboardPage() {
 
   async function dismissReview(item: ReviewActivityItem) {
     if (!userId || !brandId) return;
-    const key = `${item.retailer_name}||${item.universal_category}||${item.retailer_category_review_name ?? ""}`;
-    setDismissedReviewKeys((prev) => new Set([...prev, key]));
+    const calId = item.category_review_id;
+    if (!calId) {
+      setError("This review has no linked calendar entry and can't be dismissed.");
+      return;
+    }
 
-    const { data: calRow } = await supabase
-      .from("category_review_calendar")
-      .select("id")
-      .eq("retailer_name", item.retailer_name)
-      .eq("retailer_category_review_name", item.retailer_category_review_name ?? "")
-      .eq("universal_category", item.universal_category)
-      .maybeSingle();
-    const calId = (calRow as { id: string } | null)?.id;
-    if (!calId) return;
+    setDismissedReviewIds((prev) => new Set([...prev, calId]));
 
-    await supabase.from("brand_category_review_dismissals").upsert(
+    const { error: upsertError } = await supabase.from("brand_category_review_dismissals").upsert(
       { brand_id: brandId, category_review_id: calId, dismissed_by_user_id: userId },
       { onConflict: "brand_id,category_review_id" }
     );
+
+    if (upsertError) {
+      setDismissedReviewIds((prev) => {
+        const next = new Set(prev);
+        next.delete(calId);
+        return next;
+      });
+      setError(upsertError.message);
+    }
   }
 
   if (!brandId) return <div className="p-6">No brand ID in URL.</div>;
