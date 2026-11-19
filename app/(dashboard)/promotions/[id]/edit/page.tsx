@@ -243,7 +243,7 @@ export default function EditPromotionPage() {
       return;
     }
 
-    if (!brandId) {
+    if (!brandId || !selectedBrand) {
       setStatus("Please select a brand.");
       return;
     }
@@ -278,8 +278,8 @@ export default function EditPromotionPage() {
 
     try {
       const payload = {
-        brand_id: brandId,
-        brand_name: selectedBrand?.name ?? "",
+        brand_id: selectedBrand.id,
+        brand_name: selectedBrand.name,
         retailer_name: selectedRetailer?.name ?? retailerName,
         distributor: selectedRetailer?.distributor ?? null,
         cultivate_rep: cultivateRep || null,
