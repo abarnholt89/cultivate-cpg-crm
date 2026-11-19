@@ -114,7 +114,7 @@ type GroupEditForm = {
 };
 
 type EditForm = {
-  brand_name: string;
+  brand_id: string;
   retailer_name: string;
   distributor: string;
   cultivate_rep: string;
@@ -770,6 +770,10 @@ function PromotionsInner() {
     if (!bulkForm.promo_type) { setBulkError("Promo type is required."); return; }
     if (bulkSelectedMonths.size === 0) { setBulkError("Select at least one month."); return; }
     if (!bulkForm.promo_year) { setBulkError("Promo year is required."); return; }
+    // Brand must resolve to an active brand by id (Duplicate flows copy the id
+    // from an old row, which may be blank or point at an archived brand).
+    const bulkBrand = allBrands.find((b) => b.id === bulkBrandId);
+    if (!bulkBrand) { setBulkError("This brand is archived or missing. Pick a brand first."); return; }
     const hasSpecificDates = !!(bulkForm.start_date || bulkForm.end_date);
     if (hasSpecificDates && bulkSelectedMonths.size > 1) {
       setBulkError("Specific dates apply to a single month — select only one month, or clear Start/End dates for multi-month.");
@@ -790,8 +794,8 @@ function PromotionsInner() {
       const endDate = bulkForm.end_date || `${yearNum}-${mm}-${String(lastDay).padStart(2, "0")}`;
       for (const sku of selectedSkus) {
         insertRows.push({
-          brand_id: bulkBrandId,
-          brand_name: bulkBrandName,
+          brand_id: bulkBrand.id,
+          brand_name: bulkBrand.name,
           retailer_name: bulkRetailerName,
           distributor: bulkRetailerDistributor,
           cultivate_rep: bulkForm.cultivate_rep || null,
@@ -830,8 +834,13 @@ function PromotionsInner() {
 
   function openEdit(item: PromotionRow) {
     setEditingRow(item);
+    // Brand must come from the active brands list. Pre-select the row's brand
+    // only if it is still active; otherwise the rep must pick one.
+    const activeBrand =
+      allBrands.find((b) => b.id === item.brand_id) ??
+      (item.brand_id ? undefined : allBrands.find((b) => b.name === item.brand_name));
     setEditForm({
-      brand_name: item.brand_name,
+      brand_id: activeBrand?.id ?? "",
       retailer_name: item.retailer_name,
       distributor: item.distributor ?? "",
       cultivate_rep: item.cultivate_rep ?? "",
@@ -885,11 +894,17 @@ function PromotionsInner() {
 
   async function handleSaveEdit() {
     if (!editingRow || !editForm) return;
+    const brand = allBrands.find((b) => b.id === editForm.brand_id);
+    if (!brand) {
+      setEditError("Please select a brand.");
+      return;
+    }
     setEditSaving(true);
     setEditError("");
 
     const payload = {
-      brand_name: editForm.brand_name.trim(),
+      brand_id: brand.id,
+      brand_name: brand.name,
       retailer_name: editForm.retailer_name.trim(),
       distributor: editForm.distributor.trim() || null,
       cultivate_rep: editForm.cultivate_rep.trim() || null,
@@ -1943,7 +1958,14 @@ function PromotionsInner() {
             </div>
             {editError && <div className="text-sm text-red-600">{editError}</div>}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-              {(["brand_name", "retailer_name", "distributor", "sku_description", "unit_upc"] as const).map((field) => (
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Brand</label>
+                <select className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={editForm.brand_id} onChange={(e) => setEditForm((f) => f ? { ...f, brand_id: e.target.value } : f)}>
+                  <option value="">Select brand</option>
+                  {allBrands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+              </div>
+              {(["retailer_name", "distributor", "sku_description", "unit_upc"] as const).map((field) => (
                 <div key={field} className="space-y-1">
                   <label className="text-xs font-medium text-muted-foreground capitalize">{field.replace(/_/g, " ")}</label>
                   <input className="w-full border rounded px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }} value={editForm[field]} onChange={(e) => setEditForm((f) => f ? { ...f, [field]: e.target.value } : f)} />
