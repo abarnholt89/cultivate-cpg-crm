@@ -510,6 +510,7 @@ function PromotionsInner() {
               .in("brand_id", brandIds)
               .order("promo_year", { ascending: false })
               .order("promo_month", { ascending: true })
+              .order("id", { ascending: true })
           );
           rows = clientRaw.map(normalizeStageRow).map(applyDisplayStatus);
         } else {
@@ -517,6 +518,7 @@ function PromotionsInner() {
             supabase.from("promotions_stage").select("*")
               .order("promo_year", { ascending: false })
               .order("promo_month", { ascending: true })
+              .order("id", { ascending: true })
           );
           rows = rawRows.map(normalizeStageRow).map(applyDisplayStatus);
         }
@@ -815,7 +817,7 @@ function PromotionsInner() {
     if (error) { setBulkError(error.message); setBulkSaving(false); return; }
 
     // Reload promotions and close builder
-    const reloadRaw = await fetchAllRows<any>(supabase.from("promotions_stage").select("*").order("promo_year", { ascending: false }).order("promo_month", { ascending: true }));
+    const reloadRaw = await fetchAllRows<any>(supabase.from("promotions_stage").select("*").order("promo_year", { ascending: false }).order("promo_month", { ascending: true }).order("id", { ascending: true }));
     setPromotions(reloadRaw.map(normalizeStageRow).map(applyDisplayStatus));
     setBulkOpen(false);
     setBulkStep(1);
@@ -1201,6 +1203,7 @@ function PromotionsInner() {
         supabase.from("promotions_stage").select("*")
           .order("promo_year", { ascending: false })
           .order("promo_month", { ascending: true })
+          .order("id", { ascending: true })
       );
       setPromotions(rawRows.map(normalizeStageRow).map(applyDisplayStatus));
     } catch (err: any) {
